@@ -254,6 +254,7 @@ our $projpack = [
     'repoid',
      [[ 'project' =>
 	    'name',
+	    'kind',
 	     [],
 	    'title',
 	    'description',
@@ -440,6 +441,7 @@ our $buildinfo = [
 	[],
 	'job',
 	'arch',
+	'hostarch',     # for cross build
 	'error',
 	'srcmd5',
 	'verifymd5',

@@ -20,9 +20,10 @@ module MaintenanceHelper
         tprj.save
         tprj.flags.create( :position => 1, :flag => 'build', :status => "disable" )
       end
+      # publish is disabled, just patchinfos get enabled
+      tprj.flags.create( :flag => 'publish', :status => "disable" )
       if noaccess
         tprj.flags.create( :flag => 'access', :status => "disable" )
-        tprj.flags.create( :flag => 'publish', :status => "disable" )
       end
       # take over roles from maintenance project
       maintenanceProject.project_user_role_relationships.each do |r| 
@@ -116,6 +117,10 @@ module MaintenanceHelper
     else
       tpkg = DbPackage.new(:name => targetPackageName, :title => sourcePackage.title, :description => sourcePackage.description)
       targetProject.db_packages << tpkg
+      if sourcePackage.db_package_kinds.find_by_kind 'patchinfo'
+        # publish patchinfos only
+        tpkg.flags.create( :flag => 'publish', :status => "enable" )
+      end
       tpkg.store
     end
 
@@ -206,10 +211,9 @@ module MaintenanceHelper
     end
 
     # create or update main package linking to incident package
-    basePackageName = targetPackageName.gsub(/\.[^\.]*$/, '')
-    answer = Suse::Backend.get "/source/#{URI.escape(targetProject.name)}/#{URI.escape(targetPackageName)}"
-    xml = REXML::Document.new(answer.body.to_s)
-    unless xml.elements["/directory/entry/@name='_patchinfo'"]
+    unless sourcePackage.db_package_kinds.find_by_kind 'patchinfo'
+      basePackageName = targetPackageName.gsub(/\.[^\.]*$/, '')
+
       # only if package does not contain a _patchinfo file
       lpkg = nil
       if DbPackage.exists_by_project_and_name(targetProject.name, basePackageName, follow_project_links=false)

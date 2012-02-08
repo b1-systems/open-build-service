@@ -725,7 +725,7 @@ class RequestController < ApplicationController
           end
           unless object.enabled_for?('lock', nil, nil)
             f = object.flags.find_by_flag_and_status("lock", "disable")
-            f.delete if f # remove possible existing disable lock flag
+            object.flags.delete(f) if f # remove possible existing disable lock flag
             object.flags.create(:status => "enable", :flag => "lock")
             object.store
           end
@@ -1517,6 +1517,8 @@ class RequestController < ApplicationController
             patchinfo = DbPackage.new(:name => "patchinfo", :title => "Patchinfo", :description => "Collected packages for update")
             incident_project.db_packages << patchinfo
             patchinfo.add_flag("build", "enable", nil, nil)
+            patchinfo.add_flag("publish", "enable", nil, nil)
+            patchinfo.add_flag("useforbuild", "disable", nil, nil)
             patchinfo.store
 
             # create patchinfo XML file

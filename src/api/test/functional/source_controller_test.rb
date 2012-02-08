@@ -843,6 +843,8 @@ end
     assert_response :success
     put "/source/home:tom:projectB/_meta", "<project name='home:tom:projectB'> <title/> <description/> <repository name='repoB'> <path project='home:tom:projectA' repository='repoA' /> </repository> </project>"
     assert_response :success
+    put "/source/home:tom:projectC/_meta", "<project name='home:tom:projectC'> <title/> <description/> <repository name='repoC'> <path project='home:tom:projectB' repository='repoB' /> </repository> </project>"
+    assert_response :success
     # delete a repo
     put "/source/home:tom:projectA/_meta", "<project name='home:tom:projectA'> <title/> <description/> </project>"
     assert_response 400
@@ -854,13 +856,50 @@ end
     get "/source/home:tom:projectB/_meta"
     assert_response :success
     assert_tag :tag => 'path', :attributes => { :project => "deleted", :repository => "deleted" }
-    put "/source/home:tom:projectB/_meta", "<project name='home:tom:projectB'> <title/> <description/> </project>"
+    get "/source/home:tom:projectC/_meta"
     assert_response :success
+    assert_tag :tag => 'path', :attributes => { :project => "home:tom:projectB", :repository => "repoB" } # unmodified
 
     # cleanup
     delete "/source/home:tom:projectA"
     assert_response :success
     delete "/source/home:tom:projectB"
+    assert_response 403 # projectC still linking
+    delete "/source/home:tom:projectC"
+    assert_response :success
+    delete "/source/home:tom:projectB"
+    assert_response :success
+  end
+
+  def test_full_remove_repository_dependencies
+    prepare_request_with_user "tom", "thunder"
+    put "/source/home:tom:projectA/_meta", "<project name='home:tom:projectA'> <title/> <description/> <repository name='repoA'/> </project>"
+    assert_response :success
+    put "/source/home:tom:projectB/_meta", "<project name='home:tom:projectB'> <title/> <description/> <repository name='repoB'> <path project='home:tom:projectA' repository='repoA' /> </repository> </project>"
+    assert_response :success
+    put "/source/home:tom:projectC/_meta", "<project name='home:tom:projectC'> <title/> <description/> <repository name='repoC'> <path project='home:tom:projectB' repository='repoB' /> </repository> </project>"
+    assert_response :success
+    # delete a repo
+    put "/source/home:tom:projectA/_meta", "<project name='home:tom:projectA'> <title/> <description/> </project>"
+    assert_response 400
+    assert_tag( :tag => "status", :attributes => { :code => "repo_dependency"} )
+    delete "/source/home:tom:projectA"
+    assert_response 403
+    put "/source/home:tom:projectA/_meta?force=1&remove_linking_repositories=1", "<project name='home:tom:projectA'> <title/> <description/> </project>"
+    assert_response :success
+    get "/source/home:tom:projectB/_meta"
+    assert_response :success
+    assert_no_tag :tag => 'path'
+    get "/source/home:tom:projectC/_meta"
+    assert_response :success
+    assert_no_tag :tag => 'path'
+
+    # cleanup
+    delete "/source/home:tom:projectA"
+    assert_response :success
+    delete "/source/home:tom:projectB"
+    assert_response :success
+    delete "/source/home:tom:projectC"
     assert_response :success
   end
 
@@ -884,6 +923,21 @@ end
 
     # cleanup
     delete "/source/home:tom:projectB"
+    assert_response :success
+  end
+
+  def test_delete_project_with_local_devel_packages
+    prepare_request_with_user "tom", "thunder"
+    put "/source/home:tom:project/_meta", "<project name='home:tom:project'> <title/> <description/> <repository name='repoA'> <arch>i586</arch> </repository> </project>"
+    assert_response :success
+    put "/source/home:tom:project/A/_meta", "<package name='A' project='home:tom:project'> <title/> <description/></package>"
+    assert_response :success
+    put "/source/home:tom:project/B/_meta", "<package name='B' project='home:tom:project'> <title/> <description/> <devel package='A'/> </package>"
+    assert_response :success
+    put "/source/home:tom:project/C/_meta", "<package name='C' project='home:tom:project'> <title/> <description/> <devel package='B'/> </package>"
+    assert_response :success
+    # delete the project including the packages
+    delete "/source/home:tom:project"
     assert_response :success
   end
 
@@ -2085,6 +2139,9 @@ end
     assert_response :success
 
     # branch again
+    get "/source/home:coolo:test/_meta"
+    assert_response :success
+    oldmeta = @response.body
     post "/source/home:Iggy/TestPack", :cmd => :branch, :target_project => "home:coolo:test"    
     assert_response 400
     assert_match(/branch target package already exists/, @response.body)
@@ -2095,6 +2152,10 @@ end
     post "/source/home:Iggy/TestPack", :cmd => :branch, :target_project => "home:coolo:test", :force => "1", :rev => "42424242"
     assert_response 400
     assert_match(/no such revision/, @response.body)
+    # project meta must be untouched
+    get "/source/home:coolo:test/_meta"
+    assert_response :success
+    assert_equal oldmeta, @response.body
     # FIXME: do a real commit and branch afterwards
 
     # now with a new project

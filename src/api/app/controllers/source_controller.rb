@@ -58,8 +58,15 @@ class SourceController < ApplicationController
 
   def projectlist
     # list all projects (visible to user)
-    dir = Project.find :all
-    render :text => dir.dump_xml, :content_type => "text/xml"
+    dir = DbProject.find(:all, :select => 'name').map {|i| i.name }.sort
+    output = String.new
+    output << "<?xml version='1.0' encoding='UTF-8'?>\n"
+    output << "<directory>\n"
+    dir.each do |item|
+      output << "  <entry name=\"#{item.to_xs}\"/>\n"
+    end
+    output << "</directory>\n"
+    render :text => output, :content_type => "text/xml"
     return
   end
 
@@ -761,32 +768,27 @@ class SourceController < ApplicationController
 
       # find linking repos which get deleted
       removedRepositories = Array.new
+      linkingRepositories = Array.new
       if prj
         prj.repositories.each do |repo|
           if !rdata.has_element?("repository[@name='#{repo.name}']") and not repo.remote_project_name
-            repo.linking_repositories.each do |lrep|
-              removedRepositories << lrep
-            end
+            # collect repositories to remove
+            removedRepositories << repo
+            linkingRepositories += repo.linking_repositories
           end
         end
       end
-      if removedRepositories.length > 0
-        if params[:force] and not params[:force].empty?
-          # replace links to this projects with links to the "deleted" project
-          del_repo = DbProject.find_by_name("deleted").repositories[0]
-          removedRepositories.each do |link_rep|
-            link_rep.path_elements.find(:all).each { |pe| pe.destroy }
-            link_rep.path_elements.create(:link => del_repo, :position => 1)
-            link_rep.save
-            # update backend
-            link_rep.db_project.store
-          end
-        else
-          lrepstr = removedRepositories.map{|l| l.db_project.name+'/'+l.name}.join "\n"
+      if linkingRepositories.length > 0
+        unless params[:force] and not params[:force].empty?
+          lrepstr = linkingRepositories.map{|l| l.db_project.name+'/'+l.name}.join "\n"
           render_error :status => 400, :errorcode => "repo_dependency",
             :message => "Unable to delete repository; following repositories depend on this project:\n#{lrepstr}\n"
           return
         end
+      end
+      if removedRepositories.length > 0
+        # do remove
+        private_remove_repositories( removedRepositories, (params[:remove_linking_repositories] and not params[:remove_linking_repositories].empty?) )
       end
 
       # Check for maintenance-related parts
@@ -1234,6 +1236,53 @@ class SourceController < ApplicationController
     render_ok :data => {:targetproject => incident.db_project.name}
   end
 
+  def private_remove_repositories( repositories, full_remove = false )
+    del_repo = DbProject.find_by_name("deleted").repositories[0]
+
+    repositories.each do |repo|
+      linking_repos = repo.linking_repositories
+      prj = repo.db_project
+
+
+      if full_remove == true
+        # recursive for INDIRECT linked repositories
+        unless linking_repos.length < 1
+          private_remove_repositories( linking_repos, true )
+        end
+
+        # try to remove the repository 
+        # but never remove the deleted one
+        unless repo == del_repo
+          # permission check
+          unless @http_user.can_modify_project?(prj)
+            render_error :status => 403, :errorcode => 'change_project_no_permission',
+              :message => "No permission to remove a repository in project '#{prj.name}'"
+            return
+          end
+        end
+      else
+        # just modify foreign linking repositories. Always allowed
+        linking_repos.each do |lrepo|
+          lrepo.path_elements.each do |pe|
+            if pe.link == repo
+              pe.link = del_repo
+              pe.save
+            end
+          end
+          lrepo.db_project.store(nil, true) # low prio storage
+        end
+      end
+
+      # remove this repository, but be careful, because we may have done it already.
+      if Repository.exists?(repo) and r=prj.repositories.find(repo)
+         logger.info "updating project '#{prj.name}'"
+         r.destroy
+         prj.save
+         prj.store(nil, true) # low prio storage
+      end
+    end
+  end
+
   # POST /source?cmd=branch (aka osc mbranch)
   def index_branch
     do_branch
@@ -1656,7 +1705,7 @@ class SourceController < ApplicationController
           # take over debuginfo config from origin project
           tpkg.flags.create( :position => 1, :flag => 'debuginfo', :status => "enable", :repo => repoName ) if prj.enabled_for?('debuginfo', repo.name, nil)
         end
-        unless extend_names
+        if add_repositories
           # take over flags, but explicit disable publishing by default and enable building. Ommiting also lock or we can not create packages
           p[:link_target_project].flags.each do |f|
             unless [ "build", "publish", "lock" ].include?(f.flag)
@@ -1665,9 +1714,7 @@ class SourceController < ApplicationController
               end
             end
           end
-          if add_repositories
-            tprj.flags.create(:status => "disable", :flag => 'publish') unless tprj.flags.find_by_flag_and_status( 'publish', 'disable' )
-          end
+          tprj.flags.create(:status => "disable", :flag => 'publish') unless tprj.flags.find_by_flag_and_status( 'publish', 'disable' )
         end
       else
         # FIXME for remote project instances
@@ -1898,6 +1945,8 @@ class SourceController < ApplicationController
       pkg = DbPackage.new(:name => pkg_name, :title => "Patchinfo", :description => "Collected packages for update")
       prj.db_packages << pkg
       pkg.add_flag("build", "enable", nil, nil)
+      pkg.add_flag("publish", "enable", nil, nil)
+      pkg.add_flag("useforbuild", "disable", nil, nil)
       pkg.store
     end
 
@@ -1949,19 +1998,19 @@ class SourceController < ApplicationController
     issues = Array.new()
     pkg.db_project.db_packages.each do |p|
       # create diff per package
-      begin
-        answer = Suse::Backend.post("/source/#{CGI.escape(pkg.db_project.name)}/#{CGI.escape(p.name)}?unified=1&cmd=diff&filelimit=0&expand=1", nil)
-        issues += IssueTracker.issues_in(answer.body, true)
-      rescue Suse::Backend::HTTPError
-      end
-    end
+      next if p.db_package_kinds.find_by_kind 'patchinfo'
 
-    issues.each do |i|
-      next if patchinfo.has_element?("issue[(@id='#{i.name}' and @tracker='#{i.issue_tracker.name}')]")
-      e = patchinfo.add_element "issue"
-      e.set_attribute "tracker", i.issue_tracker.name
-      e.set_attribute "id"     , i.name
-      patchinfo.category.text = "security" if i.issue_tracker.kind == "cve"
+      p.db_package_issues.each do |i|
+        if i.change == "added"
+          unless patchinfo.has_element?("issue[(@id='#{i.issue.name}' and @tracker='#{i.issue.issue_tracker.name}')]")
+            e = patchinfo.add_element "issue"
+            e.set_attribute "tracker", i.issue.issue_tracker.name
+            e.set_attribute "id"     , i.issue.name
+            patchinfo.category.text = "security" if i.issue.issue_tracker.kind == "cve"
+          end
+        end
+      end
+
     end
 
     return patchinfo

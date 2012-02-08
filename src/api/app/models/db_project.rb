@@ -73,6 +73,17 @@ class DbProject < ActiveRecord::Base
         end
       end
     end
+    # deleting local devel packages
+    self.db_packages.each do |pkg|
+      if pkg.develpackage_id
+        pkg.develpackage_id = nil
+        pkg.save
+      end
+      if pkg.develproject_id
+        pkg.develproject_id = nil
+        pkg.save
+      end
+    end
   end
 
 #  def before_validation
@@ -178,10 +189,9 @@ class DbProject < ActiveRecord::Base
           options[:joins] = "" if options[:joins].nil?
           options[:joins] += " LEFT JOIN flags f ON f.db_project_id = db_projects.id AND (ISNULL(f.flag) OR flag = 'access')" # filter projects with or without access flag
           options[:joins] += " LEFT OUTER JOIN project_user_role_relationships ur ON ur.db_project_id = db_projects.id"
-          options[:joins] += " LEFT OUTER JOIN users u ON ur.bs_user_id = u.id"
           options[:group] = "db_projects.id" unless options[:group] # is creating a DISTINCT select to have uniq results
 
-          cond = "((f.flag = 'access' AND u.login = '#{User.current ? User.current.login : "_nobody_"}') OR ISNULL(f.flag))"
+          cond = "((f.flag = 'access' AND ur.bs_user_id = #{User.current ? User.currentID : User.nobodyID}) OR ISNULL(f.flag))"
           if options[:conditions].nil?
             options[:conditions] = cond
           else
@@ -772,7 +782,7 @@ class DbProject < ActiveRecord::Base
     end #transaction
   end
 
-  def store(login=nil)
+  def store(login=nil, lowprio=false)
     # update timestamp and save
     self.save!
     # expire cache
@@ -781,6 +791,7 @@ class DbProject < ActiveRecord::Base
     if write_through?
       login = User.current.login unless login # Allow to override if User.current isn't available yet
       path = "/source/#{self.name}/_meta?user=#{URI.escape(login)}"
+      path += "&lowprio=1" if lowprio
       Suse::Backend.put_source( path, to_axml )
     end
 
@@ -846,14 +857,23 @@ class DbProject < ActiveRecord::Base
   def render_issues_axml(params)
     builder = Builder::XmlMarkup.new( :indent => 2 )
 
-    filter_changes = nil
+    filter_changes = states = nil
     filter_changes = params[:changes].split(",") if params[:changes]
+    states = params[:states].split(",") if params[:states]
+    login = params[:login]
 
     xml = builder.project( :name => self.name ) do |project|
       self.db_packages.each do |pkg|
         project.package( :project => pkg.db_project.name, :name => pkg.name ) do |package|
           pkg.db_package_issues.each do |i|
             next if filter_changes and not filter_changes.include? i.change
+            next if states and (not i.issue.state or not states.include? i.issue.state)
+            o = nil
+            if i.issue.owner_id
+              # self.owner must not by used, since it is reserved by rails
+              o = User.find_by_id i.issue.owner_id
+            end
+            next if login and (not o or not login == o.login)
             i.issue.render_body(package, i.change)
           end
         end

@@ -1149,11 +1149,14 @@ sub lsrev {
   } else {
     die("bad srcmd5 '$srcmd5'\n") if $srcmd5 !~ /^[0-9a-f]{32}$/;
     my $treedir = $BSConfig::nosharedtrees ? "$treesdir/$projid/$packid" : "$treesdir/$packid";
-    if ($BSConfig::nosharedtrees && $BSConfig::nosharedtrees == 2 && ! -e "$treedir/$srcmd5-MD5SUMS") {
+    if ($BSConfig::nosharedtrees && $BSConfig::nosharedtrees == 2 && ! -e "$treedir/$srcmd5-MD5SUMS" && -e "$srcrep/$packid/$srcmd5-MD5SUMS") {
       $treedir = "$srcrep/$packid";
     }
     if (!open(F, '<', "$treedir/$srcmd5-MD5SUMS")) {
       return {'_linkerror' => $srcmd5} if -e "$srcrep/$packid/$srcmd5-_linkerror";
+      my $error = readstr("$treedir/$srcmd5-_serviceerror", 1);
+      chomp $error if $error;
+      die(str2utf8xml("$error\n")) if $error && $error ne '';
       die("$projid/$packid/$srcmd5: not in repository. Either not existing or misconfigured server setting for '\$nosharedtrees' setting in BSConfig.pm\n");
     }
   }
@@ -1763,6 +1766,10 @@ sub handleservice {
     $sfiles = lsrev($rev);
   } elsif (-e "$treedir/$smd5-MD5SUMS") {
     $sfiles = lsrev($rev);
+  } elsif (! -e "$projectsdir/$rev->{'project'}.pkg/$rev->{'package'}.xml") {
+    # not our own package, don't run service. try getrev/lsrev instead.
+    my $rrev = getrev($rev->{'project'}, $rev->{'package'}, $smd5);
+    $sfiles = lsrev($rrev);
   }
   if ($sfiles) {
     if ($sfiles->{'_service_error'}) {
@@ -1772,6 +1779,7 @@ sub handleservice {
     }
     return $sfiles;
   }
+  # don't have it yet
   my $error = readstr("$treedir/$smd5-_serviceerror", 1);
   chomp $error if $error;
   die(str2utf8xml("$error\n")) if $error && $error ne '';
@@ -2305,6 +2313,9 @@ sub getprojpack {
       $remotemap->{$projid} = {%$r, 'proto' => 1} if $r;
     }
     next unless $proj;
+    for (qw{kind}) {
+      $jinfo->{$_} = $proj->{$_} if exists $proj->{$_};
+    }
 
     my %expandedrepos;
 
@@ -2852,7 +2863,11 @@ sub putproject {
 
   my %except = map {$_ => 1} qw{title description person group url attributes};
   if (!identical($oldproj, $proj, \%except)) {
-    notify_repservers('project', $projid);
+    if ($cgi->{'lowprio'}) {
+      notify_repservers('lowprioproject', $projid);
+    } else {
+      notify_repservers('project', $projid);
+    }
   }
 
   $proj = readproj($projid);
@@ -3897,12 +3912,22 @@ sub sourcediff {
       }
       $files = handlelinks($rev, $files, \%li);
       die("bad link: $files\n") unless ref $files;
-      $cgi->{'olinkrev'} = $li{'srcmd5'} if $cgi->{'olinkrev'} && $cgi->{'olinkrev'} eq 'linkrev';
+
+      # some nasty magic to improve diff usability
       if ($l && $cgi->{'linkrev'} && $l->{'project'} eq $oprojid && $l->{'package'} eq $opackid && !$l->{'rev'} && !$cgi->{'orev'}) {
         # we're diffing against the link target. As the user specified a baserev, we should use it
         # instead of the latest source
         $orev = getrev($oprojid, $opackid, $li{'srcmd5'});
         $ofiles = lsrev($orev);
+      }
+      # olinkrev=linkrev: reuse same linkrev if the link target matches
+      if ($cgi->{'olinkrev'} && $cgi->{'olinkrev'} eq 'linkrev' && $ofiles->{'_link'}) {
+	my $ol = repreadxml($orev, '_link', $ofiles->{'_link'}, $BSXML::link, 1);
+	if ($ol) {
+	  $ol->{'project'} = $orev->{'project'} unless defined $ol->{'project'};
+	  $ol->{'package'} = $orev->{'package'} unless defined $ol->{'package'};
+	}
+	$cgi->{'olinkrev'} = $li{'srcmd5'} if $l && $ol && $l->{'project'} eq $ol->{'project'} && $l->{'package'} eq $ol->{'package'};
       }
     }
     if ($ofiles->{'_link'}) {
@@ -4559,7 +4584,8 @@ sub update_link_in_service {
   return $xservicemd5 unless $sfiles && $sfiles->{'_link'};
   return $xservicemd5 if $sfiles->{'_link'} && $sfiles->{'_link'} eq $files->{'_link'};	# nothing changed
   # okay, we need to generate a new service commit
-  my $servicemark = genservicemark($rev->{'project'}, $rev->{'package'}, $files, 1);
+  my $servicemark = genservicemark($rev->{'project'}, $rev->{'package'}, $files, undef, 1);
+  return undef unless $servicemark;
   # delete all non-service files unless it's a branch
   if (!$isbranch) {
     for (keys %$sfiles) {
@@ -4712,7 +4738,7 @@ sub sourcebranch {
   my $opackid = exists($cgi->{'opackage'}) ? $cgi->{'opackage'} : $packid;
   my $orev = $cgi->{'orev'};
   die("cannot branch myself\n") if $oprojid eq $projid && $opackid eq $packid;
-  $orev = getrev($oprojid, $opackid, undef, undef, $cgi->{'missingok'});
+  $orev = getrev($oprojid, $opackid, defined($orev) ? $orev : 'latest', undef, $cgi->{'missingok'});
   $orev->{'linkrev'} = $cgi->{'olinkrev'} if $cgi->{'olinkrev'};
   my $files = lsrev_expanded($orev);	# modifies srcmd5, thus also needed for keepcontent case
   if ($cgi->{'keepcontent'}) {
@@ -6636,7 +6662,7 @@ my $dispatches = [
 
   'DELETE:/source/$project user:? comment:? requestid:num?' => \&delproject,
   '/source/$project/_meta rev?' => \&getproject,
-  'PUT:/source/$project/_meta user:? comment:? requestid:num?' => \&putproject,
+  'PUT:/source/$project/_meta user:? comment:? requestid:num? lowprio:bool?' => \&putproject,
 
   '/source/$project/_pubkey rev?' => \&getpubkey,
   'DELETE:/source/$project/_pubkey user:? comment:?' => \&deletekey,

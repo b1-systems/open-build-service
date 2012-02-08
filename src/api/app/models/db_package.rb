@@ -82,9 +82,8 @@ class DbPackage < ActiveRecord::Base
           #
           options[:joins] += " LEFT JOIN flags f ON f.db_project_id = prj.id AND (ISNULL(f.flag) OR flag = 'access')" # filter projects with or without access flag
           options[:joins] += " LEFT JOIN project_user_role_relationships ur ON ur.db_project_id = prj.id"
-          options[:joins] += " LEFT JOIN users u ON ur.bs_user_id = u.id"
 
-          cond = "((f.flag = 'access' AND u.login = '#{User.current ? User.current.login : "_nobody_"}') OR ISNULL(f.flag))"
+          cond = "((f.flag = 'access' AND ur.bs_user_id = #{User.current ? User.currentID : User.nobodyID}) OR ISNULL(f.flag))"
           if options[:conditions].nil?
             options[:conditions] = cond
           else
@@ -403,7 +402,7 @@ class DbPackage < ActiveRecord::Base
         xml = REXML::Document.new(patchinfo.body.to_s)
         xml.root.elements.each('issue') { |i|
           issue = Issue.find_or_create_by_name_and_tracker( i.attributes['id'], i.attributes['tracker'] )
-          self.db_package_issues.create( :issue => issue )
+          self.db_package_issues.create( :issue => issue, :change => "kept" )
         }
       end
     else
@@ -824,8 +823,10 @@ class DbPackage < ActiveRecord::Base
   def render_issues_axml(params)
     builder = Builder::XmlMarkup.new( :indent => 2 )
 
-    filter_changes = nil
+    filter_changes = states = nil
     filter_changes = params[:changes].split(",") if params[:changes]
+    states = params[:states].split(",") if params[:states]
+    login = params[:login]
 
     xml = builder.package( :project => self.db_project.name, :name => self.name ) do |package|
       self.db_package_kinds.each do |k|
@@ -833,6 +834,13 @@ class DbPackage < ActiveRecord::Base
       end
       self.db_package_issues.each do |i|
         next if filter_changes and not filter_changes.include? i.change
+        next if states and (not i.issue.state or not states.include? i.issue.state)
+        o = nil
+        if i.issue.owner_id
+          # self.owner must not by used, since it is reserved by rails
+          o = User.find_by_id i.issue.owner_id
+        end
+        next if login and (not o or not login == o.login)
         i.issue.render_body(package, i.change)
       end
     end

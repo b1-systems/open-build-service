@@ -362,5 +362,26 @@ class Package < ActiveXML::Base
     return Package.has_attribute?(self.project, self.name, attribute_namespace, attribute_name)
   end
 
+  def linkdiff
+    begin
+      path = "/source/#{self.project}/#{self.name}?cmd=linkdiff&view=xml&withissues=1"
+      res = ActiveXML::Config::transport_for(:package).direct_http(URI("#{path}"), :method => 'POST', :data => '')
+      return Sourcediff.new(res)
+    rescue ActiveXML::Transport::Error
+      return nil
+    end
+  end
+
+  def issues_in_linkdiff
+    issues = {}
+    linkdiff = self.linkdiff()
+    if linkdiff.has_element?('issues')
+      linkdiff.issues.each(:issue) do |issue|
+        issues[issue.value('long-name')] = issue
+      end
+    end
+    return issues
+  end
+
 end
 

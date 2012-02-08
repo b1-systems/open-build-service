@@ -453,9 +453,92 @@ class Project < ActiveXML::Base
     end
   end
 
+  def release_targets_ng
+    return Rails.cache.fetch("incident_release_targets_ng_#{self.name}", :expires_in => 5.minutes) do
+      # First things first, get release targets as defined by the project, err.. incident. Later on we
+      # magically find out which of the contained packages, err. updates are build against those release
+      # targets.
+      release_targets_ng = {}
+      self.each(:repository) do |repo|
+        if repo.has_element?(:releasetarget)
+          release_targets_ng[repo.releasetarget.value('project')] = {:reponame => repo.value('name'), :packages => [], :patchinfo => nil, :package_issues => {}}
+        end
+      end
+
+      # One catch, currently there's only one patchinfo per incident, but things keep changing every
+      # other day, so it never hurts to have a look into the future:
+      global_patchinfo = nil
+      self.packages.each do |package|
+        pkg_name, rt_name = package.value('name').split('.', 2)
+        pkg = Package.find_cached(package.value('name'), :project => self.name)
+        if pkg && rt_name
+          if pkg_name == 'patchinfo'
+            # Holy crap, we found a patchinfo that is specific to (at least) one release target!
+            pi = Patchinfo.find_cached(:project => self.name, :package => pkg_name)
+            release_targets_ng[rt_name][:patchinfo] = pi
+          else
+            # Here we try hard to find the release target our current package is build for:
+            found = false
+            if pkg.has_element?(:build)
+              # Stone cold map'o'rama of package.$SOMETHING with package/build/enable/@repository=$ANOTHERTHING to
+              # project/repository/releasetarget/@project=$YETSOMETINGDIFFERENT. Piece o' cake, eh?
+              pkg.build.each(:enable) do |enable|
+                if enable.has_attribute?(:repository)
+                  release_targets_ng.each do |rt_key, rt_value|
+                    if rt_value[:reponame] == enable.value('repository')
+                      rt_name = rt_key # Save for re-use
+                      found = true
+                      break
+                    end
+                  end
+                end
+                if !found
+                  # Package only contains sth. like: <build><enable repository="standard"/></build>
+                  # Thus we asume it belongs to the _only_ release target:
+                  rt_name = release_targets_ng.keys.first
+                end
+              end
+            else
+              # Last chance, package building is disabled, maybe it's name aligns to the release target..
+              release_targets_ng.each do |rt_key, rt_value|
+                if rt_value[:reponame] == rt_name
+                  rt_name = rt_key # Save for re-use
+                  found = true
+                  break
+                end
+              end
+            end
+
+            # Build-disabled packages can't be matched to release targets....
+            if found
+              # Let's silently hope that an incident newer introduces new (sub-)packages....
+              release_targets_ng[rt_name][:packages] << pkg
+              linkdiff = pkg.linkdiff()
+              if linkdiff && linkdiff.has_element?('issues')
+                linkdiff.issues.each(:issue) do |issue|
+                  release_targets_ng[rt_name][:package_issues][issue.value('long-name')] = issue
+                end
+              end
+            end
+          end
+        elsif pkg_name == 'patchinfo'
+          # Global 'patchinfo' without specific release target:
+          global_patchinfo = self.patchinfo()
+        end
+      end
+
+      if global_patchinfo
+        release_targets_ng.each do |rt_name, rt|
+          rt[:patchinfo] = global_patchinfo
+        end
+      end
+      return release_targets_ng
+    end
+  end
+
   def is_locked?
       flagdetails = Project.find_cached(self.name, :view => 'flagdetails')
-      if flagdetails.has_element?('lock') && flagdetails.lock.has_element?('disable')
+      if flagdetails.has_element?('lock') && flagdetails.lock.has_element?('enable')
         return true
       else
         return false
@@ -473,21 +556,39 @@ class Project < ActiveXML::Base
     return Buildresult.find_cached(:project => self.name, :view => view)
   end
 
-  def build_succeeded?
+  def build_succeeded?(repository = nil)
     states = {}
+    repository_states = {}
+
     buildresults().each('result') do |result|
-      result.each('summary') do |summary|
-        summary.each('statuscount') do |statuscount|
-          states[statuscount.value('code')] ||= 0
-          states[statuscount.value('code')] += statuscount.value('count').to_i()
+
+      if repository && result.repository == repository
+        repository_states[repository] ||= {}
+        result.each('summary') do |summary|
+          summary.each('statuscount') do |statuscount|
+            repository_states[repository][statuscount.value('code')] ||= 0
+            repository_states[repository][statuscount.value('code')] += statuscount.value('count').to_i()
+          end
+        end
+      else
+        result.each('summary') do |summary|
+          summary.each('statuscount') do |statuscount|
+            states[statuscount.value('code')] ||= 0
+            states[statuscount.value('code')] += statuscount.value('count').to_i()
+          end
         end
       end
     end
-    return false unless states.keys # No buildresult is bad
-    #bad, good = 0, 0
-    states.each do |state, count|
-      return false if ['broken', 'failed', 'unresolvable'].include?(state)
-      #good += 1 if ['succeeded', 'disabled', 'locked'].include?(state)
+    if repository
+      return false if repository_states[repository].empty? # No buildresult is bad
+      repository_states[repository].each do |state, count|
+        return false if ['broken', 'failed', 'unresolvable'].include?(state)
+      end
+    else
+      return false unless states.empty? # No buildresult is bad
+      states.each do |state, count|
+        return false if ['broken', 'failed', 'unresolvable'].include?(state)
+      end
     end
     return true
   end
