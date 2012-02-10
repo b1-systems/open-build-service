@@ -23,10 +23,48 @@
 #
 
 BEGIN {
+  use POSIX;
   my ($wd) = $0 =~ m-(.*)/- ;
   $wd ||= '.';
   unshift @INC,  "$wd/build";
   unshift @INC,  "$wd";
+
+  ## daemonize
+  POSIX::setsid or die "setsid: $!";
+  my $pid = fork ();
+  if ($pid < 0) {
+    die "fork: $!";
+  } elsif ($pid) {
+    exit 0;
+  }
+  ## PID handling
+  my $myarch;
+  if (@ARGV) {
+    if ($ARGV[0] eq '--testmode' && ($ARGV[1] eq '--exit' || $ARGV[1] eq '--stop' || $ARGV[1] eq '--restart')) {
+      $myarch=$ARGV[2];
+    } elsif ($ARGV[0] eq '--exit' || $ARGV[0] eq '--stop' || $ARGV[0] eq '--restart') {
+      $myarch=$ARGV[1];
+    } else {
+      $myarch=$ARGV[0];
+    }
+    open(FH,">","/var/run/obs/bs_sched_".$myarch.".pid");
+    print FH $$;
+    close FH;
+  }
+}
+
+END {
+  my $myarch;
+  if (@ARGV) {
+    if ($ARGV[0] eq '--testmode' && ($ARGV[1] eq '--exit' || $ARGV[1] eq '--stop' || $ARGV[1] eq '--restart')) {
+      $myarch=$ARGV[2];
+    } elsif ($ARGV[0] eq '--exit' || $ARGV[0] eq '--stop' || $ARGV[0] eq '--restart') {
+      $myarch=$ARGV[1];
+    } else {
+      $myarch=$ARGV[0];
+    }
+    unlink '/var/run/obs/bs_sched_'.$myarch.'.pid';
+  }
 }
 
 use Digest::MD5 ();
