@@ -39,37 +39,44 @@ if [ -n "$OBS_BACKENDCODE_DIR" ]; then
 else
 	obsdir=/usr/lib/obs/server/
 fi
+
+test -z "$OBS_SCHEDULER_ARCHITECTURES" && OBS_SCHEDULER_ARCHITECTURES=i586
+
 rundir="$OBS_RUN_DIR"
 logdir="$OBS_LOG_DIR"
 
 rc_reset
 case "$1" in
 	start)
-		echo -n "Initializing obsscheduler"
 		mkdir -p "$rundir" "$logdir"
 		chown obsrun:obsrun "$logdir" "$rundir"
 		cd "$obsdir"
                 # FIXME: not nice, this should receive a proper daemon handling, 
-                #        including real logging, pid file and startproc
-		test -z "$OBS_SCHEDULER_ARCHITECTURES" && OBS_SCHEDULER_ARCHITECTURES=i586
+                #        including real logging
 		for i in $OBS_SCHEDULER_ARCHITECTURES; do
-		        ./bs_sched $i >> "$logdir"/scheduler_$i.log 2>&1 &
+			echo -n "Initializing obsscheduler for ${i}"
+                        ./bs_sched $i >> "$logdir"/scheduler_$i.log 2>&1
+			sleep .5
+			checkproc -p /var/run/obs/bs_sched_${i}.pid bs_sched
+			rc_status -v
 		done
-		rc_status -v
 	;;
 	stop|shutdown)
 		echo -n "Shutting down obsscheduler"
-		test -z "$OBS_SCHEDULER_ARCHITECTURES" && OBS_SCHEDULER_ARCHITECTURES=i586
-		for i in $OBS_SCHEDULER_ARCHITECTURES; do
-		 	obs_admin --shutdown-scheduler "$i"
+		# stop only running schedulers
+		# man startproc -> startproc is not designed to work with scripts
+		#                  so we can not rely on it
+		for PID in $(pgrep bs_sched)
+		do
+			ARCH=$(cat /proc/${PID}/cmdline | awk -F\\0 '{print $4}')
+			obs_admin --shutdown-scheduler $ARCH
+			echo -n "...${ARCH}"
 		done
 		for i in `seq 600`; do
-			checkproc bs_sched || break
+			[ $(pgrep -c bs_sched) -eq 0  ] && break
                         sleep 1
 		done
-		if checkproc bs_sched ; then
-			killall bs_sched
-		fi
+		[ $(pgrep -c bs_sched) -eq 0  ] || killall bs_sched
 		rc_status -v
 	;;
 	restart)
@@ -88,12 +95,16 @@ case "$1" in
 		rc_status
 	;;
 	reload)
+		echo -ne "Reloading obsscheduler (noop): "
+		rc_status -v
 	;;
 	status)
-		echo -n "Checking for obsscheduler: "
-                # FIXME: needs proper checking for all invoked schedulers
-		checkproc bs_sched
-		rc_status -v
+		for ARCH in $OBS_SCHEDULER_ARCHITECTURES
+		do
+			echo -n "Checking for obsscheduler $ARCH: "
+			checkproc -p /var/run/obs/bs_sched_${ARCH}.pid bs_sched
+			rc_status -v
+		done
 	;;
 	*)
 		echo "Usage: $0 {start|stop|status|try-restart|restart|reload}"
