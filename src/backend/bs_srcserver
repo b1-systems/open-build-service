@@ -2412,8 +2412,17 @@ sub getprojpack {
 	$pinfo->{'error'} = 'no metadata';
 	next;
       }
+
+      my $lpack = undef;
+      $lpack = readpack($proj->{'link'}[0]->{'project'}, $packid, 1) if $proj->{'link'};
+
       for (qw{build publish debuginfo useforbuild bcntsynctag sourceaccess privacy access lock}) {
-	$pinfo->{$_} = $pack->{$_} if $pack->{$_};
+        if ($pack->{$_}) {
+	  $pinfo->{$_} = $pack->{$_};
+        # retrieve/inherit package flags from linked project if available
+        } elsif ($lpack && $lpack->{$_}) {
+          $pinfo->{$_} = $lpack->{$_};
+        }
       }
       if (!$pinfo->{'build'}) {
         $pinfo->{'build'}->{'enable'} = $pack->{'enable'} if $pack->{'enable'};
