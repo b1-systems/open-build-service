@@ -85,8 +85,6 @@ class StatusController < ApplicationController
       data = nil
     end
     data=ActiveXML::Base.new(data || update_workerstatus_cache)
-    #accessprjs  = DbProject.find_by_sql("select p.id from db_projects p join flags f on f.db_project_id = p.id where f.flag='access'")
-    #accesspkgs  = DbPackage.find_by_sql("select p.id from db_packages p join flags f on f.db_package_id = p.id where f.flag='access'")
     data.each_building do |b|
       prj = DbProject.find_by_name(b.project)
       # no prj -> we are not allowed
@@ -95,6 +93,13 @@ class StatusController < ApplicationController
         b.set_attribute('project', "---")
         b.set_attribute('repository', "---")
         b.set_attribute('package', "---")
+      end
+    end
+    # FIXME2.5: The current architecture model is a gross hack, not connected at all 
+    #           to the backend config.
+    data.each_scheduler do |s|
+      if a=Architecture.find_by_name(s.arch)
+        a.available=true
       end
     end
     send_data data.dump_xml
@@ -220,7 +225,10 @@ class StatusController < ApplicationController
     end
 
     fileinfo.each_requires_ext do |r|
-      unless r.has_element? :providedby
+      if r.has_element? :providedby
+        p = r.providedby
+        ret << p.value(:name)
+      else
         ret << "#{file}:#{r.dep}"
       end
     end
@@ -335,8 +343,15 @@ class StatusController < ApplicationController
             end
           end
 
+	  # expansion error
+	  if buildinfo.has_element? :error
+             missingdeps << buildinfo.value(:error)
+	     buildcode='failed' 
+	  end
+
           buildinfo.each_bdep do |b|
             unless b.value(:preinstall)
+	      logger.debug "B #{b.dump_xml}"
               unless packages.has_key? b.value(:name)
                 missingdeps << b.name
               end
@@ -368,7 +383,9 @@ class StatusController < ApplicationController
               return
             end
             if md && md.size > 0
-              missingdeps << md
+              md.each do |p|
+                missingdeps << p unless packages.has_key? p
+              end
             end
           end
         end
@@ -385,7 +402,7 @@ class StatusController < ApplicationController
         if !buildcode && srcmd5 != csrcmd5 && everbuilt == 1
           buildcode='failed' # has to be
         end
- 
+	
         unless buildcode
           buildcode="unknown"
           begin
@@ -417,7 +434,7 @@ class StatusController < ApplicationController
           end
         end
         outputxml << "  <arch arch='#{arch.to_s}' result='#{buildcode}'"
-        outputxml << " missing='#{missingdeps.join(',').to_xs}'" if (missingdeps.size > 0 && buildcode == 'succeeded')
+        outputxml << " missing='#{missingdeps.uniq.join(',').to_xs}'" if (missingdeps.size > 0 && buildcode == 'succeeded')
         outputxml << "/>\n"
       end
       outputxml << " </repository>\n"
