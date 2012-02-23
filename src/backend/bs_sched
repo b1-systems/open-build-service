@@ -640,6 +640,7 @@ sub set_building {
   my @vmdeps = Build::get_vminstalls($bconf);
   my @cbpdeps = Build::get_cbpreinstalls($bconf); # crossbuild preinstall
   my @cbdeps = Build::get_cbinstalls($bconf);  # crossbuild install
+  my @additional_archs = Build::get_additional_archs($bconf);
   my %runscripts = map {$_ => 1} Build::get_runscripts($bconf);
   my %bdeps = map {$_ => 1} @bdeps;
   my %pdeps = map {$_ => 1} @pdeps;
@@ -647,6 +648,7 @@ sub set_building {
   my %cbpdeps = map {$_ => 1} @cbpdeps;
   my %cbdeps = map {$_ => 1} @cbdeps;
   my %edeps = map {$_ => 1} @$edeps;
+
   @bdeps = unify(@pdeps, @vmdeps, @$edeps, @bdeps, @cbpdeps, @cbdeps);
   for (@bdeps) {
     $_ = {'name' => $_};
@@ -674,6 +676,7 @@ sub set_building {
     'reposerver' => $BSConfig::reposerver,
     'job' => $job,
     'arch' => $myarch,
+    'additional_archs' => \@additional_archs,
     'reason' => $reason->{'explain'},
     'readytime' => $now,
     'srcmd5' => $pdata->{'srcmd5'},

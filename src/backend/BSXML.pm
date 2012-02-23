@@ -442,6 +442,10 @@ our $buildinfo = [
 	'job',
 	'arch',
 	'hostarch',     # for cross build
+     [[ 'additional_archs' => 
+        'arch', 
+	'sysroot',
+     ]],                # used to set additional arches packages have to be downloaded for
 	'error',
 	'srcmd5',
 	'verifymd5',
@@ -473,6 +477,7 @@ our $buildinfo = [
 	'version',
 	'release',
 	'arch',
+	'target_arch',  # determine for which arch this package is needed, works even with noarch packages
 	'project',
 	'repository',
 	'repoarch',
