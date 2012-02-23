@@ -35,7 +35,7 @@ class MaintenanceTests < ActionController::IntegrationTest
     assert_response :success
     ret = ActiveXML::XMLNode.new @response.body
     assert_equal ret.project, "BaseDistro:Update"
-    assert_equal ret.package, "pack1"
+    assert_nil ret.package
     assert_not_nil ret.baserev
     assert_not_nil ret.patches
     assert_not_nil ret.patches.branch
@@ -48,7 +48,7 @@ class MaintenanceTests < ActionController::IntegrationTest
     assert_response :success
     ret = ActiveXML::XMLNode.new @response.body
     assert_equal ret.project, "Devel:BaseDistro:Update"
-    assert_equal ret.package, "pack2"
+    assert_nil ret.package
     assert_not_nil ret.baserev
     assert_not_nil ret.patches
     assert_not_nil ret.patches.branch
@@ -61,7 +61,7 @@ class MaintenanceTests < ActionController::IntegrationTest
     assert_response :success
     ret = ActiveXML::XMLNode.new @response.body
     assert_equal ret.project, "Devel:BaseDistro:Update"
-    assert_equal ret.package, "pack3"
+    assert_nil ret.package
     assert_not_nil ret.baserev
     assert_not_nil ret.patches
     assert_not_nil ret.patches.branch
@@ -74,7 +74,7 @@ class MaintenanceTests < ActionController::IntegrationTest
     assert_response :success
     ret = ActiveXML::XMLNode.new @response.body
     assert_equal ret.project, "BaseDistro2.0:LinkedUpdateProject"
-    assert_equal ret.package, "pack2"
+    assert_nil ret.package
 
     # check if we can upload a link to a packge only exist via project link
     put "/source/home:tom:branches:BaseDistro2.0:LinkedUpdateProject/pack2/_link", @response.body
@@ -82,6 +82,128 @@ class MaintenanceTests < ActionController::IntegrationTest
 
     #cleanup
     delete "/source/home:tom:branches:Devel:BaseDistro:Update"
+    assert_response :success
+  end
+
+  def test_maintenance_request_from_foreign_project
+    # special kdelibs
+    prepare_request_with_user "king", "sunflower"
+    put "/source/BaseDistro2.0:LinkedUpdateProject/kdelibs/_meta", "<package name='kdelibs'><title/><description/></package>"
+    assert_response :success
+    put "/source/BaseDistro2.0:LinkedUpdateProject/kdelibs/empty", "NOOP"
+    assert_response :success
+
+    prepare_request_with_user "tom", "thunder"
+    # create maintenance request for one package from a unrelated project
+    post "/request?cmd=create", '<request>
+                                   <action type="maintenance_incident">
+                                     <source project="kde4" package="kdelibs" />
+                                     <target project="My:Maintenance" releaseproject="BaseDistro2.0:LinkedUpdateProject" />
+                                   </action>
+                                   <description>To fix my bug</description>
+                                   <state name="new" />
+                                 </request>'
+    assert_response :success
+    assert_tag( :tag => "target", :attributes => { :project => "My:Maintenance", :releaseproject => "BaseDistro2.0:LinkedUpdateProject" } )
+    node = ActiveXML::XMLNode.new(@response.body)
+    assert node.has_attribute?(:id)
+    id1 = node.value(:id)
+
+    # validate that request is diffable (not broken)
+    post "/request/#{id1}?cmd=diff&view=xml", nil
+    assert_response :success
+    # the diffed packages
+    assert_tag( :tag => "old", :attributes => { :project => "BaseDistro2.0:LinkedUpdateProject", :package => "kdelibs" } )
+    assert_tag( :tag => "new", :attributes => { :project => "kde4", :package => "kdelibs" } )
+    # the expected file transfer
+    assert_tag( :tag => "source", :attributes => { :project => "kde4", :package => "kdelibs" } )
+    assert_tag( :tag => "target", :attributes => { :project => "My:Maintenance", :releaseproject => "BaseDistro2.0:LinkedUpdateProject" } )
+    # diff contains the critical lines
+    assert_match( /^\-NOOP/, @response.body )
+    assert_match( /^\+argl/, @response.body )
+
+    # accept request
+    prepare_request_with_user "maintenance_coord", "power"
+    post "/request/#{id1}?cmd=changestate&newstate=accepted&force=1"
+    assert_response :success
+
+    get "/request/#{id1}"
+    assert_response :success
+    data = REXML::Document.new(@response.body)
+    incidentProject=data.elements["/request/action/target"].attributes.get_attribute("project").to_s
+
+    get "/source/#{incidentProject}/kdelibs.BaseDistro2.0_LinkedUpdateProject"
+    assert_response :success
+    assert_tag( :tag => "linkinfo", :attributes => { :project => "BaseDistro2.0:LinkedUpdateProject", :package => "kdelibs" } )
+
+    # no patchinfo was part in source project, got it created ?
+    get "/source/#{incidentProject}/patchinfo/_patchinfo"
+    assert_response :success
+    assert_tag :tag => 'packager', :content => "tom"
+    assert_tag :tag => 'description', :content => "To fix my bug"
+
+    # again but find update project automatically and use a linked package
+    prepare_request_with_user "tom", "thunder"
+    post "/source/kde4/kdelibs", :cmd => :branch, :ignoredevel => 1
+    assert_response :success
+    post "/request?cmd=create", '<request>
+                                   <action type="maintenance_incident">
+                                     <source project="home:tom:branches:kde4" package="kdelibs" />
+                                     <target project="My:Maintenance" releaseproject="BaseDistro2.0" />
+                                   </action>
+                                   <description>To fix my bug</description>
+                                   <state name="new" />
+                                 </request>'
+    assert_response :success
+    # update project extended ?
+    assert_tag( :tag => "target", :attributes => { :project => "My:Maintenance", :releaseproject => "BaseDistro2.0:LinkedUpdateProject" } )
+    node = ActiveXML::XMLNode.new(@response.body)
+    assert node.has_attribute?(:id)
+    id2 = node.value(:id)
+
+    # validate that request is diffable (not broken)
+    post "/request/#{id2}?cmd=diff&view=xml", nil
+    assert_response :success
+    # the diffed packages
+    assert_tag( :tag => "old", :attributes => { :project => "BaseDistro2.0:LinkedUpdateProject", :package => "kdelibs" } )
+    assert_tag( :tag => "new", :attributes => { :project => "home:tom:branches:kde4", :package => "kdelibs" } )
+    # the expected file transfer
+    assert_tag( :tag => "source", :attributes => { :project => "home:tom:branches:kde4", :package => "kdelibs" } )
+    assert_tag( :tag => "target", :attributes => { :project => "My:Maintenance", :releaseproject => "BaseDistro2.0:LinkedUpdateProject" } )
+    # diff contains the critical lines
+    assert_match( /^\-NOOP/, @response.body )
+    assert_match( /^\+argl/, @response.body )
+
+    # accept request
+    prepare_request_with_user "maintenance_coord", "power"
+    post "/request/#{id2}?cmd=changestate&newstate=accepted&force=1"
+    assert_response :success
+
+    get "/request/#{id2}"
+    assert_response :success
+    data = REXML::Document.new(@response.body)
+    incidentProject=data.elements["/request/action/target"].attributes.get_attribute("project").to_s
+
+    get "/source/#{incidentProject}/kdelibs.BaseDistro2.0_LinkedUpdateProject"
+    assert_response :success
+    assert_tag( :tag => "linkinfo", :attributes => { :project => "BaseDistro2.0:LinkedUpdateProject", :package => "kdelibs" } )
+
+    # no patchinfo was part in source project, got it created ?
+    get "/source/#{incidentProject}/patchinfo/_patchinfo"
+    assert_response :success
+    assert_tag :tag => 'packager', :content => "tom"
+    assert_tag :tag => 'description', :content => "To fix my bug"
+
+    # reopen ...
+    prepare_request_with_user "maintenance_coord", "power"
+    post "/request/#{id2}?cmd=changestate&newstate=new"
+    assert_response 403
+
+    # cleanup
+    prepare_request_with_user "king", "sunflower"
+    delete "/source/BaseDistro2.0:LinkedUpdateProject/kdelibs"
+    assert_response :success
+    delete "/source/home:tom:branches:kde4"
     assert_response :success
   end
 
@@ -166,7 +288,7 @@ class MaintenanceTests < ActionController::IntegrationTest
                                    </action>
                                  </request>'
     assert_response 400
-    assert_tag :tag => "status", :attributes => { :code => "incident_has_no_maintenance_project" }
+    assert_tag :tag => "status", :attributes => { :code => "no_maintenance_project" }
     # valid target..
     post "/request?cmd=create", '<request>
                                    <action type="maintenance_incident">
@@ -390,6 +512,10 @@ class MaintenanceTests < ActionController::IntegrationTest
     assert_tag :parent => { :tag => "publish" }, :tag => "enable"
     assert_tag :parent => { :tag => "useforbuild" }, :tag => "disable"
 
+    # delete kdelibs package again or incident creation will fail since it does not point to a maintained project.
+    delete "/source/home:tom:branches:OBS_Maintained:pack2/kdelibs.kde4"
+    assert_response :success
+
     # create maintenance request
     # without specifing target, the default target must get found via attribute
     post "/request?cmd=create", '<request>
@@ -411,7 +537,6 @@ class MaintenanceTests < ActionController::IntegrationTest
     post "/request/#{id}?cmd=diff&view=xml", nil
     assert_response :success
     assert_match(/new_content_2137/, @response.body) # check if our changes are part of the diff
-    assert_match(/new_content_0815/, @response.body)
 
     # store data for later checks
     get "/source/home:tom:branches:OBS_Maintained:pack2/_meta"
@@ -450,7 +575,7 @@ class MaintenanceTests < ActionController::IntegrationTest
 
     get "/source/#{incidentProject}"
     assert_response :success
-    assert_tag( :tag => "directory", :attributes => { :count => "9" } )
+    assert_tag( :tag => "directory", :attributes => { :count => "8" } )
 
     get "/source/#{incidentProject}/pack2.BaseDistro2.0_LinkedUpdateProject/_meta"
     assert_response :success
@@ -661,7 +786,7 @@ class MaintenanceTests < ActionController::IntegrationTest
     post "/source/#{incidentProject}?cmd=set_flag&flag=lock&status=disable"
     assert_response :success
 
-    # create some changes, including issue_tracker references
+    # create some changes, including issue tracker references
     put "/source/"+incidentProject+"/pack2.BaseDistro2.0_LinkedUpdateProject/dummy.changes", "DUMMY bnc#1042"
     assert_response :success
     post "/source/"+incidentProject+"/pack2.BaseDistro2.0_LinkedUpdateProject?unified=1&cmd=diff&filelimit=0&expand=1"
@@ -704,11 +829,16 @@ class MaintenanceTests < ActionController::IntegrationTest
     assert_no_tag :parent => { :tag => 'issue' }, :tag => 'issue', :attributes => { :change => "" }
     assert_tag :parent => { :tag => 'issue' }, :tag => 'name', :content => "1042"
     assert_tag :parent => { :tag => 'issue' }, :tag => 'name', :content => "0815"
-    assert_tag :parent => { :tag => 'issue' }, :tag => 'issue_tracker', :content => "bnc"
+    assert_tag :parent => { :tag => 'issue' }, :tag => 'tracker', :content => "bnc"
 
     # add another issue and update patchinfo
     put "/source/"+incidentProject+"/pack2.BaseDistro2.0_LinkedUpdateProject/dummy.changes", "DUMMY bnc#1042 CVE-2009-0815 bnc#4201"
     assert_response :success
+    get "/source/#{incidentProject}/pack2.BaseDistro2.0_LinkedUpdateProject?view=issues"
+    assert_response :success
+    assert_tag :parent => { :tag => 'issue', :attributes => { :change => 'added' } }, :tag => 'name', :content => "1042"
+    assert_tag :parent => { :tag => 'issue', :attributes => { :change => 'added' } }, :tag => 'name', :content => "4201"
+    assert_tag :tag => 'kind', :content => "link"
     post "/source/#{incidentProject}/patchinfo?cmd=updatepatchinfo"
     assert_response :success
     get "/source/#{incidentProject}/patchinfo/_patchinfo"
@@ -721,11 +851,11 @@ class MaintenanceTests < ActionController::IntegrationTest
     assert_no_tag :parent => { :tag => 'issue' }, :tag => 'issue', :attributes => { :change => nil }
     assert_no_tag :parent => { :tag => 'issue' }, :tag => 'issue', :attributes => { :change => "" }
     assert_tag :parent => { :tag => 'issue' }, :tag => 'name', :content => "1042"
-    assert_tag :parent => { :tag => 'issue' }, :tag => 'issue_tracker', :content => "bnc"
+    assert_tag :parent => { :tag => 'issue' }, :tag => 'tracker', :content => "bnc"
     assert_tag :parent => { :tag => 'issue' }, :tag => 'name', :content => "CVE-2009-0815"
-    assert_tag :parent => { :tag => 'issue' }, :tag => 'issue_tracker', :content => "cve"
+    assert_tag :parent => { :tag => 'issue' }, :tag => 'tracker', :content => "cve"
     assert_tag :parent => { :tag => 'issue' }, :tag => 'name', :content => "4201"
-    assert_tag :parent => { :tag => 'issue' }, :tag => 'issue_tracker', :content => "bnc"
+    assert_tag :parent => { :tag => 'issue' }, :tag => 'tracker', :content => "bnc"
 
     # test that another, new started branch is getting the source changes from this incident in flight
     post "/source/BaseDistro2.0/pack2", :cmd => "branch", :maintenance => 1
@@ -1015,7 +1145,38 @@ class MaintenanceTests < ActionController::IntegrationTest
                                    <state name="new" />
                                  </request>'
     assert_response 400
-    assert_tag :tag => "status", :attributes => { :code => "incident_has_no_maintenance_project" }
+    assert_tag :tag => "status", :attributes => { :code => "no_maintenance_project" }
+
+    # submit foreign package without releaseproject
+    post "/request?cmd=create", '<request>
+                                   <action type="maintenance_incident">
+                                     <source project="kde4" package="kdelibs" />
+                                     <target project="My:Maintenance" />
+                                   </action>
+                                   <state name="new" />
+                                 </request>'
+    assert_response 400
+    assert_tag :tag => "status", :attributes => { :code => "no_maintenance_release_target" }
+
+    # submit foreign package with wrong releaseproject
+    post "/request?cmd=create", '<request>
+                                   <action type="maintenance_incident">
+                                     <source project="kde4" package="kdelibs" />
+                                     <target project="My:Maintenance" releaseproject="home:tom" />
+                                   </action>
+                                   <state name="new" />
+                                 </request>'
+    assert_response 400
+    assert_tag :tag => "status", :attributes => { :code => "no_maintenance_release_target" }
+    post "/request?cmd=create", '<request>
+                                   <action type="maintenance_incident">
+                                     <source project="kde4" package="kdelibs" />
+                                     <target project="My:Maintenance" releaseproject="NOT_EXISTING" />
+                                   </action>
+                                   <state name="new" />
+                                 </request>'
+    assert_response 404
+    assert_tag :tag => "status", :attributes => { :code => "unknown_project" }
   end
 
   def test_create_invalid_release_request

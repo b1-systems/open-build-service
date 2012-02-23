@@ -481,6 +481,7 @@ our $buildinfo = [
 	'project',
 	'repository',
 	'repoarch',
+	'binary',
 	'package',
 	'srcmd5',
      ]],
@@ -1027,6 +1028,7 @@ our $request = [
 	  [ 'target' =>
 		'project',
 		'package',
+		'releaseproject', # for incident request
 	        'repository', # for merge request
 	  ],
 	  [ 'person' =>
@@ -1355,10 +1357,10 @@ our $sourcediff = [
       [ 'issues' =>
 	 [[ 'issue' =>
 		'state',
-		'issue-tracker',
+		'tracker',
 		'name',
-		'long-name',
-		'show-url',
+		'label',
+		'url',
 	 ]]
       ],
 ];
@@ -1370,7 +1372,7 @@ our $issue_trackers = [
 	    'name',
 	    'description',
 	    'kind',
-            'long-name',
+            'label',
             'enable-fetch',
 	    'regex',
 	    'user',
@@ -1379,6 +1381,37 @@ our $issue_trackers = [
 	    'url',
             'issues-updated',
      ]],
+];
+
+our $appdataitem = [ 
+    'application' =>
+    [ 'id' => 
+      'type', 
+      '_content' ],
+    'pkgname',
+    'name',
+    'summary',
+    [ 'icon' => 
+      'type', 
+      '_content' ],
+    [ 'appcategories' => 
+      [ 'appcategory' ] 
+    ],
+    [ 'mimetypes' =>
+      [ 'mimetype' ]
+    ],
+    [ 'keywords' => 
+      [ 'keyword' ]
+    ],
+    [ 'url' => 
+      'type', 
+      '_content' 
+    ]
+];
+    
+our $appdata = [
+    'applications' => 'version',
+    [ $appdataitem ]
 ];
 
 1;

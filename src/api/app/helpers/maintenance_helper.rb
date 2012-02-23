@@ -56,7 +56,7 @@ module MaintenanceHelper
     return mi
   end
 
-  def merge_into_maintenance_incident(incidentProject, base, request = nil)
+  def merge_into_maintenance_incident(incidentProject, base, releaseproject=nil, request=nil)
 
     # copy all or selected packages and project source files from base project
     # we don't branch from it to keep the link target.
@@ -80,7 +80,27 @@ module MaintenanceHelper
         next
       end
 
-      if e and not e.attributes["missingok"]
+      # use specified release project if defined
+      if releaseproject
+        if e
+          package_name = e.attributes["package"]
+        else
+          package_name = pkg.name
+        end
+        branch_params = { :target_project => incidentProject.name,
+                          :maintenance => 1, 
+                          :comment => "Initial new branch", 
+                          :project => releaseproject, :package => package_name }
+        branch_params[:requestid] = request.id if request
+        # it is fine to have new packages
+        unless DbPackage.exists_by_project_and_name(releaseproject, package_name, follow_project_links=true)
+          branch_params[:missingok]= 1
+        end
+        ret = do_branch branch_params
+        new_pkg = DbPackage.get_by_project_and_name(ret[:data][:targetproject], ret[:data][:targetpackage])
+
+      # use link target as fallback
+      elsif e and not e.attributes["missingok"]
         # linked to an existing package in an external project 
         linked_project = e.attributes["project"]
         linked_package = e.attributes["package"]
@@ -88,6 +108,7 @@ module MaintenanceHelper
         branch_params = { :target_project => incidentProject.name,
                           :maintenance => 1, 
                           :project => linked_project, :package => linked_package }
+        branch_params[:requestid] = request.id if request
         ret = do_branch branch_params
         new_pkg = DbPackage.get_by_project_and_name(ret[:data][:targetproject], ret[:data][:targetpackage])
       else
@@ -109,11 +130,12 @@ module MaintenanceHelper
         :oproject => pkg.db_project.name,
         :opackage => pkg.name,
         :keeplink => 1,
-        :comment => "Maintenance copy from project " + pkg.db_project.name
+        :expand => 1,
+        :comment => "Maintenance incident copy from project " + pkg.db_project.name
       }
       cp_params[:requestid] = request.id if request
       cp_path = "/source/#{CGI.escape(incidentProject.name)}/#{CGI.escape(new_pkg.name)}"
-      cp_path << build_query_from_hash(cp_params, [:cmd, :user, :oproject, :opackage, :comment, :requestid])
+      cp_path << build_query_from_hash(cp_params, [:cmd, :user, :oproject, :opackage, :keeplink, :expand, :comment, :requestid])
       Suse::Backend.post cp_path, nil
 
       new_pkg.sources_changed
@@ -530,6 +552,8 @@ module MaintenanceHelper
             p[:link_target_project] = p[:package].db_project
             p[:target_package] = p[:package].name
             p[:target_package] += ".#{p[:link_target_project].name}" if extend_names
+            # user specified target name
+            p[:target_package] = params[:target_package] if params[:target_package]
             logger.info "devel project is #{p[:link_target_project].name} #{p[:package].name}"
           end
         end
@@ -741,6 +765,7 @@ module MaintenanceHelper
         path = "/source/#{URI.escape(tpkg.db_project.name)}/#{URI.escape(tpkg.name)}"
         oproject = p[:link_target_project].class == DbProject ? p[:link_target_project].name : p[:link_target_project]
         myparam = { :cmd => "branch",
+                    :noservice => "1",
                     :oproject => oproject,
                     :opackage => p[:package],
                     :user => @http_user.login,
