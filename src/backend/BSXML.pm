@@ -442,10 +442,11 @@ our $buildinfo = [
 	'job',
 	'arch',
 	'hostarch',     # for cross build
+	'crossbuild',
      [[ 'sysroots' => 
         'alias',
-        'prj',
-        'repo',	
+        'project',
+        'repository',	
         'arch', 
 	'path',
      ]],                # used to set additional sysroots to get set up
