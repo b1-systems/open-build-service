@@ -447,7 +447,7 @@ our $buildinfo = [
         'prj',
         'repo',	
         'arch', 
-	'sysroot',
+	'path',
      ]],                # used to set additional sysroots to get set up
 	'error',
 	'srcmd5',
