@@ -445,8 +445,8 @@ our $buildinfo = [
   'hostsysroot',
   'targetsysroot',
 	'crossbuild',
-     [[ 'sysroots' => 
-  'alias',
+     [[ 'sysroot' => 
+  'label',
   'project',
   'repository',	
   'arch', 
