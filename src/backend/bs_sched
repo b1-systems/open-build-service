@@ -744,7 +744,6 @@ sub set_building {
     'needed' => $needed,
     'sysroot' => \@sysroots,
   };
-  $binfo->{'crossbuild'} = $crossbuild if ($crossbuild);
   $binfo->{'targetsysroot'} = $targetsysroot->{'label'} if ($crossbuild);
 
   $binfo->{'syspath'} = $syspath if $syspath;
