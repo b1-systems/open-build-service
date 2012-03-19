@@ -646,20 +646,40 @@ sub set_building {
   my $crossbuild = 0;
   my (@pdeps, @vmdeps, %runscripts, @supports);
   $crossbuild = 1 if @sysroots > 0;
-  my ($hostsysroot, $targetsysroot);
-
+  my ($hostsysroot, $targetsysroot, @hostdeps);
   if ($crossbuild) {
+    for my $sysroot (@sysroots) {
+      my $repos = $projpacks->{$sysroot->{'paths'}->[0]->{'project'}}->{'repository'} || [];
+      for my $repo (@$repos) {
+        next unless grep {$_ eq $sysroot->{'arch'}} @{$repo->{'arch'} || []};
+        next unless grep {$_->{'repository'} eq $repo->{'name'}} @{$sysroot->{'paths'} || []};
+        my $repoid = $repo->{'name'};
+        @{$sysroot->{'paths'}} = expandsearchpath($sysroot->{'paths'}->[0]->{'project'},$repo, $sysroot->{'arch'});
+        }
+    }
     $hostsysroot = (grep {$_->{'path'} eq '/' } @sysroots)[0];
 
     $targetsysroot = Build::get_targetsysroot($bconf);
     $targetsysroot = (grep {$_->{'label'} eq $targetsysroot } @sysroots)[0];
 
+    # combine searchpaths for getting combined prj conf
+    my @host_repos;
+    for my $repo (@{$hostsysroot->{'paths'}}) {
+      push @host_repos, "$repo->{'project'}/$repo->{'repository'}";
+    }
+
     #load prjconf of hostsysroot
-    my $hostsysroot_conf = getconfig($hostsysroot->{'arch'}, ["$hostsysroot->{'project'}/$hostsysroot->{'repository'}"] );
+    my $hostsysroot_conf = getconfig($hostsysroot->{'arch'}, \@host_repos );
+
     @pdeps = Build::get_preinstalls($hostsysroot_conf);
     @vmdeps = Build::get_vminstalls($hostsysroot_conf);
+    @hostdeps = Build::get_required($hostsysroot_conf);
     @supports = Build::get_supports($hostsysroot_conf);
+    my @nosupports = Build::get_nosupports($bconf, $hostsysroot->{'label'}); 
+    my %nosupports = map { $_=> $_} @nosupports;
+    @supports = grep{!$nosupports{'!'.$_} } @supports; 
     %runscripts = map {$_ => 1} Build::get_runscripts($hostsysroot_conf);
+
   } else {
     @pdeps = Build::get_preinstalls($bconf);
     @vmdeps = Build::get_vminstalls($bconf);
@@ -700,19 +720,21 @@ sub set_building {
     
     # cross dependencies
     my @crossdeps;
-    foreach my $sr (keys %crossdeps) {
+    foreach my $sr_label (keys %crossdeps) {
       # Skip host sysroot - we handle them later
-      next if $sr eq $hostsysroot->{'label'};
-      for (@{$crossdeps{$sr}}) {
-        push @crossdeps, { name => $_, sysroot => $sr };
+      next if $sr_label eq $hostsysroot->{'label'};
+      # skip not configured sysrootes
+      next unless grep {$_->{'label'} eq $sr_label} @sysroots;
+      for (@{$crossdeps{$sr_label}}) {
+        push @crossdeps, { name => $_, sysroot => $sr_label };
       }
     }
     @crossdeps = unify(@crossdeps);
 
     # Append the host- and cross-(build)deps to the full bdeps list - so they do not get unified by name
     # preinstall / vminstall / runscripts bdeps
-    my @hostdeps;
-    @hostdeps = @{$crossdeps{$hostsysroot->{'label'}}};
+
+    push @hostdeps, @{$crossdeps{$hostsysroot->{'label'}}};
     @hostdeps = unify(@pdeps, @vmdeps, @supports, @hostdeps);
     for (@hostdeps) {
       $_ = {'name' => $_};
@@ -2150,10 +2172,11 @@ sub calc_projpacks_linked {
 #
 # input:  $projid     - the project the repository belongs to
 #         $repository - the repository data
+#         $repoarch   - the repositories architecture
 # output: expanded path array
 #
 sub expandsearchpath {
-  my ($projid, $repository) = @_;
+  my ($projid, $repository, $repoarch) = @_;
   my %done;
   my @ret;
   my @path = @{$repository->{'path'} || []};
@@ -2165,7 +2188,7 @@ sub expandsearchpath {
     my $prp = "$t->{'project'}/$t->{'repository'}";
     push @ret, $t unless $done{$prp};
     $done{$prp} = 1;
-    addwatchremote('repository', $t->{'project'}, "/$t->{'repository'}/$myarch") unless $t->{'repository'} eq '_unavailable';
+    addwatchremote('repository', $t->{'project'}, "/$t->{'repository'}/$repoarch") unless $t->{'repository'} eq '_unavailable';
     if (!@path) {
       last if $done{"/$prp"};
       my ($pid, $rid) = ($t->{'project'}, $t->{'repository'});
@@ -2236,7 +2259,7 @@ sub calc_prps {
       my $repoid = $repo->{'name'};
       my $prp = "$projid/$repoid";
       push @prps, $prp;
-      my @searchpath = expandsearchpath($projid, $repo);
+      my @searchpath = expandsearchpath($projid, $repo, $myarch);
       # map searchpath to internal prp representation
       my @sp = map {"$_->{'project'}/$_->{'repository'}"} @searchpath;
       $prpsearchpath{$prp} = \@sp;
