@@ -265,7 +265,7 @@ sub addrepo {
   delete $repodatas{$prp}->{'lastscan'};
   my ($projid, $repoid) = split('/', $prp, 2);
   if ($remoteprojs{$projid}) {
-    return addrepo_remote($pool, $prp, $remoteprojs{$projid});
+    return addrepo_remote($pool, $prp, $remoteprojs{$projid}, $arch);
   }
   return addrepo_scan($pool, $prp, $arch);
 }
@@ -397,9 +397,11 @@ sub get_cross_deps {
   $c .= "$_\n" for (@{$pkgs});
 
   my $pool = BSSolv::pool->new();
-  $pool->settype('deb') if $bconf->{'type'} eq 'dsc';
+  $pool->settype('deb') if ($bconf->{'type'} || '')eq 'dsc';
 
   for my $aprp (@aprps) {
+    my %oldrepodatas = %repodatas;
+    %repodatas = ();
     if (!checkprpaccess($aprp, $prp)) {
       return ('broken', "repository $aprp is unavailable");
     }
@@ -407,6 +409,7 @@ sub get_cross_deps {
     if (!$r) {
       return ('broken', "repository $aprp is unavailable");
     }
+    %repodatas = %oldrepodatas;
   }
 
   $pool->createwhatprovides();
@@ -422,9 +425,7 @@ sub get_cross_deps {
 
   my ($eok, $edeps, $crossdeps) = Build::get_deps($bconf, [], @{$pkgs});
 
-  my @edeps = @$edeps;
-  $c .= "p: $_\n" for(@edeps);
-  return ($eok, $c);
+  return ($eok, $edeps);
 }
 
 
@@ -737,6 +738,7 @@ sub set_building {
   if ($crossbuild)
   {
     @bdeps = unify(@$edeps, @bdeps, @cbpdeps, @cbdeps);
+    # delete bconf from hash, not needed anymore
   } else {
     @bdeps = unify(@pdeps, @vmdeps, @$edeps, @bdeps, @cbpdeps, @cbdeps);
   }
@@ -773,10 +775,10 @@ sub set_building {
     # preinstall / vminstall / runscripts bdeps
 
     push @hostdeps, @{$crossdeps{$hostsysroot->{'label'}}};
-#    my ($eok, @hostdeps) = get_cross_deps($hostsysroot->{'arch'}, $hostsysroot->{'bconf'}, $hostsysroot->{'paths')};
-    my ($eok, $string) = get_cross_deps($hostsysroot->{'arch'}, $hostsysroot->{'bconf'}, $hostsysroot->{'paths'}->[0]->{'project'}, $hostsysroot->{'paths'}->[0]->{'repository'}, $hostsysroot->{'paths'}, \@hostdeps);
-print Dumper($string), "\n";
-die;
+    my ($eok, $hostdeps) = get_cross_deps($hostsysroot->{'arch'}, $hostsysroot->{'bconf'},$hostsysroot->{'paths'}->[0]->{'project'}, $hostsysroot->{'paths'}->[0]->{'repository'}, $hostsysroot->{'paths'}, \@hostdeps);
+ 
+#    my ($eok, $string) = get_cross_deps($hostsysroot->{'arch'}, $hostsysroot->{'bconf'}, $hostsysroot->{'paths'}->[0]->{'project'}, $hostsysroot->{'paths'}->[0]->{'repository'}, $hostsysroot->{'paths'}, \@hostdeps);
+    push @hostdeps, @{$hostdeps};
     @hostdeps = unify(@pdeps, @vmdeps, @supports, @hostdeps);
     for (@hostdeps) {
       $_ = {'name' => $_};
@@ -788,7 +790,7 @@ die;
 
     # No need to unify target-deps together with host- and cross-deps
     push @bdeps, @crossdeps, @hostdeps;
-
+    delete $hostsysroot->{'bconf'};
   }
 
   if ($info->{'extrasource'}) {
