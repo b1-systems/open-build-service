@@ -244,7 +244,7 @@ my %repodatas;		# our repository knowledge
 
 # add :full repo to pool
 sub addrepo {
-  my ($pool, $prp) = @_;
+  my ($pool, $prp, $arch) = @_;
 
   my $now = time();
   if ($repodatas{$prp} && $repodatas{$prp}->{'lastscan'} && $repodatas{$prp}->{'lastscan'} > $now - 8*3600) {
@@ -265,18 +265,18 @@ sub addrepo {
   delete $repodatas{$prp}->{'lastscan'};
   my ($projid, $repoid) = split('/', $prp, 2);
   if ($remoteprojs{$projid}) {
-    return addrepo_remote($pool, $prp, $remoteprojs{$projid});
+    return addrepo_remote($pool, $prp, $remoteprojs{$projid}, $arch);
   }
-  return addrepo_scan($pool, $prp);
+  return addrepo_scan($pool, $prp, $arch);
 }
 
 # add :full repo to pool, make sure repo is up-to-data by
 # scanning the directory
 sub addrepo_scan {
-  my ($pool, $prp) = @_;
+  my ($pool, $prp, $arch) = @_;
 
   print "    scanning repo $prp...\n";
-  my $dir = "$reporoot/$prp/$myarch/:full";
+  my $dir = "$reporoot/$prp/$arch/:full";
   my $cache;
   my $dirty;
   if (-s "$dir.solv") {
@@ -288,10 +288,10 @@ sub addrepo_scan {
     }
   } elsif ($BSConfig::enable_download_on_demand) {
     my ($projid) = split('/', $prp, 2);
-    my @doddata = grep {$_->{'arch'} && $_->{'arch'} eq $myarch} @{$projpacks->{$projid}->{'download'} || []};
+    my @doddata = grep {$_->{'arch'} && $_->{'arch'} eq $arch} @{$projpacks->{$projid}->{'download'} || []};
     if (@doddata) {
       my $doddata = $doddata[0];
-      eval {$cache = Meta::parse("$dir/$doddata->{'metafile'}", $doddata->{'mtype'}, { 'arch' => [ $myarch ] })};
+      eval {$cache = Meta::parse("$dir/$doddata->{'metafile'}", $doddata->{'mtype'}, { 'arch' => [ $arch ] })};
       if ($@) {
 	print "    download on demand: cannot read metadata: $@\n";
 	return undef;
@@ -386,6 +386,46 @@ sub getconfig {
   my $c = Build::read_config($arch, \@c);
   $c->{'repotype'} = [ 'rpm-md' ] unless @{$c->{'repotype'}};
   return $c;
+}
+
+sub get_cross_deps {
+  my ($arch, $bconf, $projid, $repoid, $path, $pkgs ) = @_;
+  my $prp = "$projid/$repoid";
+  my @aprps = map {"$_->{'project'}/$_->{'repository'}"} @{$path || []};
+
+  my $c;
+  $c .= "$_\n" for (@{$pkgs});
+
+  my $pool = BSSolv::pool->new();
+  $pool->settype('deb') if ($bconf->{'type'} || '')eq 'dsc';
+
+  for my $aprp (@aprps) {
+    my %oldrepodatas = %repodatas;
+    %repodatas = ();
+    if (!checkprpaccess($aprp, $prp)) {
+      return ('broken', "repository $aprp is unavailable");
+    }
+    my $r = addrepo($pool, $aprp, $arch);
+    if (!$r) {
+      return ('broken', "repository $aprp is unavailable");
+    }
+    %repodatas = %oldrepodatas;
+  }
+
+  $pool->createwhatprovides();
+
+  my $xp = BSSolv::expander->new($pool, $bconf);
+  my $ownexpand = sub {
+    $_[0] = $xp;
+    goto &BSSolv::expander::expand;
+  };
+  no warnings 'redefine';
+  local *Build::expand = $ownexpand;
+  use warnings 'redefine';
+
+  my ($eok, $edeps, $crossdeps) = Build::get_deps($bconf, [], @{$pkgs});
+
+  return ($eok, $edeps);
 }
 
 
@@ -657,28 +697,27 @@ sub set_building {
         @{$sysroot->{'paths'}} = expandsearchpath($sysroot->{'paths'}->[0]->{'project'},$repo, $sysroot->{'arch'});
         }
     }
-    $hostsysroot = (grep {$_->{'path'} eq '/' } @sysroots)[0];
 
     $targetsysroot = Build::get_targetsysroot($bconf);
     $targetsysroot = (grep {$_->{'label'} eq $targetsysroot } @sysroots)[0];
 
+    $hostsysroot = (grep {$_->{'path'} eq '/' } @sysroots)[0];
     # combine searchpaths for getting combined prj conf
     my @host_repos;
     for my $repo (@{$hostsysroot->{'paths'}}) {
       push @host_repos, "$repo->{'project'}/$repo->{'repository'}";
     }
-
     #load prjconf of hostsysroot
-    my $hostsysroot_conf = getconfig($hostsysroot->{'arch'}, \@host_repos );
+    $hostsysroot->{'bconf'} = getconfig($hostsysroot->{'arch'}, \@host_repos );
 
-    @pdeps = Build::get_preinstalls($hostsysroot_conf);
-    @vmdeps = Build::get_vminstalls($hostsysroot_conf);
-    @hostdeps = Build::get_required($hostsysroot_conf);
-    @supports = Build::get_supports($hostsysroot_conf);
+    @pdeps = Build::get_preinstalls($hostsysroot->{'bconf'});
+    @vmdeps = Build::get_vminstalls($hostsysroot->{'bconf'});
+    @hostdeps = Build::get_required($hostsysroot->{'bconf'});
+    @supports = Build::get_supports($hostsysroot->{'bconf'});
     my @nosupports = Build::get_nosupports($bconf, $hostsysroot->{'label'}); 
     my %nosupports = map { $_=> $_} @nosupports;
     @supports = grep{!$nosupports{'!'.$_} } @supports; 
-    %runscripts = map {$_ => 1} Build::get_runscripts($hostsysroot_conf);
+    %runscripts = map {$_ => 1} Build::get_runscripts($hostsysroot->{'bconf'});
 
   } else {
     @pdeps = Build::get_preinstalls($bconf);
@@ -699,6 +738,7 @@ sub set_building {
   if ($crossbuild)
   {
     @bdeps = unify(@$edeps, @bdeps, @cbpdeps, @cbdeps);
+    # delete bconf from hash, not needed anymore
   } else {
     @bdeps = unify(@pdeps, @vmdeps, @$edeps, @bdeps, @cbpdeps, @cbdeps);
   }
@@ -735,6 +775,10 @@ sub set_building {
     # preinstall / vminstall / runscripts bdeps
 
     push @hostdeps, @{$crossdeps{$hostsysroot->{'label'}}};
+    my ($eok, $hostdeps) = get_cross_deps($hostsysroot->{'arch'}, $hostsysroot->{'bconf'},$hostsysroot->{'paths'}->[0]->{'project'}, $hostsysroot->{'paths'}->[0]->{'repository'}, $hostsysroot->{'paths'}, \@hostdeps);
+ 
+#    my ($eok, $string) = get_cross_deps($hostsysroot->{'arch'}, $hostsysroot->{'bconf'}, $hostsysroot->{'paths'}->[0]->{'project'}, $hostsysroot->{'paths'}->[0]->{'repository'}, $hostsysroot->{'paths'}, \@hostdeps);
+    push @hostdeps, @{$hostdeps};
     @hostdeps = unify(@pdeps, @vmdeps, @supports, @hostdeps);
     for (@hostdeps) {
       $_ = {'name' => $_};
@@ -746,7 +790,7 @@ sub set_building {
 
     # No need to unify target-deps together with host- and cross-deps
     push @bdeps, @crossdeps, @hostdeps;
-
+    delete $hostsysroot->{'bconf'};
   }
 
   if ($info->{'extrasource'}) {
@@ -2444,13 +2488,13 @@ sub fetchremoteconfig {
 }
 
 sub addrepo_remote {
-  my ($pool, $prp, $remoteproj) = @_;
+  my ($pool, $prp, $remoteproj, $arch) = @_;
 
   my ($projid, $repoid) = split('/', $prp, 2);
   return undef if !$remoteproj || $remoteproj->{'error'};
   print "    fetching remote repository state for $prp\n";
   my $param = {
-    'uri' => "$remoteproj->{'remoteurl'}/build/$remoteproj->{'remoteproject'}/$repoid/$myarch/_repository",
+    'uri' => "$remoteproj->{'remoteurl'}/build/$remoteproj->{'remoteproject'}/$repoid/$arch/_repository",
     'timeout' => 200,
     'receiver' => \&BSHTTP::cpio_receiver,
     'proxy' => $proxy,
@@ -2469,7 +2513,7 @@ sub addrepo_remote {
     warn($@);
     my $error = $@;
     $error =~ s/\n$//s;
-    addretryevent({'type' => 'repository', 'project' => $projid, 'repository' => $repoid, 'arch' => $myarch}) if $error !~ /remote error:/;
+    addretryevent({'type' => 'repository', 'project' => $projid, 'repository' => $repoid, 'arch' => $arch}) if $error !~ /remote error:/;
     return undef;
   }
   my %cpio = map {$_->{'name'} => $_->{'data'}} @{$cpio || []};
@@ -2899,7 +2943,7 @@ sub checkkiwiimage {
       print "        repository $aprp is unavailable";
       return ('broken', "repository $aprp is unavailable");
     }
-    my $r = addrepo($pool, $aprp);
+    my $r = addrepo($pool, $aprp, $myarch);
     if (!$r) {
       print "      - $packid (kiwi-image)\n";
       print "        repository $aprp is unavailable";
@@ -3019,7 +3063,7 @@ sub rebuildkiwiimage {
 	print "        repository $aprp is unavailable";
 	return ('broken', "repository $aprp is unavailable");
       }
-      my $r = addrepo($pool, $aprp);
+      my $r = addrepo($pool, $aprp, $myarch);
       if (!$r) {
         print "      - $packid (kiwi-image)\n";
         print "        repository $aprp is unavailable";
@@ -3117,7 +3161,7 @@ sub checkkiwiproduct {
       }
       $myarch = $BSConfig::localarch if $myarch eq 'local' && $BSConfig::localarch;
       $repodatas{$aprp} = {'dontwrite' => 1} if $myarch ne $savemyarch;
-      my $r = addrepo($pool, $aprp);
+      my $r = addrepo($pool, $aprp, $myarch);
       delete $repodatas{$aprp} if $myarch ne $savemyarch;
       $myarch = $savemyarch;
       if (!$r) {
@@ -4892,7 +4936,7 @@ while(1) {
 	  print "reading packages of repository $projid/$repoid\n";
 	  delete $repodatas{$prp};
 	  my $pool = BSSolv::pool->new();
-          addrepo($pool, $prp);
+          addrepo($pool, $prp, $myarch);
 	  undef $pool;
 	  $changed_high{$prp} = 2;
           delete $repounchanged{$prp};
@@ -5457,7 +5501,7 @@ while(1) {
       $error = "repository '$rprp' is unavailable";
       last;
     }
-    my $r = addrepo($pool, $rprp);
+    my $r = addrepo($pool, $rprp, $myarch);
     if (!$r) {
       $error = "repository '$rprp' is unavailable";
       last;
