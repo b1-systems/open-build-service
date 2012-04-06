@@ -244,7 +244,7 @@ my %repodatas;		# our repository knowledge
 
 # add :full repo to pool
 sub addrepo {
-  my ($pool, $prp) = @_;
+  my ($pool, $prp, $arch) = @_;
 
   my $now = time();
   if ($repodatas{$prp} && $repodatas{$prp}->{'lastscan'} && $repodatas{$prp}->{'lastscan'} > $now - 8*3600) {
@@ -265,18 +265,18 @@ sub addrepo {
   delete $repodatas{$prp}->{'lastscan'};
   my ($projid, $repoid) = split('/', $prp, 2);
   if ($remoteprojs{$projid}) {
-    return addrepo_remote($pool, $prp, $remoteprojs{$projid});
+    return addrepo_remote($pool, $prp, $remoteprojs{$projid}, $arch);
   }
-  return addrepo_scan($pool, $prp);
+  return addrepo_scan($pool, $prp, $arch);
 }
 
 # add :full repo to pool, make sure repo is up-to-data by
 # scanning the directory
 sub addrepo_scan {
-  my ($pool, $prp) = @_;
+  my ($pool, $prp, $arch) = @_;
 
   print "    scanning repo $prp...\n";
-  my $dir = "$reporoot/$prp/$myarch/:full";
+  my $dir = "$reporoot/$prp/$arch/:full";
   my $cache;
   my $dirty;
   if (-s "$dir.solv") {
@@ -288,10 +288,10 @@ sub addrepo_scan {
     }
   } elsif ($BSConfig::enable_download_on_demand) {
     my ($projid) = split('/', $prp, 2);
-    my @doddata = grep {$_->{'arch'} && $_->{'arch'} eq $myarch} @{$projpacks->{$projid}->{'download'} || []};
+    my @doddata = grep {$_->{'arch'} && $_->{'arch'} eq $arch} @{$projpacks->{$projid}->{'download'} || []};
     if (@doddata) {
       my $doddata = $doddata[0];
-      eval {$cache = Meta::parse("$dir/$doddata->{'metafile'}", $doddata->{'mtype'}, { 'arch' => [ $myarch ] })};
+      eval {$cache = Meta::parse("$dir/$doddata->{'metafile'}", $doddata->{'mtype'}, { 'arch' => [ $arch ] })};
       if ($@) {
 	print "    download on demand: cannot read metadata: $@\n";
 	return undef;
@@ -386,6 +386,46 @@ sub getconfig {
   my $c = Build::read_config($arch, \@c);
   $c->{'repotype'} = [ 'rpm-md' ] unless @{$c->{'repotype'}};
   return $c;
+}
+
+sub get_cross_deps {
+  my ($arch, $bconf, $projid, $repoid, $path, $pkgs ) = @_;
+  my $prp = "$projid/$repoid";
+  my @aprps = map {"$_->{'project'}/$_->{'repository'}"} @{$path || []};
+
+  my $c;
+  $c .= "$_\n" for (@{$pkgs});
+
+  my $pool = BSSolv::pool->new();
+  $pool->settype('deb') if ($bconf->{'type'} || '')eq 'dsc';
+
+  for my $aprp (@aprps) {
+    my %oldrepodatas = %repodatas;
+    %repodatas = ();
+    if (!checkprpaccess($aprp, $prp)) {
+      return ('broken', "repository $aprp is unavailable");
+    }
+    my $r = addrepo($pool, $aprp, $arch);
+    if (!$r) {
+      return ('broken', "repository $aprp is unavailable");
+    }
+    %repodatas = %oldrepodatas;
+  }
+
+  $pool->createwhatprovides();
+
+  my $xp = BSSolv::expander->new($pool, $bconf);
+  my $ownexpand = sub {
+    $_[0] = $xp;
+    goto &BSSolv::expander::expand;
+  };
+  no warnings 'redefine';
+  local *Build::expand = $ownexpand;
+  use warnings 'redefine';
+
+  my ($eok, $edeps, $crossdeps) = Build::get_deps($bconf, [], @{$pkgs});
+
+  return ($eok, $edeps);
 }
 
 
@@ -537,6 +577,7 @@ sub add_crossmarker {
 #         $reason        - what triggered the build
 #         $relsyncmax    - bcnt sync data
 #         $needed        - packages blocked by this job
+#         %crossdeps     - cross sysroot dependency
 #
 # output: $job           - the job identifier
 #         $error         - in case we could not start the job
@@ -547,7 +588,7 @@ sub add_crossmarker {
 # not that hard, was it?
 #
 sub set_building {
-  my ($projid, $repoid, $packid, $pdata, $info, $bconf, $subpacks, $edeps, $prpsearchpath, $reason, $relsyncmax, $needed) = @_;
+  my ($projid, $repoid, $packid, $pdata, $info, $bconf, $subpacks, $edeps, $prpsearchpath, $reason, $relsyncmax, $needed, %crossdeps) = @_;
 
   my $prp = "$projid/$repoid";
   my $srcmd5 = $pdata->{'srcmd5'};
@@ -592,6 +633,8 @@ sub set_building {
 
   # calculate packages needed for building
   my @bdeps = ( @{$info->{'dep'} || []}, @{$info->{'prereq'} || []} );
+  # get original bdeps state which reflects the plain deps of the targets
+  my @origin_bdeps = @bdeps;
 
   if ($packtype eq 'kiwi') {
     # packages used for build environment, this should go to project config ...
@@ -599,8 +642,11 @@ sub set_building {
     push @bdeps, grep {/^kiwi-.*:/} @{$info->{'dep'} || []};
   }
 
-  my $eok;
-  ($eok, @bdeps) = Build::get_build($bconf, $subpacks, @bdeps);
+
+  my ($eok, $bdeps, $crossbuilddeps) = Build::get_build($bconf, $subpacks, @bdeps);
+  # $crossbuilddeps should be in theorey always empty, since cross deps got expanded earlier.
+  # FIXME: fail if crossbuilddeps i not empty and mark them as unresolvable.
+  @bdeps = @$bdeps;
   if (!$eok) {
     print "        unresolvables:\n";
     print "          $_\n" for @bdeps;
@@ -636,28 +682,117 @@ sub set_building {
   $reason->{'time'} = $now;
   writexml("$reporoot/$prp/$myarch/$packid/.reason", "$reporoot/$prp/$myarch/$packid/reason", $reason, $BSXML::buildreason);
 
-  my @pdeps = Build::get_preinstalls($bconf);
-  my @vmdeps = Build::get_vminstalls($bconf);
+  my @sysroots = Build::get_sysroots($bconf);
+  my $crossbuild = 0;
+  my (@pdeps, @vmdeps, %runscripts, @supports);
+  $crossbuild = 1 if @sysroots > 0;
+  my ($hostsysroot, $targetsysroot, @hostdeps);
+  if ($crossbuild) {
+    for my $sysroot (@sysroots) {
+      my $repos = $projpacks->{$sysroot->{'paths'}->[0]->{'project'}}->{'repository'} || [];
+      for my $repo (@$repos) {
+        next unless grep {$_ eq $sysroot->{'arch'}} @{$repo->{'arch'} || []};
+        next unless grep {$_->{'repository'} eq $repo->{'name'}} @{$sysroot->{'paths'} || []};
+        my $repoid = $repo->{'name'};
+        @{$sysroot->{'paths'}} = expandsearchpath($sysroot->{'paths'}->[0]->{'project'},$repo, $sysroot->{'arch'});
+        }
+    }
+
+    $targetsysroot = Build::get_targetsysroot($bconf);
+    $targetsysroot = (grep {$_->{'label'} eq $targetsysroot } @sysroots)[0];
+
+    $hostsysroot = (grep {$_->{'path'} eq '/' } @sysroots)[0];
+    # combine searchpaths for getting combined prj conf
+    my @host_repos;
+    for my $repo (@{$hostsysroot->{'paths'}}) {
+      push @host_repos, "$repo->{'project'}/$repo->{'repository'}";
+    }
+    #load prjconf of hostsysroot
+    $hostsysroot->{'bconf'} = getconfig($hostsysroot->{'arch'}, \@host_repos );
+
+    @pdeps = Build::get_preinstalls($hostsysroot->{'bconf'});
+    @vmdeps = Build::get_vminstalls($hostsysroot->{'bconf'});
+    @hostdeps = Build::get_required($hostsysroot->{'bconf'});
+    @supports = Build::get_supports($hostsysroot->{'bconf'});
+    my @nosupports = Build::get_nosupports($bconf, $hostsysroot->{'label'}); 
+    my %nosupports = map { $_=> $_} @nosupports;
+    @supports = grep{!$nosupports{'!'.$_} } @supports; 
+    %runscripts = map {$_ => 1} Build::get_runscripts($hostsysroot->{'bconf'});
+
+  } else {
+    @pdeps = Build::get_preinstalls($bconf);
+    @vmdeps = Build::get_vminstalls($bconf);
+    %runscripts = map {$_ => 1} Build::get_runscripts($bconf);
+    # Support: has never been required for non-crossbuild
+  }
   my @cbpdeps = Build::get_cbpreinstalls($bconf); # crossbuild preinstall
   my @cbdeps = Build::get_cbinstalls($bconf);  # crossbuild install
-  my %runscripts = map {$_ => 1} Build::get_runscripts($bconf);
   my %bdeps = map {$_ => 1} @bdeps;
+  my %origin_bdeps = map {$_ => 1} @origin_bdeps;
   my %pdeps = map {$_ => 1} @pdeps;
   my %vmdeps = map {$_ => 1} @vmdeps;
   my %cbpdeps = map {$_ => 1} @cbpdeps;
   my %cbdeps = map {$_ => 1} @cbdeps;
   my %edeps = map {$_ => 1} @$edeps;
-  @bdeps = unify(@pdeps, @vmdeps, @$edeps, @bdeps, @cbpdeps, @cbdeps);
+
+  if ($crossbuild)
+  {
+    @bdeps = unify(@$edeps, @bdeps, @cbpdeps, @cbdeps);
+    # delete bconf from hash, not needed anymore
+  } else {
+    @bdeps = unify(@pdeps, @vmdeps, @$edeps, @bdeps, @cbpdeps, @cbdeps);
+  }
+
   for (@bdeps) {
     $_ = {'name' => $_};
-    $_->{'preinstall'} = 1 if $pdeps{$_->{'name'}};
-    $_->{'vminstall'} = 1 if $vmdeps{$_->{'name'}};
+    $_->{'preinstall'} = 1 if $pdeps{$_->{'name'}} && !$crossbuild;
+    $_->{'vminstall'} = 1 if $vmdeps{$_->{'name'}} && !$crossbuild;
     $_->{'cbpreinstall'} = 1 if $cbpdeps{$_->{'name'}};
     $_->{'cbinstall'} = 1 if $cbdeps{$_->{'name'}};
-    $_->{'runscripts'} = 1 if $runscripts{$_->{'name'}};
+    $_->{'runscripts'} = 1 if $runscripts{$_->{'name'}} && !$crossbuild;
     $_->{'notmeta'} = 1 unless $edeps{$_->{'name'}};
     $_->{'noinstall'} = 1 if $packtype eq 'kiwi' && $edeps{$_->{'name'}} && !($bdeps{$_->{'name'}} || $vmdeps{$_->{'name'}} || $pdeps{$_->{'name'}});
+    $_->{'sysroot'} = $targetsysroot->{'label'} if $crossbuild;
+
   }
+
+  if ($crossbuild) {
+    
+    # cross dependencies
+    my @crossdeps;
+    foreach my $sr_label (keys %crossdeps) {
+      # Skip host sysroot - we handle them later
+      next if $sr_label eq $hostsysroot->{'label'};
+      # skip not configured sysrootes
+      next unless grep {$_->{'label'} eq $sr_label} @sysroots;
+      for (@{$crossdeps{$sr_label}}) {
+        push @crossdeps, { name => $_, sysroot => $sr_label };
+      }
+    }
+    @crossdeps = unify(@crossdeps);
+
+    # Append the host- and cross-(build)deps to the full bdeps list - so they do not get unified by name
+    # preinstall / vminstall / runscripts bdeps
+
+    push @hostdeps, @{$crossdeps{$hostsysroot->{'label'}} || []};
+    my ($eok, $hostdeps) = get_cross_deps($hostsysroot->{'arch'}, $hostsysroot->{'bconf'},$hostsysroot->{'paths'}->[0]->{'project'}, $hostsysroot->{'paths'}->[0]->{'repository'}, $hostsysroot->{'paths'}, \@hostdeps);
+ 
+#    my ($eok, $string) = get_cross_deps($hostsysroot->{'arch'}, $hostsysroot->{'bconf'}, $hostsysroot->{'paths'}->[0]->{'project'}, $hostsysroot->{'paths'}->[0]->{'repository'}, $hostsysroot->{'paths'}, \@hostdeps);
+    push @hostdeps, @{$hostdeps};
+    @hostdeps = unify(@pdeps, @vmdeps, @supports, @hostdeps);
+    for (@hostdeps) {
+      $_ = {'name' => $_};
+      $_->{'preinstall'} = 1 if $pdeps{$_->{'name'}};
+      $_->{'vminstall'} = 1 if $vmdeps{$_->{'name'}};
+      $_->{'runscripts'} = 1 if $runscripts{$_->{'name'}};
+      $_->{'sysroot'} = $hostsysroot->{'label'};
+    }
+
+    # No need to unify target-deps together with host- and cross-deps
+    push @bdeps, @crossdeps, @hostdeps;
+    delete $hostsysroot->{'bconf'};
+  }
+
   if ($info->{'extrasource'}) {
     push @bdeps, map {{
       'name' => $_->{'file'}, 'version' => '', 'repoarch' => 'src',
@@ -686,7 +821,10 @@ sub set_building {
     'bdep' => \@bdeps,
     'path' => $searchpath,
     'needed' => $needed,
+    'sysroot' => \@sysroots,
   };
+  $binfo->{'targetsysroot'} = $targetsysroot->{'label'} if ($crossbuild);
+
   $binfo->{'syspath'} = $syspath if $syspath;
   $binfo->{'hostarch'} = $bconf->{'hostarch'} if $bconf->{'hostarch'};
   if ($pdata->{'revtime'}) {
@@ -879,7 +1017,9 @@ sub createdeltajob {
   }
   # create job
   my $prptype = $bconf->{'type'};
-  my ($eok, @bdeps) = Build::get_build($bconf, [], "deltarpm");
+  my ($eok, $bdeps, $crossdeps) = Build::get_build($bconf, [], "deltarpm");
+  # FIXME: resolve and handle $crossdeps
+  my @bdeps = @$bdeps;
   if (!$eok) {
     print "        unresolvables:\n";
     print "          $_\n" for @bdeps;
@@ -2117,10 +2257,11 @@ sub calc_projpacks_linked {
 #
 # input:  $projid     - the project the repository belongs to
 #         $repository - the repository data
+#         $repoarch   - the repositories architecture
 # output: expanded path array
 #
 sub expandsearchpath {
-  my ($projid, $repository) = @_;
+  my ($projid, $repository, $repoarch) = @_;
   my %done;
   my @ret;
   my @path = @{$repository->{'path'} || []};
@@ -2132,7 +2273,7 @@ sub expandsearchpath {
     my $prp = "$t->{'project'}/$t->{'repository'}";
     push @ret, $t unless $done{$prp};
     $done{$prp} = 1;
-    addwatchremote('repository', $t->{'project'}, "/$t->{'repository'}/$myarch") unless $t->{'repository'} eq '_unavailable';
+    addwatchremote('repository', $t->{'project'}, "/$t->{'repository'}/$repoarch") unless $t->{'repository'} eq '_unavailable';
     if (!@path) {
       last if $done{"/$prp"};
       my ($pid, $rid) = ($t->{'project'}, $t->{'repository'});
@@ -2203,7 +2344,7 @@ sub calc_prps {
       my $repoid = $repo->{'name'};
       my $prp = "$projid/$repoid";
       push @prps, $prp;
-      my @searchpath = expandsearchpath($projid, $repo);
+      my @searchpath = expandsearchpath($projid, $repo, $myarch);
       # map searchpath to internal prp representation
       my @sp = map {"$_->{'project'}/$_->{'repository'}"} @searchpath;
       $prpsearchpath{$prp} = \@sp;
@@ -2388,13 +2529,13 @@ sub fetchremoteconfig {
 }
 
 sub addrepo_remote {
-  my ($pool, $prp, $remoteproj) = @_;
+  my ($pool, $prp, $remoteproj, $arch) = @_;
 
   my ($projid, $repoid) = split('/', $prp, 2);
   return undef if !$remoteproj || $remoteproj->{'error'};
   print "    fetching remote repository state for $prp\n";
   my $param = {
-    'uri' => "$remoteproj->{'remoteurl'}/build/$remoteproj->{'remoteproject'}/$repoid/$myarch/_repository",
+    'uri' => "$remoteproj->{'remoteurl'}/build/$remoteproj->{'remoteproject'}/$repoid/$arch/_repository",
     'timeout' => 200,
     'receiver' => \&BSHTTP::cpio_receiver,
     'proxy' => $proxy,
@@ -2413,7 +2554,7 @@ sub addrepo_remote {
     warn($@);
     my $error = $@;
     $error =~ s/\n$//s;
-    addretryevent({'type' => 'repository', 'project' => $projid, 'repository' => $repoid, 'arch' => $myarch}) if $error !~ /remote error:/;
+    addretryevent({'type' => 'repository', 'project' => $projid, 'repository' => $repoid, 'arch' => $arch}) if $error !~ /remote error:/;
     return undef;
   }
   my %cpio = map {$_->{'name'} => $_->{'data'}} @{$cpio || []};
@@ -2852,7 +2993,7 @@ sub checkkiwiimage {
       print "        repository $aprp is unavailable";
       return ('broken', "repository $aprp is unavailable");
     }
-    my $r = addrepo($pool, $aprp);
+    my $r = addrepo($pool, $aprp, $myarch);
     if (!$r) {
       print "      - $packid (kiwi-image)\n";
       print "        repository $aprp is unavailable";
@@ -2873,7 +3014,10 @@ sub checkkiwiimage {
   no warnings 'redefine';
   local *Build::expand = $ownexpand;
   use warnings 'redefine';
-  my ($eok, @edeps) = Build::get_deps($bconf, [], @deps);
+
+  my ($eok, $edeps, $crossdeps) = Build::get_deps($bconf, [], @deps);
+  # FIXME: resolve and handle $crossdeps
+  my @edeps = @$edeps;
   if (!$eok) {
     print "      - $packid (kiwi-image)\n";
     print "        unresolvables:\n";
@@ -2969,7 +3113,7 @@ sub rebuildkiwiimage {
 	print "        repository $aprp is unavailable";
 	return ('broken', "repository $aprp is unavailable");
       }
-      my $r = addrepo($pool, $aprp);
+      my $r = addrepo($pool, $aprp, $myarch);
       if (!$r) {
         print "      - $packid (kiwi-image)\n";
         print "        repository $aprp is unavailable";
@@ -3067,7 +3211,7 @@ sub checkkiwiproduct {
       }
       $myarch = $BSConfig::localarch if $myarch eq 'local' && $BSConfig::localarch;
       $repodatas{$aprp} = {'dontwrite' => 1} if $myarch ne $savemyarch;
-      my $r = addrepo($pool, $aprp);
+      my $r = addrepo($pool, $aprp, $myarch);
       delete $repodatas{$aprp} if $myarch ne $savemyarch;
       $myarch = $savemyarch;
       if (!$r) {
@@ -3085,8 +3229,9 @@ sub checkkiwiproduct {
     no warnings 'redefine';
     local *Build::expand = $ownexpand;
     use warnings 'redefine';
-    my $eok;
-    ($eok, @kdeps) = Build::get_build($bconf, [], @kdeps);
+    my ($eok, $kdeps, $crossdeps) = Build::get_build($bconf, [], @kdeps);
+    # FIXME: resolve and handle $crossdeps
+    @kdeps = @$kdeps; 
     if (!$eok) {
       print "        unresolvables:\n";
       print "          $_\n" for @kdeps;
@@ -4869,7 +5014,7 @@ while(1) {
 	  print "reading packages of repository $projid/$repoid\n";
 	  delete $repodatas{$prp};
 	  my $pool = BSSolv::pool->new();
-          addrepo($pool, $prp);
+          addrepo($pool, $prp, $myarch);
 	  undef $pool;
 	  $changed_high{$prp} = 2;
           delete $repounchanged{$prp};
@@ -5434,7 +5579,7 @@ while(1) {
       $error = "repository '$rprp' is unavailable";
       last;
     }
-    my $r = addrepo($pool, $rprp);
+    my $r = addrepo($pool, $rprp, $myarch);
     if (!$r) {
       $error = "repository '$rprp' is unavailable";
       last;
@@ -5476,6 +5621,7 @@ while(1) {
 
   my $prpchecktime = time();
 
+  my %crossdeps;
   # Step 2c: expand all dependencies, put them in %pdeps hash
   my %subpacks;
   push @{$subpacks{$dep2src{$_}}}, $_ for keys %dep2src;
@@ -5528,7 +5674,10 @@ while(1) {
       $pdeps{$packid} = \@deps;
       next;
     }
-    my ($eok, @edeps) = Build::get_deps($bconf, $subpacks{$info->{'name'}}, @deps);
+    my ($eok, $edeps, $crossdeps) = Build::get_deps($bconf, $subpacks{$info->{'name'}}, @deps);
+    # FIXME: resolve and handle $crossdeps
+    my @edeps = @$edeps;
+    %crossdeps = %$crossdeps;
     if (! $eok) {
       @edeps = @deps;
       $experrors{$packid} = 1;
@@ -5853,7 +6002,11 @@ while(1) {
     if ($experrors{$packid}) {
       # retry expansion of this one
       my @deps = @{$info->{'dep'} || []};
-      my ($eok, @edeps) = Build::get_deps($bconf, $subpacks{$info->{'name'}}, @deps);
+
+      my ($eok, $edeps, $crossdeps) = Build::get_deps($bconf, $subpacks{$info->{'name'}}, @deps);
+      # FIXME: resolve and handle $crossdeps
+      my @edeps = @$edeps;
+      %crossdeps = %$crossdeps;
       if (! $eok) {
 	print "      - $packid ($packtype)\n";
 	print "        unresolvables:\n";
@@ -6077,7 +6230,7 @@ relsynccheck:
         $needed->{$_}++ for map { $dep2src{$_} || $_ } @{$pdeps{$p}};
       }
     }
-    my ($job, $joberror) = set_building($projid, $repoid, $packid, $pdata, $info, $bconf, $subpacks{$info->{'name'}}, $pdeps{$packid}, $prpsearchpath{$prp}, $reason, $relsyncmax, $needed->{$packid} || 0);
+    my ($job, $joberror) = set_building($projid, $repoid, $packid, $pdata, $info, $bconf, $subpacks{$info->{'name'}}, $pdeps{$packid}, $prpsearchpath{$prp}, $reason, $relsyncmax, $needed->{$packid} || 0, %crossdeps);
     if (!$job) {
       # could not start job...
       if ($joberror =~ /^unresolvable: (.*)$/) {
