@@ -16,8 +16,8 @@ class CrossBuildTest < ActionController::IntegrationTest
     assert_response :success
     get "/source/home:tom:CrossBuild/_meta"
     assert_response :success
-    assert_xml_tag :tag => "path", :attributes => { :project => 'BaseDistro', :repository => 'BaseDistro_repo' }
-    assert_xml_tag :tag => "hostsystem", :attributes => { :project => 'BaseDistro2.0', :repository => 'BaseDistro2_repo' }
+    assert_tag :tag => "path", :attributes => { :project => 'BaseDistro', :repository => 'BaseDistro_repo' }
+    assert_tag :tag => "hostsystem", :attributes => { :project => 'BaseDistro2.0', :repository => 'BaseDistro2_repo' }
 
     put "/source/home:tom:CrossBuild/_meta", "<project name='home:tom:CrossBuild'> <title/> <description/>
             <repository name='standard'>
@@ -26,7 +26,7 @@ class CrossBuildTest < ActionController::IntegrationTest
             </repository>
           </project>"
     assert_response 404
-    assert_xml_tag :tag => "status", :attributes => { :code => "unknown_project" }
+    assert_tag :tag => "status", :attributes => { :code => "unknown_project" }
   end
 
 end
