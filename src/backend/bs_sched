@@ -5606,6 +5606,7 @@ while(1) {
       $error = "repository '$rprp' is unavailable";
       last;
     }
+#FIXME create pool here?
     my $r = addrepo($pool, $rprp, $myarch);
     if (!$r) {
       $error = "repository '$rprp' is unavailable";
