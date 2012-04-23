@@ -1,3 +1,5 @@
+<% no_target ||= false %>
+
 <% content_for :content_for_head do %>
   <%= stylesheet_link_tag 'jquery.tooltip' %>
 <% end %>
@@ -15,6 +17,7 @@
         <%= "'project': '" + project.to_s + "'," unless not defined?(project) %>
         <%= "'package': '" + package.to_s + "'," unless not defined?(package) %>
         <%= "'subprojects': 'true'," if defined?(subprojects) && subprojects %>
+        <%= "'no_target': 'true'," if no_target %>
       },
       success: function(data) {
         $('#request_display').html(data);
@@ -35,13 +38,13 @@
 
 <p>
   Display
-  <%= select_tag("request_type_select", options_for_select(['all', 'submit', 'delete', 'add_role', 'change_devel', 'maintenance_incident', 'maintenance_release']), :onchange => "updateRequestDisplay();") %>
+  <%= select_tag("request_type_select", options_for_select(['all', 'submit', 'delete', 'add_role', 'change_devel', 'maintenance_incident', 'maintenance_release'], @default_request_type), :onchange => "updateRequestDisplay();") %>
   requests in state
-  <%= select_tag("request_state_select", options_for_select([['new or review', 'new,review'], 'new', 'review', 'accepted', 'declined', 'revoked', 'superseded']), :onchange => "updateRequestDisplay();") %>
+  <%= select_tag("request_state_select", options_for_select([['new or review', 'new,review'], 'new', 'review', 'accepted', 'declined', 'revoked', 'superseded'], @default_request_state), :onchange => "updateRequestDisplay();") %>
   <span id="request_count"><%= "(" + requests.length.to_s + ")" unless not defined?(requests) or requests.blank? %></span>:
   <%= image_tag('ajax-loader.gif', :id => "spinner", :class => "hidden") %>
 </p>
 
 <div id="request_display">
-  <%= render(:partial => 'shared/requests', :locals => { :requests => requests }) unless not defined?(requests) %>
+  <%= render(:partial => 'shared/requests', :locals => {:requests => requests, :no_target => no_target}) unless not defined?(requests) %>
 </div>

@@ -1,9 +1,10 @@
 <% short ||= false %>
-<% no_gravatar ||= false %>
+<% no_icon ||= false %>
+<% no_link ||= false %>
 <% realname = Person.realname_for_login(user) %>
 
-<% unless no_gravatar %>
-  <%= gravatar_image(Person.email_for_login(user)) %>
+<% unless no_icon %>
+  <%= user_icon(user) %>
 <% end %>
 
 <% unless realname.empty? or short == true %>
@@ -12,7 +13,7 @@
   <% printed_name = user %>
 <% end %>
 <% if @user %>
-  <%= link_to(printed_name, :controller => 'home', :user => user) %>
+  <%= link_to_if(!no_link, printed_name, :controller => 'home', :user => user) %>
 <% else %>
   <%= printed_name %>
 <% end %>

@@ -8,7 +8,7 @@
 <% content_for :content_for_head do %>
   <%= stylesheet_link_tag 'jquery.autocomplete' %>
 <% end %>
-<%= javascript_include_tag 'jquery.autocomplete.pack', 'jquery.ajaxmanager' %>
+<%= javascript_include_tag 'jquery.autocomplete.pack' %>
 
 <% content_for :ready_function do %>
   $('#target_repo').hide();
@@ -44,7 +44,6 @@
   });
 <% end %>
 
-<div class="clear"></div>
 <h2>Advanced Search for Build Targets</h2>
 
 <% form_tag({:action => :save_targets, :project => @project}) do -%>

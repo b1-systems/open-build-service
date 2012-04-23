@@ -1,5 +1,5 @@
 #! /bin/sh
-# Copyright (c) 2010, Novell Inc.
+# Copyright (c) 2010-12, SUSE Inc.
 #
 # Author: adrian@suse.de
 #
@@ -24,8 +24,6 @@
 # package or appliance defaults
 if [ -e /etc/sysconfig/obs-server ]; then
   source /etc/sysconfig/obs-server
-else
-  source /etc/sysconfig/obs-worker
 fi
 
 # instance defaults
@@ -121,8 +119,86 @@ case "$1" in
 			fi
 		fi
 
+		echo "Looking for OBS Server LVM Volume"
+                if [ -e /dev/OBS/server ]; then
+			[ -L /obs ] && rm /obs
+			[ -d /obs ] || { rm -f /obs; mkdir /obs ; }
+# this fails on a configuration with OBS-server lvm on sdb
+#			[ -e /obs/repos ] || { ln -sf /obs/repos /srv/obs/repos ; }
+# using instead:
+			[ -d $backenddir -a ! -L $backenddir ] && { rm -rf $backenddir ; }
+			[ -L $backenddir ] || { ln -sf /obs $backenddir ; }
+			mount /dev/OBS/server /obs
+			[ -d /obs/log ] || mkdir /obs/log
+			[ -d /obs/run ] || mkdir /obs/run
+			[ -d /obs/build ] || mkdir /obs/build
+			[ -d /obs/events ] || mkdir /obs/events
+			[ -d /obs/jobs ] || mkdir /obs/jobs
+			[ -d /obs/info ] || mkdir /obs/info
+			[ -d /obs/projects ] || mkdir /obs/projects
+			[ -d /obs/workers ] || mkdir /obs/workers
+			chown obsrun.obsrun /obs/{,log,run,build,events,jobs,info,projects,workers}
+		else
+			echo "Setup local storage"
+               		if [ -e /obs -a ! -L /obs ]; then
+	       			echo "/obs already exists !"
+               		        exit 1
+               		fi
+			[ -L /obs ] && rm /obs
+			ln -s $backenddir /obs
+                fi
+
+		# Only used if there is a local BSConfig
+		if [ -e /usr/lib/obs/server/BSConfig.pm ]; then
+			# create default gpg key if not existing
+			if [ ! -e /obs/obs-default-gpg.asc ] && grep -q "^our \$keyfile.*/obs/obs-default-gpg.asc.;$" /usr/lib/obs/server/BSConfig.pm; then
+				echo -n Generating OBS default GPG key ....
+				mkdir -p /obs/gnupg/phrases
+				chmod -R 0700 /obs/gnupg
+				cat >/tmp/obs-gpg.$$ <<EOF
+				     %echo Generating a default OBS instance key
+				     Key-Type: DSA
+				     Key-Length: 1024
+				     Subkey-Type: ELG-E
+				     Subkey-Length: 1024
+				     Name-Real: private OBS
+				     Name-Comment: key without passphrase
+				     Name-Email: defaultkey@localobs
+				     Expire-Date: 0
+				     %pubring /obs/gnupg/pubring.gpg
+				     %secring /obs/gnupg/secring.gpg
+				     %commit
+				     %echo done
+EOF
+				gpg2 --homedir /obs/gnupg --batch --gen-key /tmp/obs-gpg.$$
+				gpg2 --homedir /obs/gnupg --export -a > /obs/obs-default-gpg.asc
+				# empty file just for accepting the key
+				touch "/obs/gnupg/phrases/defaultkey@localobs"
+			fi
+			# to update sign.conf also after an appliance update
+			if [ -e /obs/obs-default-gpg.asc ] && ! grep -q "^user" /etc/sign.conf; then
+				# extend signd config
+				echo "user: defaultkey@localobs"   >> /etc/sign.conf
+				echo "server: 127.0.0.1"           >> /etc/sign.conf
+				echo "allowuser: obsrun"           >> /etc/sign.conf
+				echo "allow: 127.0.0.1"            >> /etc/sign.conf
+				echo "phrases: /obs/gnupg/phrases" >> /etc/sign.conf
+				echo done
+				rm /tmp/obs-gpg.$$
+				sed -i 's,^# \(our $sign =.*\),\1,' /usr/lib/obs/server/BSConfig.pm
+				sed -i 's,^# \(our $forceprojectkeys =.*\),\1,' /usr/lib/obs/server/BSConfig.pm
+			fi
+			if [ ! -e /obs/obs-default-gpg.asc ] ; then
+			    sed -i 's,^\(our $sign =.*\),# \1,' /usr/lib/obs/server/BSConfig.pm
+			    sed -i 's,^\(our $forceprojectkeys =.*\),# \1,' /usr/lib/obs/server/BSConfig.pm
+			fi
+
+                        # Force mysql to update database. FIXME: only on version update
+                        touch /obs/MySQL/.run-mysql_upgrade
+		fi
+
 		if [ "$OBS_SETUP_WORKER_PARTITIONS" = "take_all" -o "$OBS_SETUP_WORKER_PARTITIONS" = "use_obs_vg" ]; then
-			if [ "$OBS_WORKER_INSTANCES" -gt 0 ]; then
+			if [ 0"$OBS_WORKER_INSTANCES" -gt 0 ]; then
 				# got config setting from sysconfig or PXE server
 				NUM="$OBS_WORKER_INSTANCES"
 			else
@@ -143,8 +219,8 @@ case "$1" in
 				fi
 			fi
 			if [ ! "0$NUM" -gt 0 ]; then
-				echo "ERROR: OBS worker instances are 0, either misconfiguration or not enough resources"
-				exit 1
+				echo "WARNING: OBS worker instances are 0, either misconfiguration or not enough resources"
+				exit 0
 			fi
 
 			# Look for PV devices in OBS VG
@@ -169,7 +245,7 @@ case "$1" in
 			fi
 
 			if [ -z "$OBS_WORKER_ROOT_SIZE" ]; then
-				VG_SIZE=`vgdisplay OBS --units M | grep "Free  PE" | sed 's,.* \([^ ]*\)\..*MB$,\1,'`
+				VG_SIZE=`vgdisplay OBS --units M | grep "Free  PE" | sed 's,.* \([^ ]*\) MB$,\1,'`
 				VG_SIZE=$(( $VG_SIZE - $OBS_WORKER_CACHE_SIZE - ( $NUM * $OBS_WORKER_SWAP_SIZE ) ))
 				OBS_WORKER_ROOT_SIZE=$(( $VG_SIZE / $NUM ))
 				if test $OBS_WORKER_ROOT_SIZE -lt $(( 4 * 1024 )); then
@@ -240,81 +316,8 @@ case "$1" in
 			mkfs -text4 /dev/OBS/cache || exit
 		fi
 
-		echo "Looking for OBS Server LVM Volume"
-                if [ -e /dev/OBS/server ]; then
-			[ -L /obs ] && rm /obs
-			[ -d /obs ] || { rm -f /obs; mkdir /obs ; }
-# this fails on a configuration with OBS-server lvm on sdb
-#			[ -e /obs/repos ] || { ln -sf /obs/repos /srv/obs/repos ; }
-# using instead:
-			[ -d $backenddir -a ! -L $backenddir ] && { rm -rf $backenddir ; }
-			[ -L $backenddir ] || { ln -sf /obs $backenddir ; }
-			mount /dev/OBS/server /obs
-			[ -d /obs/log ] || mkdir /obs/log
-			[ -d /obs/run ] || mkdir /obs/run
-			[ -d /obs/build ] || mkdir /obs/build
-			[ -d /obs/events ] || mkdir /obs/events
-			[ -d /obs/jobs ] || mkdir /obs/jobs
-			[ -d /obs/info ] || mkdir /obs/info
-			[ -d /obs/projects ] || mkdir /obs/projects
-			[ -d /obs/workers ] || mkdir /obs/workers
-			chown obsrun.obsrun /obs/{,log,run,build,events,jobs,info,projects,workers}
-		else
-			echo "Setup local storage"
-               		if [ -e /obs -a ! -L /obs ]; then
-	       			echo "/obs already exists !"
-               		        exit 1
-               		fi
-			ln -sf $backenddir /obs
-                fi
-
-		# Only used if there is a local BSConfig
-		if [ -e /usr/lib/obs/server/BSConfig.pm ]; then
-			# create default gpg key if not existing
-			if [ ! -e /obs/obs-default-gpg.asc ] && grep -q "^our \$keyfile.*/obs/obs-default-gpg.asc.;$" /usr/lib/obs/server/BSConfig.pm; then
-				echo -n Generating OBS default GPG key ....
-				mkdir -p /obs/gnupg/phrases
-				chmod -R 0700 /obs/gnupg
-				cat >/tmp/obs-gpg.$$ <<EOF
-				     %echo Generating a default OBS instance key
-				     Key-Type: DSA
-				     Key-Length: 1024
-				     Subkey-Type: ELG-E
-				     Subkey-Length: 1024
-				     Name-Real: private OBS
-				     Name-Comment: key without passphrase
-				     Name-Email: defaultkey@localobs
-				     Expire-Date: 0
-				     %pubring /obs/gnupg/pubring.gpg
-				     %secring /obs/gnupg/secring.gpg
-				     %commit
-				     %echo done
-EOF
-				gpg2 --homedir /obs/gnupg --batch --gen-key /tmp/obs-gpg.$$
-				gpg2 --homedir /obs/gnupg --export -a > /obs/obs-default-gpg.asc
-				# empty file just for accepting the key
-				touch "/obs/gnupg/phrases/defaultkey@localobs"
-			fi
-			# to update sign.conf also after an appliance update
-			if [ -e /obs/obs-default-gpg.asc ] && ! grep -q "^user" /etc/sign.conf; then
-				# extend signd config
-				echo "user: defaultkey@localobs"   >> /etc/sign.conf
-				echo "server: 127.0.0.1"           >> /etc/sign.conf
-				echo "allowuser: obsrun"           >> /etc/sign.conf
-				echo "allow: 127.0.0.1"            >> /etc/sign.conf
-				echo "phrases: /obs/gnupg/phrases" >> /etc/sign.conf
-				echo done
-				rm /tmp/obs-gpg.$$
-				sed -i 's,^# \(our $sign =.*\),\1,' /usr/lib/obs/server/BSConfig.pm
-				sed -i 's,^# \(our $forceprojectkeys =.*\),\1,' /usr/lib/obs/server/BSConfig.pm
-			fi
-			if [ ! -e /obs/obs-default-gpg.asc ] ; then
-			    sed -i 's,^\(our $sign =.*\),# \1,' /usr/lib/obs/server/BSConfig.pm
-			    sed -i 's,^\(our $forceprojectkeys =.*\),# \1,' /usr/lib/obs/server/BSConfig.pm
-			fi
-
-                        # Force mysql to update database. FIXME: only on version update
-                        touch /obs/MySQL/.run-mysql_upgrade
+		if [ ! "0$NUM" -gt 0 ]; then
+			exit 0
 		fi
 
 		echo "Looking for OBS Worker Cache LVM Volume"
@@ -345,7 +348,7 @@ EOF
 		                # support virtio
 		                # FIXME: find a better way to do this without getting remove by kiwi again.
 		                if ! grep -q "^INITRD_MODULES=.*virtio_pci virtio_blk" /etc/sysconfig/kernel; then
-		                   sed -i 's,^INITRD_MODULES="\(.*\)",INITRD_MODULES="\1 loop dm-mod dm-snapshot binfmt-misc fuse kqemu squashfs ext2 ext3 ext4 reiserfs binfmt_misc virtio_pci virtio_blk",' /etc/sysconfig/kernel
+		                   sed -i 's,^INITRD_MODULES="\(.*\)",INITRD_MODULES="\1 loop dm-mod dm-snapshot binfmt-misc fuse kqemu squashfs ext2 ext3 ext4 reiserfs nf_conntrack_ipv6 binfmt_misc virtio_pci virtio_blk",' /etc/sysconfig/kernel
 		                   mkinitrd || unset RUN_VIRT
 		                fi
 			else

@@ -47,7 +47,9 @@ class IssueTrackersController < ApplicationController
                                            :kind => xml.xpath('kind[1]/text()').to_s,
                                            :description => xml.xpath('description[1]/text()').to_s,
                                            :regex => xml.xpath('regex[1]/text()').to_s,
+                                           :label => xml.xpath('label[1]/text()').to_s,
                                            :url => xml.xpath('url[1]/text()').to_s,
+                                           :enable_fetch => xml.xpath('enable-fetch[1]/text()').to_s,
                                            :show_url => xml.xpath('show-url[1]/text()').to_s)
     end
 
@@ -86,6 +88,8 @@ class IssueTrackersController < ApplicationController
         attribs[:password] = xml.xpath('password[1]/text()').to_s unless xml.xpath('password[1]/text()').empty?
         attribs[:regex] = xml.xpath('regex[1]/text()').to_s unless xml.xpath('regex[1]/text()').empty?
         attribs[:url] = xml.xpath('url[1]/text()').to_s unless xml.xpath('url[1]/text()').empty?
+        attribs[:label] = xml.xpath('label[1]/text()').to_s unless xml.xpath('label[1]/text()').empty?
+        attribs[:enable_fetch] = xml.xpath('enable-fetch[1]/text()').to_s unless xml.xpath('enable-fetch[1]/text()').empty?
         attribs[:show_url] = xml.xpath('show-url[1]/text()').to_s unless xml.xpath('show-url[1]/text()').empty?
         ret = @issue_tracker.update_attributes(attribs)
       end
@@ -115,29 +119,6 @@ class IssueTrackersController < ApplicationController
       format.xml  { head :ok }
       format.json { head :ok }
     end
-  end
-
-  # GET /issue_trackers/issues_in?text=...
-  # GET /issue_trackers/issues_in?text=bnc%231234
-  # GET /issue_trackers/issues_in?text=CVE-2011-1234
-  def issues_in
-    unless params[:text]
-      render_error :status => 400, :errorcode => "missing_parameter", :message => "Please provide a text parameter" and return
-    end
-    issues = IssueTracker.issues_in(params[:text], params[:diff_mode])
-
-    builder = Nokogiri::XML::Builder.new do |node|
-      node.issues({}) do |root|
-        issues.each do |i|
-          i.render_body(root)
-        end
-      end
-    end
-
-    render :text => builder.to_xml, :content_type => 'text/xml'
-
-    builder.to_xml
-
   end
 
 end

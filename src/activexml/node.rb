@@ -1,10 +1,46 @@
 require 'nokogiri'
+require 'json'
+
+# adding a function to the ruby hash
+class Hash
+  def elements(name)
+    unless name.kind_of? String
+      raise ArgumentError, "expected string"
+    end
+    return unless self.has_key? name
+    unless self[name].kind_of? Array
+      yield self[name]
+      return
+    end
+    self[name].each do |n|
+      yield n
+    end
+  end
+
+  def value(name)
+    return self[name.to_s]
+  end
+
+  def has_element?(name)
+    return self.has_key? name.to_s
+  end
+
+  def method_missing( symbol, *args, &block )
+    if args.size > 0 || !block.nil?
+      raise RuntimeError, "das geht zuweit"
+    end
+    
+    ActiveXML::Config.logger.debug "method_missing -#{symbol}- #{block.inspect}"
+    return self[symbol.to_s]
+  end
+end
 
 module ActiveXML
 
   class LibXMLNode
 
     @@elements = {}
+    @@hash_options = {}
 
     class << self
 
@@ -47,6 +83,10 @@ module ActiveXML
         elements.each do |elem|
           @@elements[elem] = self
         end
+      end
+
+      def to_hash_options( opts )
+        @@hash_options[self.name] = opts
       end
 
     end
@@ -175,6 +215,62 @@ module ActiveXML
 
     def logger
       self.class.logger
+    end
+
+    def to_hash_element(parent, options)
+      ret = Hash.new
+      parent.attribute_nodes.each { |node|
+        ret[node.node_name] = node.value
+      }
+      parent.children.each do |child|
+        name = child.name
+        if child.element?
+          subtree = to_hash_element(child, options)
+          
+          if ret[name]
+            unless ret[name].kind_of?(Array)
+              ret[name] = [ ret[name] ]
+            end
+            ret[name].push(subtree)
+          else
+            ret[name] = subtree
+          end
+        elsif child.text?
+          text = child.to_s
+          unless text.strip.empty?
+            return text
+          end # otherwise we ignore white space
+        else
+          raise RuntimeError, "no idea how to handle node #{child.inspect}"
+        end
+      end
+      force_array = options[:force_array]
+      force_array.each do |name|
+        name = name.to_s
+        if ret[name] && !ret[name].kind_of?(Array)
+          ret[name] = [ ret[name] ]
+        end
+      end if force_array
+      return ret
+    end
+    private :to_hash_element
+
+    # this function is a simplified version of XML::Simple of cpan fame
+    # you can control the options for to_hash in calling to_hash_options 
+    # in the class. Currently support :keyattr and :force_array
+    def to_hash
+      options = @@hash_options[self.class.name] || {}
+      options = {:force_array => [:entry] }.merge(options)
+      #logger.debug "to_hash #{options.inspect} #{self.dump_xml}"
+      ret = nil
+      x = Benchmark.measure { ret = to_hash_element(_data, options) }
+      #logger.debug "after to_hash #{JSON.pretty_generate(ret)}"
+      #logger.debug "took #{x}"
+      ret
+    end
+    
+    def to_json(*a)
+      to_hash.to_json(*a)
     end
 
     def to_s

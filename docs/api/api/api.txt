@@ -359,11 +359,22 @@ POST /source/<project>
   extendkey: Extend the expiration date of gpg keys.
   undelete: undelete the project and all packages existing when the project got removed.
   showlinked: List all projects linking to this one
+  copy: copy the entire project
   createmaintenanceincident: create a single mainatenance incident project as sub project
+  createpatchinfo: create a new patchinfo package collecting all mentioned issues in sources
+  set_flag: change a defined flag, requires at least flag and status parameters
+  remove_flag: remove a defined flag, requires at least flag and status parameters
+  unlock: unlock a locked project
 
 Parameters:
   noaccess: the new created project will be read protected
-
+  repository: set_flag for given repository (optional)
+  arch: set_flag for given arch (optional)
+  flag: modify this flag (build/publish/..) for set_flag command
+  status: enable or disable for set_flag command
+  comment: description for the history
+  withhistory: copies sources with history on copy command
+  withbinaries: copies also binaries on copy command
 
 
 === Packages
@@ -503,6 +514,16 @@ Parameters:
 Result: diff as text/plain
 
 
+POST /source/<project>/<package>?cmd=unlock
+
+  Unlocks a locked package
+
+Parameters:
+  comment: description for the history
+
+XmlResult: status
+
+
 POST /source/<project>/<package>?cmd=branch
 
   Create a source link from a package of an existing project to a 
@@ -518,6 +539,18 @@ Parameters:
   missingok: the target package does not exist
   add_repositories: bool, optional, adds repositories base on source project (default for new projects)
   extend_package_names: bool, optional, extends package and repository names to allow multiple instances of same package
+
+XmlResult: status
+
+
+POST /source/<project>/<package>?cmd=set_flag
+  Modify or set a defined flag for package
+
+Parameters:
+  repository: set_flag for given repository (optional)
+  arch: set_flag for given arch (optional)
+  flag: modify this flag (build/publish/..) for set_flag command
+  status: enable or disable for set_flag command
 
 XmlResult: status
 
@@ -643,6 +676,9 @@ Parameters:
   dontupdatesource: Do not update origin package, optional (copy only)
   comment: comment for history, optional
   meta: switch to meta files
+  view: may be "xml" for structured answered (for diff commands)
+  withissues: set to get issues parsed from changelogs (for diff commands)
+  onlyissues: used to limit to issues (for diff commands)
 
 
 
@@ -715,6 +751,10 @@ XmlResult: request
 
   Commands on processing requests
   create: to crfeate a new request
+
+Parameters:
+
+  addrevision: ask the server to add revisions of current sources to the request
 
 
 PUT /request/<id>
@@ -1183,6 +1223,19 @@ GET /search/request
   Searches for requests using xpath. A xpath predicate has to be
   specified using the match parameter. The predicate will be used in this
   expression: /request[<match>]. Only complete meta files will be returned.
+
+Parameters:
+
+  match: xpath predicate, mandatory
+
+XmlResult: collection
+
+
+GET /search/issue
+
+  Searches for issue metadata using xpath. A xpath predicate has to be
+  specified using the match parameter. The predicate will be used in this
+  expression: /issue[<match>]. Only complete issue information will be returned.
 
 Parameters:
 

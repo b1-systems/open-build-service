@@ -1,6 +1,7 @@
 class PatchinfoController < ApplicationController
   include ApplicationHelper
   before_filter :require_all
+  before_filter :get_tracker, :get_binaries, :except => [:show, :delete]
   before_filter :require_exists, :except => [:new_patchinfo]
   helper :package
 
@@ -15,6 +16,7 @@ class PatchinfoController < ApplicationController
         redirect_to :controller => "project", :action => 'packages'
       end
     end
+    @tracker = "bnc"
     @package = find_cached(Package, "patchinfo", :project => @project )
     @file = find_cached(Patchinfo, :project => @project, :package => @package )
     unless @file
@@ -22,7 +24,12 @@ class PatchinfoController < ApplicationController
       redirect_to :controller => 'package', :action => 'show', :project => @project, :package => @package and return
     end
 
-    read_patchinfo 
+    read_patchinfo
+    @binaries.each do |bin|
+      if @binarylist.match(bin)
+        @binarylist.delete(bin)
+      end
+    end
   end
 
   def updatepatchinfo
@@ -34,28 +41,25 @@ class PatchinfoController < ApplicationController
 
   def edit_patchinfo
     read_patchinfo
+    @tracker = "bnc"
+    @binaries.each do |bin|
+      if @binarylist.find(bin)
+        @binarylist.delete(bin)
+      end
+    end
   end
 
   def show
     read_patchinfo
+    @pkg_names = Array.new
+    packages = find_cached(Package, :all, :project => @project.name, :expires_in => 30.seconds )
+    packages.each do |pkg|
+      @pkg_names << pkg.value(:name)
+    end
+    @pkg_names.delete("patchinfo")
     @description = @description.gsub(/\n/, "<br/>").html_safe
     @summary = @summary.gsub(/\n/, "<br/>").html_safe
-    if @relogin == true
-      @relogin = "yes"
-    elsif @relogin == false
-      @relogin = "no"
-    end
-    if @reboot == true
-      @reboot ="yes"
-    elsif @reboot == false
-      @reboot = "no"
-    end
-    if @zypp_restart_needed == true
-      @zypp_restart_needed = "yes"
-    end
-    if @zypp_restart_needed == false
-      @zypp_restart_needed = "no"
-    end
+    @packager = Person.find(:login => @packager)
   end
 
   def read_patchinfo
@@ -67,40 +71,35 @@ class PatchinfoController < ApplicationController
     end
     @binary = []
     @packager = @file.packager.to_s
-    @bugzilla = []
-    @cves = []
-    @cvelist = []
-    @file.each_issue do |issue|
-      if issue.tracker == "bnc"
-        @bugzilla << issue.value(:id)
-      elsif issue.tracker == "CVE"
-        @cves << issue.value(:id)
+    @issues = []
+    if @file.has_element?("issue")
+      @file.each_issue do |a|
+        if a.text == ""
+          get_issue_sum(a.value(:id), a.tracker)
+        end
+        issue = Array.new
+        issueid = a.value(:id)
+        issueurl = IssueTracker.find(:name => a.tracker)
+        issueurl = issueurl.each("/issue-tracker/show-url").first.text
+        issueurl = issueurl.sub(/@@@/, issueid)
+        issue << issueid
+        issue << a.tracker
+        issue << issueurl
+        issue << a.text
+        @issues << issue
       end
-    end      
-    if @buglist == nil
-      @buglist = @bugzilla
-    end  
-    if params[:bug] == nil
-      params[:bug] = Array.new
-      params[:bug] << params[:bugid]
     end
-    if params[:bugid] != nil
-      params[:bug] << params[:bugid]
-      @buglist = params[:bug]
+   
+    if params[:issue] == nil
+      params[:issue] = Array.new
+      params[:issue] << params[:issueid]
+    end
+    if params[:issueid] != nil
+      params[:issue] << params[:issueid]
+      @issues = params[:issue]
     end
     @category = @file.category.to_s
     @rating = @file.rating.to_s if @file.rating
-    if @cvelist.blank?
-      @cvelist = @cves
-    end
-    if params[:cve] == nil
-      params[:cve] = Array.new
-      params[:cve] << params[:cveid]
-    end
-    if params[:cveid] != nil
-      params[:cve] << params[:cveid]
-      @cvelist = params[:cve]
-    end
 
     @description = @summary = @category = nil
     @category = @file.category.to_s       if @file.has_element? 'category'
@@ -123,6 +122,10 @@ class PatchinfoController < ApplicationController
     else
       @zypp_restart_needed = false
     end
+    if @file.has_element?("stopped")
+      @block = true
+      @block_reason = @file.stopped.text
+    end
   end
 
   def save
@@ -136,10 +139,6 @@ class PatchinfoController < ApplicationController
     required_parameters :project, :package
     file = @file.data
     flash[:error] = nil
-    if !valid_bugzilla_number? params[:bug]
-      valid_params = false
-      flash[:error] = "|| Invalid bugzilla number: '#{params[:bugid]}'"
-    end
     if !valid_summary? params[:summary]
       valid_params = false
       flash[:error] = "#{flash[:error]}" + " || Summary is too short (should have more than 10 signs)"
@@ -148,50 +147,46 @@ class PatchinfoController < ApplicationController
       valid_params = false
       flash[:error] = "#{flash[:error]}" + " || Description is too short (should have more than 50 signs and longer than summary)"
     end
-    if params[:category] == "security"
-      if params[:cve] != nil
-        if !valid_cve_number? params[:cve]
-          valid_params = false
-          flash[:error] = "#{flash[:error]}" + " || CVE-Number has the wrong format. Expected \"cve-year-number\""
-        end
-      end
-    end
 
     if valid_params == true
       name = "binary"
       packager = params[:packager]
-      cvelist = params[:cve]
-      binaries = params[:binaries]
+      binaries = params[:selected_binaries]
       relogin = params[:relogin]
       reboot = params[:reboot]
       zypp_restart_needed = params[:zypp_restart_needed]
-      buglist = params[:bug]
-      rating = params[:rating]
-      if params[:category] != "security"
-        cvelist = ""
+      if params[:issue]
+        issues = Array.new
+        params[:issue].each_with_index do |new_issue, index|
+          issue = Array.new
+          issue << new_issue
+          issue << params[:issuetracker][index]
+          issue << params[:issuesum][index]
+          issues << issue
+        end
       end
+      rating = params[:rating]
       node = Builder::XmlMarkup.new(:indent=>2)
       attrs = {}
       attrs[:incident] = @package.project.gsub(/.*:/,'')
       xml = node.patchinfo(attrs) do |n|
         if binaries
           binaries.each do |binary|
-            node.binary(binary)
+            if !binary.blank?
+              node.binary(binary)
+            end
           end
         end
         node.packager    packager
-        buglist.each do |bug|
-          node.issue(:tracker=>"bnc", :id=>bug)
+        if issues
+          issues.each do |issue|
+            node.issue(issue[2], :tracker=>issue[1], :id=>issue[0])
+          end
         end
         node.category    params[:category]
         node.rating      rating
-        if params[:category] == "security"
-          cvelist.each do |cve|
-            node.issue(:tracker=>"CVE", :id=>cve)
-          end
-        end
         node.summary     params[:summary]
-        node.description params[:description]
+        node.description params[:description].gsub("\r\n", "\n")
         if reboot
           node.reboot_needed
         end
@@ -201,16 +196,13 @@ class PatchinfoController < ApplicationController
         if zypp_restart_needed
           node.zypp_restart_needed
         end
+        if params[:block] == "true"
+          node.stopped  params[:block_reason]
+        end
       end
       begin
         frontend.put_file( xml, :project => @project,
-          :package => @package, :filename => filename,
-          :packager => [:packager], :category => [:category],
-          :rating => [:rating], :bug => [:bug], :cve => [:cve],
-          :binarylist => [:binarylist], :binaries => [:binaries],
-          :summary => [:summary], :description => [:description],
-          :relogin => [:relogin], :reboot => [:reboot],
-          :zypp_restart_needed => [:zypp_restart_needed])
+          :package => @package, :filename => filename)
         flash[:note] = "Successfully edited #{@package}"
       rescue Timeout::Error => e
         flash[:error] = "Timeout when saving file. Please try again."
@@ -220,10 +212,19 @@ class PatchinfoController < ApplicationController
         :project => @project.name, :package => @package
     end
     if valid_params == false
+      @tracker = params[:tracker]
       @packager = params[:packager]
-      @cvelist = params[:cve]
-      @binaries = params[:binaries]
-      @buglist = params[:bug]
+      @binaries = params[:selected_binaries]
+      @binarylist = params[:available_binaries]
+      @issues = Array.new
+      params[:issue].each_with_index do |new_issue, index|
+        issue = Array.new
+        issue << new_issue
+        issue << params[:issuetracker][index]
+        issue << params[:issueurl][index]
+        issue << params[:issuesum][index]
+        @issues << issue
+      end
       @category = params[:category]
       @rating = params[:rating]
       @summary = params[:summary]
@@ -231,6 +232,8 @@ class PatchinfoController < ApplicationController
       @relogin = params[:relogin]
       @reboot = params[:reboot]
       @zypp_restart_needed = params[:zypp_restart_needed]
+      @block = params[:block]
+      @block_reason = params[:block_reason]
       render :action => "edit_patchinfo", :project => @project, :package => @package
     end
   end
@@ -252,18 +255,6 @@ class PatchinfoController < ApplicationController
     redirect_to :controller => 'project', :action => 'show', :project => @project
   end
 
-  def valid_bugzilla_number? name
-    name != nil and name.each do |bug|
-      bug =~ /^\d{6,8}$/
-    end
-  end
-
-  def valid_cve_number? name    
-    name != nil and name.each do |cve|
-      cve =~ /^cve-\d{4}-\d{4}$/
-    end
-  end
-
   def valid_summary? name
     name != nil and name =~ /^.{10,}$/m
   end
@@ -273,17 +264,58 @@ class PatchinfoController < ApplicationController
       name.length > params[:summary].length and name =~ /^.{50,}$/m
   end
 
+  def new_tracker
+    @issue = Array.new
+    @issue << params[:issueid]
+    @issue << params[:tracker]
+    issueurl = IssueTracker.find(:name => params[:tracker])
+    issueurl = issueurl.each("/issue-tracker/show-url").first.text
+    issueurl = issueurl.sub(/@@@/, params[:issueid])
+    @issue << issueurl
+    get_issue_sum(params[:issueid], params[:tracker])
+    @issue << @issuesum
+    render :nothing => true, :json => @issue
+  end
 
-
+  def get_issue_sum(issueid, tracker)
+    if tracker != "cve"
+      bug = tracker + "#" + issueid
+    else
+      bug = issueid
+    end
+    path = "/issue_trackers/#{CGI.escape(tracker)}"
+    tracker_result = ActiveXML::Base.new(frontend.transport.direct_http( URI(path), :method => "GET" ))
+    regexp = "^"
+    regexp += tracker_result.regex.text
+    regexp += "$"
+    regexp = Regexp.new(regexp)
+    if bug =~ regexp
+      path = "/issue_trackers/#{CGI.escape(tracker)}/issues/#{CGI.escape(issueid)}"
+      result = ActiveXML::Base.new(frontend.transport.direct_http( URI(path), :method => "GET" ))
+      if result.summary == nil
+        path = "/issue_trackers/#{CGI.escape(tracker)}/issues/#{CGI.escape(issueid)}?force_update=1"
+        result = ActiveXML::Base.new(frontend.transport.direct_http( URI(path), :method => "GET" ))
+      end
+      @issuesum = result.summary.text if result.summary
+      @issuesum = "" if !result.summary
+      @issuesum.gsub!(/\\|'/) { |c| "" }
+    else
+      @issuesum = "invalid"
+    end
+  end 
+    
   private
 
-  def require_all
-    @project = find_cached(Project, params[:project] )
-    unless @project
-      flash[:error] = "Project not found: #{params[:project]}"
-      redirect_to :controller => "project", :action => "list_public"
-      return
-    end
+  def get_tracker
+    issue_tracker = IssueTracker.find(:all)
+    @trackerlist = []
+    issue_tracker.each do |a| @trackerlist << a.name.to_s end
+    @trackerlist.sort!
+    @trackerlist.unshift(@trackerlist.delete_at(@trackerlist.index("cve")))
+    @trackerlist.unshift(@trackerlist.delete_at(@trackerlist.index("bnc")))
+  end
+
+  def get_binaries
     @binarylist = Array.new
     @binary_list = Buildresult.find(:project => params[:project], :view => 'binarylist')
     @binary_list.each_result do |r|
@@ -295,6 +327,16 @@ class PatchinfoController < ApplicationController
     end
     @binarylist.uniq!
     @binarylist.delete("rpmlint.log")
+    @binarylist.delete("updateinfo.xml")
+  end
+
+  def require_all
+    @project = find_cached(Project, params[:project] )
+    unless @project
+      flash[:error] = "Project not found: #{params[:project]}"
+      redirect_to :controller => "project", :action => "list_public"
+      return
+    end
   end
 
   def require_exists

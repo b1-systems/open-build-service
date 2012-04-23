@@ -112,6 +112,8 @@ class PackageController < ApplicationController
   end
 
   def requests
+    @default_request_type = params[:type] if params[:type]
+    @default_request_state = params[:state] if params[:state]
   end
 
   def commit
@@ -123,9 +125,10 @@ class PackageController < ApplicationController
        return
     end
     @package.free_directory if discard_cache? || @revision != params[:rev] || @expand != params[:expand] || @srcmd5 != params[:srcmd5]
+    Service.free_cache(:all) if discard_cache?
     @srcmd5   = params[:srcmd5]
     @revision = params[:rev]
-    @current_rev = Package.current_rev(@project, @package.name)
+    @current_rev = Package.current_rev(@project.name, @package.name)
     @expand = 1
     @expand = begin Integer(params[:expand]) rescue 1 end if params[:expand]
     @expand = 0 if @spider_bot
@@ -202,7 +205,7 @@ class PackageController < ApplicationController
 
     # Supersede logic has to be below addition as we need the new request id
     if params[:supersede]
-      pending_requests = BsRequest.list(:project => params[:targetproject], :package => params[:package], :states => "new,review", :types => "submit")
+      pending_requests = BsRequest.list(:project => params[:targetproject], :package => params[:package], :states => 'new,review,declined', :types => 'submit')
       pending_requests.each do |request|
         next if request.value(:id) == req.value(:id) # ignore newly created request
         begin
@@ -215,18 +218,15 @@ class PackageController < ApplicationController
     end
 
     Rails.cache.delete "requests_new"
-    redirect_to(:controller => "request", :action => "show", :id => req.value(:id))
+    flash[:note] = "Created <a href='#{url_for(:controller => 'request', :action => 'show', :id => req.value('id'))}'>submit request #{req.value('id')}</a> to <a href='#{url_for(:controller => 'project', :action => 'show', :project => params[:targetproject])}'>#{params[:targetproject]}</a>"
+    redirect_to(:action => 'show', :project => params[:project], :package => params[:package])
   end
 
   def service_parameter
-    begin
-      @serviceid = params[:serviceid]
-      @servicename = params[:servicename]
-      @services = find_cached(Service,  :project => @project, :package => @package )
-      @parameters = @services.getParameters(@serviceid)
-    rescue
-      @parameters = []
-    end
+    @serviceid = params[:serviceid]
+    @servicename = params[:servicename]
+    @services = find_cached(Service,  :project => @project, :package => @package )
+    @parameters = @services.getParameters(@serviceid)
   end
 
   def update_parameters
@@ -253,7 +253,7 @@ class PackageController < ApplicationController
   def set_file_details
     if not @revision and not @srcmd5
       # on very first page load only
-      @revision = Package.current_rev(@project, @package)
+      @revision = Package.current_rev(@project.name, @package.name)
     end
     if @srcmd5
       @files = @package.files(@srcmd5, @expand)
@@ -329,7 +329,7 @@ class PackageController < ApplicationController
       end
     end
 
-    filenames = sorted_filenames_from_sourcediff(ActiveXML::Base.new(rdiff))
+    filenames = BsRequest.sorted_filenames_from_sourcediff(ActiveXML::Base.new(rdiff))
     @files = filenames[:files]
     @filenames = filenames[:filenames]
   end
@@ -617,8 +617,8 @@ class PackageController < ApplicationController
       else
         begin
           @package.save_file :filename => filename
-        rescue
-          flash[:error] = "Filename invalid '#{filename}'."
+        rescue ActiveXML::Transport::Error => e
+          flash[:error], _, _ = ActiveXML::Transport.extract_error_message e
           redirect_back_or_to :action => 'add_file', :project => params[:project], :package => params[:package] and return
         end
       end
@@ -1015,10 +1015,8 @@ class PackageController < ApplicationController
     logger.debug "imported description from spec file"
   end
 
-  def reload_buildstatus
-    unless request.xhr?
-      render :text => 'no ajax', :status => 400 and return
-    end
+  def buildresult
+    render :text => 'no ajax', :status => 400 and return if not request.xhr?
     # discard cache
     Buildresult.free_cache( :project => @project, :package => @package, :view => 'status' )
     @buildresult = find_cached(Buildresult, :project => @project, :package => @package, :view => 'status', :expires_in => 5.minutes )
@@ -1026,6 +1024,41 @@ class PackageController < ApplicationController
     render :partial => 'buildstatus'
   end
 
+  def rpmlint_result
+    render :text => 'no ajax', :status => 400 and return unless request.xhr?
+    @repo_list, @repo_arch_hash = [], {}
+    @buildresult = find_cached(Buildresult, :project => @project, :package => @package, :view => 'status', :expires_in => 5.minutes )
+    repos = [] # Temp var
+    @buildresult.each('result') do |result|
+      hash_key = valid_xml_id(elide(result.value('repository'), 30))
+      @repo_arch_hash[hash_key] ||= []
+      @repo_arch_hash[hash_key] << result.value('arch')
+      repos << result.value('repository')
+    end if @buildresult
+    repos.uniq.each do |repo_name|
+      @repo_list << [repo_name, valid_xml_id(elide(repo_name, 30))]
+    end
+    render :partial => 'rpmlint_result', :locals => {:index => params[:index]}
+  end
+
+  def rpmlint_log
+    begin
+      rpmlint_log = frontend.get_rpmlint_log(params[:project], params[:package], params[:repository], params[:architecture])
+      res = ''
+      escape_and_transform_nonprintables(rpmlint_log).lines.each do |line|
+        if line.match(/\w+(?:\.\w+)+: W: /)
+          res += "<span style=\"color: olive;\">#{line}</span>"
+        elsif line.match(/\w+(?:\.\w+)+: E: /)
+          res += "<span style=\"color: red;\">#{line}</span>"
+        else
+          res += line
+        end
+      end
+      render :text => res
+    rescue ActiveXML::Transport::NotFoundError
+      render :text => 'No rpmlint log'
+    end
+  end
 
   def set_url_form
     if @package.has_element? :url
@@ -1053,12 +1086,13 @@ class PackageController < ApplicationController
       message, code, api_exception = ActiveXML::Transport.extract_error_message e
       flash[:error] = message
       @meta = params[:meta]
+      render :text => message, :status => 400, :content_type => "text/plain"
       return
     end
     
     flash[:note] = "Config successfully saved"
     Package.free_cache @package, :project => @project
-    redirect_to :action => :meta, :project => @project, :package => @package
+    render :text => "Config successfully saved", :content_type => "text/plain"
   end
 
   def attributes
@@ -1116,13 +1150,22 @@ class PackageController < ApplicationController
   end
 
   def require_project
-    if valid_project_name? params[:project]
-      @project = find_cached(Project, params[:project], :expires_in => 5.minutes )
+    if !valid_project_name? params[:project]
+      unless request.xhr?
+        flash[:error] = "#{params[:project]} is not a valid project name"
+        redirect_to :controller => "project", :action => "list_public", :nextstatus => 404 and return
+      else
+        render :text => "#{params[:project]} is not a valid project name", :status => 404 and return
+      end
     end
+    @project = find_cached(Project, params[:project], :expires_in => 5.minutes )
     unless @project
-      logger.error "Project #{params[:project]} not found"
-      flash[:error] = "Project not found: \"#{params[:project]}\""
-      redirect_to :controller => "project", :action => "list_public" and return
+      unless request.xhr?
+        flash[:error] = "Project not found: #{params[:project]}"
+        redirect_to :controller => "project", :action => "list_public", :nextstatus => 404 and return
+      else
+        render :text => "Project not found: #{params[:project]}", :status => 404 and return
+      end
     end
   end
 
@@ -1130,18 +1173,33 @@ class PackageController < ApplicationController
     params[:rev], params[:package] = params[:pkgrev].split('-', 2) if params[:pkgrev]
     unless valid_package_name_read? params[:package]
       logger.error "Package #{@project}/#{params[:package]} not valid"
-      flash[:error] = "\"#{params[:package]}\" is not a valid package name"
-      redirect_to :controller => "project", :action => :packages, :project => @project, :nextstatus => 404
-      return
+      unless request.xhr?
+        flash[:error] = "\"#{params[:package]}\" is not a valid package name"
+        redirect_to :controller => "project", :action => :packages, :project => @project, :nextstatus => 404 and return
+      else
+        render :text => "\"#{params[:package]}\" is not a valid package name", :status => 404 and return
+      end
     end
     @project ||= params[:project]
     unless params[:package].blank?
-      @package = find_cached(Package, params[:package], :project => @project )
+      begin
+        @package = find_cached(Package, params[:package], :project => @project )
+      rescue ActiveXML::Transport::Error => e
+        flash[:error] = e.message
+        unless request.xhr?
+          redirect_to :controller => "project", :action => :packages, :project => @project, :nextstatus => 400 and return
+        else
+        render :text => e.message, :status => 404 and return
+        end
+      end
     end
     unless @package
-      logger.error "Package #{@project}/#{params[:package]} not found"
-      flash[:error] = "Package \"#{params[:package]}\" not found in project \"#{params[:project]}\""
-      redirect_to :controller => "project", :action => :packages, :project => @project, :nextstatus => 404
+      unless request.xhr?
+        flash[:error] = "Package \"#{params[:package]}\" not found in project \"#{params[:project]}\""
+        redirect_to :controller => "project", :action => :packages, :project => @project, :nextstatus => 404
+      else
+        render :text => "Package \"#{params[:package]}\" not found in project \"#{params[:project]}\"", :status => 404 and return
+      end
     end
   end
 

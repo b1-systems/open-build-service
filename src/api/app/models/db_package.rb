@@ -82,9 +82,8 @@ class DbPackage < ActiveRecord::Base
           #
           options[:joins] += " LEFT JOIN flags f ON f.db_project_id = prj.id AND (ISNULL(f.flag) OR flag = 'access')" # filter projects with or without access flag
           options[:joins] += " LEFT JOIN project_user_role_relationships ur ON ur.db_project_id = prj.id"
-          options[:joins] += " LEFT JOIN users u ON ur.bs_user_id = u.id"
 
-          cond = "((f.flag = 'access' AND u.login = '#{User.current ? User.current.login : "_nobody_"}') OR ISNULL(f.flag))"
+          cond = "((f.flag = 'access' AND ur.bs_user_id = #{User.current ? User.currentID : User.nobodyID}) OR ISNULL(f.flag))"
           if options[:conditions].nil?
             options[:conditions] = cond
           else
@@ -382,13 +381,13 @@ class DbPackage < ActiveRecord::Base
         self.db_package_kinds.destroy_all unless _noreset
         directory = Suse::Backend.get("/source/#{URI.escape(self.db_project.name)}/#{URI.escape(self.name)}").body unless directory
         xml = REXML::Document.new(directory.to_s)
-        if xml.elements["/directory/entry/@name='_patchinfo'"]
+        if xml.elements["/directory/entry[@name='_patchinfo']"]
           self.db_package_kinds.create :kind => 'patchinfo'
         end
-        if xml.elements["/directory/entry/@name='_aggregate'"]
+        if xml.elements["/directory/entry[@name='_aggregate']"]
           self.db_package_kinds.create :kind => 'aggregate'
         end
-        if xml.elements["/directory/entry/@name='_link'"]
+        if xml.elements["/directory/entry[@name='_link']"]
           self.db_package_kinds.create :kind => 'link'
         end
         # further types my be product, spec, dsc, kiwi in future
@@ -403,7 +402,7 @@ class DbPackage < ActiveRecord::Base
         xml = REXML::Document.new(patchinfo.body.to_s)
         xml.root.elements.each('issue') { |i|
           issue = Issue.find_or_create_by_name_and_tracker( i.attributes['id'], i.attributes['tracker'] )
-          self.db_package_issues.create( :issue => issue )
+          self.db_package_issues.create( :issue => issue, :change => "kept" )
         }
       end
     else
@@ -415,7 +414,7 @@ class DbPackage < ActiveRecord::Base
         issues = Suse::Backend.post("/source/#{URI.escape(self.db_project.name)}/#{URI.escape(self.name)}?cmd=diff&orev=0&onlyissues=1&linkrev=base&view=xml", nil)
         xml = REXML::Document.new(issues.body.to_s)
         xml.root.elements.each('/sourcediff/issues/issue') { |i|
-          issue = Issue.find_or_create_by_name_and_tracker( i.attributes['name'], i.attributes['issue-tracker'] )
+          issue = Issue.find_or_create_by_name_and_tracker( i.attributes['name'], i.attributes['tracker'] )
           issue_change[issue] = 'kept' 
         }
       rescue Suse::Backend::HTTPError
@@ -427,7 +426,7 @@ class DbPackage < ActiveRecord::Base
           issues = Suse::Backend.post("/source/#{URI.escape(self.db_project.name)}/#{URI.escape(self.name)}?cmd=linkdiff&linkrev=base&onlyissues=1&view=xml", nil)
           xml = REXML::Document.new(issues.body.to_s)
           xml.root.elements.each('/sourcediff/issues/issue') { |i|
-            issue = Issue.find_or_create_by_name_and_tracker( i.attributes['name'], i.attributes['issue-tracker'] )
+            issue = Issue.find_or_create_by_name_and_tracker( i.attributes['name'], i.attributes['tracker'] )
             issue_change[issue] = i.attributes['state']
           }
         rescue Suse::Backend::HTTPError
@@ -716,7 +715,7 @@ class DbPackage < ActiveRecord::Base
     end
   end
 
-  def store
+  def store(opt={})
     # store modified values to database and xml
 
     # update timestamp and save
@@ -729,6 +728,7 @@ class DbPackage < ActiveRecord::Base
     #--- write through to backend ---#
     if write_through?
       path = "/source/#{self.db_project.name}/#{self.name}/_meta?user=#{URI.escape(User.current ? User.current.login : "_nobody_")}"
+      path += "&comment=#{CGI.escape(opt[:comment])}" unless opt[:comment].blank?
       Suse::Backend.put_source( path, to_axml )
     end
   end
@@ -824,8 +824,10 @@ class DbPackage < ActiveRecord::Base
   def render_issues_axml(params)
     builder = Builder::XmlMarkup.new( :indent => 2 )
 
-    filter_changes = nil
+    filter_changes = states = nil
     filter_changes = params[:changes].split(",") if params[:changes]
+    states = params[:states].split(",") if params[:states]
+    login = params[:login]
 
     xml = builder.package( :project => self.db_project.name, :name => self.name ) do |package|
       self.db_package_kinds.each do |k|
@@ -833,6 +835,13 @@ class DbPackage < ActiveRecord::Base
       end
       self.db_package_issues.each do |i|
         next if filter_changes and not filter_changes.include? i.change
+        next if states and (not i.issue.state or not states.include? i.issue.state)
+        o = nil
+        if i.issue.owner_id
+          # self.owner must not by used, since it is reserved by rails
+          o = User.find_by_id i.issue.owner_id
+        end
+        next if login and (not o or not login == o.login)
         i.issue.render_body(package, i.change)
       end
     end

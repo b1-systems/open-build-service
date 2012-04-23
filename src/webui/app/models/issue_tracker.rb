@@ -12,6 +12,7 @@ class IssueTracker < ActiveXML::Base
           <name>#{opt[:name]}</name>
           <description>#{opt[:description]}</description>
           <kind>#{opt[:kind]}</kind>
+          <label>#{opt[:label]}</label>
           <regex>#{opt[:regex]}</regex>
           <url>#{opt[:url]}</url>
           <show-url>#{opt[:show_url]}</show-url>
@@ -20,10 +21,5 @@ class IssueTracker < ActiveXML::Base
       return reply
     end
 
-    def issues_in(text)
-      path = "/issue_trackers/issues_in?format=json&text=#{URI.escape(text)}"
-      response = ActiveXML::Config::transport_for(:issuetracker).direct_http(URI(path))
-      return ActiveSupport::JSON.decode(response)
-    end
   end
 end

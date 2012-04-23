@@ -12,12 +12,8 @@
           -%>
           <tr>
             <% if index == 0 %>
-              <td title="<%= h r %>" rowspan="<%= archs.length %>">
-                <strong>
-                  <%= image_tag 'icons/drive_go.png'  %>
-                  <%= link_to h(truncate(r, :length => 23)), :action => :binaries,
-                    :controller => :package, :project => @project, :package => @package, :repository => r %>
-                </strong>
+              <td class="nowrap" title="<%= h r %>" rowspan="<%= archs.length %>">
+                <%= link_to(elide(r, 26), {:action => :binaries, :controller => :package, :project => @project, :package => @package, :repository => r}, {:title => "Binaries for #{r}"}) %>
               </td>
               <% index += 1 -%>
             <% end # if -%>

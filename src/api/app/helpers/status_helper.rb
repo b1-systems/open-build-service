@@ -70,15 +70,17 @@ end
 
 class PackInfo
   attr_accessor :devel_project, :devel_package
-  attr_accessor :srcmd5, :verifymd5, :changesmd5, :error, :link
+  attr_accessor :srcmd5, :verifymd5, :changesmd5, :maxmtime, :error, :link
   attr_reader :name, :project, :key
   attr_accessor :develpack
   attr_accessor :buildinfo
 
-  def initialize(projname, name)
-    @project = projname
-    @name = name
-    @key = projname + "/" + name
+  def initialize(db_pack)
+    @project = db_pack.db_project.name
+    @name = db_pack.name
+    # we don't store the full package object as it can become huge
+    @db_pack_id = db_pack.id
+    @key = @project + "/" + name
     @devel_project = nil
     @devel_package = nil
     @link = LinkInfo.new
@@ -100,6 +102,7 @@ class PackInfo
              :version => version,
              :srcmd5 => srcmd5,
              :changesmd5 => changesmd5,
+             :maxmtime => maxmtime,
              :release => release }
     unless verifymd5.blank? or verifymd5 == srcmd5
       opts[:verifymd5] = verifymd5
@@ -113,6 +116,18 @@ class PackInfo
           develpack.to_xml(:builder => xml)
         end
       end
+      db_pack = DbPackage.find_by_id(@db_pack_id)
+      xml.persons do
+        db_pack.each_user do |u|
+          xml.person( :userid => u.login, :role => u.role_name )
+        end
+      end unless db_pack.package_user_role_relationships.empty?
+      xml.groups do
+        db_pack.each_group do |g|
+          xml.group( :groupid => g.title, :role => g.role_name )
+        end
+      end unless db_pack.package_group_role_relationships.empty?
+
       if @error then xml.error(error) end
       if @link.project
         xml.link(:project => @link.project, :package => @link.package, :targetmd5 => @link.targetmd5)
@@ -162,7 +177,7 @@ class ProjectStatusHelper
 	mypackages[key].error = e.text
         break
       end
-      cmd5 = Rails.cache.fetch("changes-%s" % p.value('srcmd5')) do
+      cmd5, mtime = Rails.cache.fetch("change-data-%s" % p.value('srcmd5')) do
         begin
           directory = Directory.find(:project => proj, :package => packname, :expand => 1)
         rescue ActiveXML::Transport::Error
@@ -170,12 +185,17 @@ class ProjectStatusHelper
         end
         changesfile="%s.changes" % packname
         md5 = ''
+        mtime = 0
         directory.each_entry do |e|
-          md5 = e.value(:md5) if e.value(:name) == changesfile
+          if e.value(:name) == changesfile
+            md5 = e.value(:md5) 
+          end
+          mtime = [mtime, Integer(e.value(:mtime))].max
         end if directory
-        md5
+        [md5, mtime]
       end
       mypackages[key].changesmd5 = cmd5 unless cmd5.empty?
+      mypackages[key].maxmtime = mtime unless mtime == 0
     end if data
   end
 
@@ -267,8 +287,7 @@ class ProjectStatusHelper
   end
 
   def self.add_recursively(mypackages, projects, dbpack)
-    name = dbpack.name
-    pack = PackInfo.new(dbpack.db_project.name, name)
+    pack = PackInfo.new(dbpack)
     return if mypackages.has_key? pack.key
 
     if dbpack.develpackage
@@ -296,7 +315,7 @@ class ProjectStatusHelper
   end
 
   def self.filter_by_package_name(name)
-    #return (name =~ /perl-/)
+    #return (name =~ /sy/)
     return true
   end
 
@@ -346,7 +365,9 @@ class ProjectStatusHelper
     links.each do |proj, packages|
       tocheck = Array.new
       packages.each do |name|
-        pack = PackInfo.new(proj, name)
+        pack = DbPackage.find_by_project_and_name(proj, name)
+        next unless pack # broken link
+        pack = PackInfo.new(pack)
         next if mypackages.has_key? pack.key
         tocheck << pack
         mypackages[pack.key] = pack
@@ -357,6 +378,8 @@ class ProjectStatusHelper
     mypackages.values.each do |package|
       if package.project == dbproj.name and package.link.project
         newkey = package.link.project + "/" + package.link.package
+	# broken links
+	next unless mypackages.has_key? newkey
         package.link.targetmd5 = mypackages[newkey].verifymd5
         package.link.targetmd5 ||= mypackages[newkey].srcmd5
       end

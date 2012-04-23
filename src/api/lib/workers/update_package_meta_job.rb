@@ -5,8 +5,13 @@ class UpdatePackageMetaJob
 
   def perform
     DbProject.find(:all).each do |prj|
+      next unless DbProject.exists?(prj)
       prj.db_packages.each do |pkg|
-        pkg.set_package_kind
+        next unless DbPackage.exists?(pkg)
+        begin
+          pkg.set_package_kind
+        rescue Suse::Backend::HTTPError
+        end
       end
     end
   end

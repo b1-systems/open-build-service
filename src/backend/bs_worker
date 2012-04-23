@@ -46,6 +46,7 @@ use BSXML;
 use BSKiwiXML;
 use BSHTTP;
 use BSBuild;
+use BSCando;
 
 use strict;
 
@@ -63,6 +64,7 @@ my $vm_memory;
 my $vmdisk_rootsize;
 my $vmdisk_swapsize;
 my $vmdisk_filesystem;
+my $vmdisk_mount_options;
 my $workerid;
 my $srcserver;
 my @reposervers;
@@ -82,30 +84,6 @@ my $buildlog_maxsize = 500 * 1000000;
 my $buildlog_maxidle = 8 * 3600;
 my $xenstore_maxsize = 20 * 1000000;
 my $gettimeout = 3600; # 1 hour timeout to avoid forever hanging workers
-
-#FIXME 3.0: obsolete the not exiting arm architectures
-my %cando = (
-  'armv4l'  => [                                          'armv4l'                                                                                      ],
-  'armv5l'  => [                                          'armv4l', 'armv5l'                    , 'armv5el'                                             ],
-  'armv6l'  => [                                          'armv4l', 'armv5l', 'armv6l'          , 'armv5el', 'armv6el'                                  ],
-  'armv7l'  => [                                          'armv4l', 'armv5l', 'armv6l', 'armv7l', 'armv5el', 'armv6el', 'armv7el', 'armv7hl', 'armv8el' ],
-  'sh4'     => [                                                                                                                        'sh4' ],
-  'i586'    => [          'i586',                         'armv4l', 'armv5l', 'armv6l', 'armv7l', 'mips', 'mipsel', 'sh4' ],
-  'i686'    => [          'i586',         'i686',         'armv4l', 'armv5l', 'armv6l', 'armv7l', 'mips', 'mipsel', 'sh4' ],
-  'x86_64'  => ['x86_64', 'i586:linux32', 'i686:linux32', 'armv4l', 'armv5l', 'armv6l', 'armv7l', 'mips', 'mipsel', 'sh4' ],
-#
-  'parisc'  => ['hppa', 'hppa64:linux64'],
-  'parisc64'=> ['hppa64', 'hppa:linux32'],
-  'ppc'     => ['ppc'],
-  'ppc64'   => ['ppc64', 'ppc:powerpc32'],
-  'ia64'    => ['ia64'],
-  's390'    => ['s390'],
-  's390x'   => ['s390x', 's390:s390'],
-  'sparc'   => ['sparcv8', 'sparc'],
-  'sparc64' => ['sparc64v', 'sparc64', 'sparcv9v', 'sparcv9', 'sparcv8:linux32', 'sparc:linux32'],
-  'mips'    => ['mips'],
-  'mips64'  => ['mips64', 'mips:mips32'],
-);
 
 $hostcheck = $BSConfig::workerhostcheck if defined($BSConfig::workerhostcheck);
 
@@ -180,7 +158,7 @@ Usage: $0 [OPTION] --root <directory> --statedir <directory>
 
        --arch      : define hostarch (overrides 'uname -m')
                      currently supported architectures: 
-                     @{[sort keys %cando]}
+                     @{[sort keys %BSCando::cando]}
 
        --kvm       : enable kvm
 
@@ -364,6 +342,11 @@ while (@ARGV) {
     $vmdisk_filesystem = shift @ARGV;
     next;
   }
+  if ($ARGV[0] eq '--vmdisk-mount-options') {
+    shift @ARGV;
+    $vmdisk_mount_options = shift @ARGV;
+    next;
+  }
   if ($ARGV[0] eq '--build') {
     shift @ARGV;
     $justbuild = 1;
@@ -470,7 +453,7 @@ if (!$hostarch) {
   die("could not determine hostarch\n") unless $hostarch;
 }
 
-die("arch $hostarch cannot build anything!\n") unless $cando{$hostarch} || ($hostarch eq 'local' && $localkiwi);
+die("arch $hostarch cannot build anything!\n") unless $BSCando::cando{$hostarch} || ($hostarch eq 'local' && $localkiwi);
 
 $srcserver = $BSConfig::srcserver unless defined $srcserver;
 @reposervers = @BSConfig::reposervers unless @reposervers;
@@ -1018,8 +1001,13 @@ sub getbinaries_kiwiproduct {
     if ($linklocal) {
       $res = [];
       for my $name (ls("$localkiwi/build/$projid/$repoid/$arch/$packid")) {
-        next unless $name =~ /-[^-]+-[^-]+\.([a-zA-Z][^\.\-]*)\.rpm$/;
-	my $rarch = $1;
+	my $rarch;
+	if ($name =~ /-[^-]+-[^-]+\.([a-zA-Z][^\.\-]*)\.rpm$/) {
+	  $rarch = $1;
+	} elsif ($name =~ /appdata.xml$/) {
+	  $rarch = $arch; 
+	}
+	next unless $rarch;
 	mkdir_p("$ddir/$rarch") unless -d "$ddir/$rarch";
 	if (!link("$localkiwi/build/$projid/$repoid/$arch/$packid/$name", "$ddir/$rarch/$name")) {
 	  # link fails if file already exists, rpc just overwrites
@@ -1168,6 +1156,8 @@ sub getbinaries_kiwiproduct {
 	      my $rarch = $1;
 	      mkdir_p("$param->{'directory'}/$rarch");
 	      $name = "$rarch/$name";
+	    } else { 
+	      $name = "$arch/$name";
 	    }
 	    return $name;
 	  },
@@ -1441,13 +1431,14 @@ sub dobuild {
   my $packid = $buildinfo->{'package'};
   my $repoid = $buildinfo->{'repository'};
   my $arch = $buildinfo->{'arch'};
+  my $helperarch = $buildinfo->{'hostarch'} || $arch;
   my $kiwimode;
   $kiwimode = 1 if $buildinfo->{'file'} =~ /\.kiwi$/;
   my $deltamode;
   $deltamode = 1 if $buildinfo->{'file'} eq '_delta';
 
   my $helper = '';
-  /^\Q$arch\E:(.*)$/ && ($helper = $1) for @{$cando{$hostarch}};
+  /^\Q$helperarch\E:(.*)$/ && ($helper = $1) for @{$BSCando::cando{$hostarch}};
 
   my @lt = localtime(time());
   my $timestring = sprintf "%04d-%02d-%02d %02d:%02d:%02d", $lt[5] + 1900, $lt[4] + 1, @lt[3,2,1,0];
@@ -1559,6 +1550,8 @@ sub dobuild {
     push @args, '--vmdisk-rootsize', $vmdisk_rootsize if $vmdisk_rootsize;
     push @args, '--vmdisk-swapsize', $vmdisk_swapsize if $vmdisk_swapsize;
     push @args, '--vmdisk-filesystem', $vmdisk_filesystem if $vmdisk_filesystem;
+    # mount options require quoting due to arguments which might start with "-o ..."
+    push @args, '--vmdisk-mount-options', "\"$vmdisk_mount_options\"" if $vmdisk_mount_options;
   } elsif ($vm =~ /lxc/) {
     push @args, '--root', $buildroot;
     push @args, '--vm-type', $vm;

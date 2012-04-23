@@ -1,6 +1,7 @@
 class Package < ActiveXML::Base
    
   handles_xml_element 'package'
+  to_hash_options :force_array => [:entry]
 
   #cache variables
   attr_accessor :linkinfo
@@ -334,7 +335,7 @@ class Package < ActiveXML::Base
   end
 
   def self.is_binary_file?(filename)
-    binary_extensions = %w{.0 .bin .bin_mid .bz .bz2 .ccf .cert .chk .der .dll .exe .fw .gem .gif .gz .jar .jpeg .jpg .lzma .ogg .otf .pdf .pk3 .png .ps .rpm .sig .svgz .tar .taz .tb2 .tbz .tbz2 .tgz .tlz .txz .xpm .xz .z .zip .ttf}
+    binary_extensions = %w{.0 .bin .bin_mid .bz .bz2 .ccf .cert .chk .der .dll .exe .fw .gem .gif .gz .jar .jpeg .jpg .lzma .ogg .otf .oxt .pdf .pk3 .png .ps .rpm .sig .svgz .tar .taz .tb2 .tbz .tbz2 .tgz .tlz .txz .xpm .xz .z .zip .ttf}
     binary_extensions.each do |ext|
       return true if filename.downcase.end_with?(ext)
     end
@@ -360,6 +361,27 @@ class Package < ActiveXML::Base
 
   def has_attribute?(attribute_namespace, attribute_name)
     return Package.has_attribute?(self.project, self.name, attribute_namespace, attribute_name)
+  end
+
+  def linkdiff
+    begin
+      path = "/source/#{self.project}/#{self.name}?cmd=linkdiff&view=xml&withissues=1"
+      res = ActiveXML::Config::transport_for(:package).direct_http(URI("#{path}"), :method => 'POST', :data => '')
+      return Sourcediff.new(res)
+    rescue ActiveXML::Transport::Error
+      return nil
+    end
+  end
+
+  def issues_in_linkdiff
+    issues = {}
+    linkdiff = self.linkdiff()
+    if linkdiff.has_element?('issues')
+      linkdiff.issues.each(:issue) do |issue|
+        issues[issue.value('label')] = issue
+      end
+    end
+    return issues
   end
 
 end

@@ -4,7 +4,11 @@
 <%= render :partial => "tabs" %>
 
 <h3><%= @pagetitle %></h3>
-<div style="margin-left: 15px; margin-right: 15px;">
+<% if @rev %>
+  <p>Currently displaying revision <i><%= @rev %></i>, <%= link_to('show latest', :project => @project, :package => @package, :file => @filename) %></p>
+<% end %>
+
+<p>
   <% if @addeditlink %>
     <% if @filename.ends_with?('.changes') %>
       <%# Rather hacky attempt to provide 'osc vc'-like functionality, would benefit of proper 'snippet' support for editor: %>
@@ -17,10 +21,16 @@
           date = new Date();
           day = date.getUTCDate().toString();
           if (day.length == 1) { day = " " + day; } // Pad single character day value
+          hours = date.getUTCHours();
+          if (hours < 10) { hours = '0' + hours; }
+          minutes = date.getUTCMinutes();
+          if (minutes < 10) { minutes = '0' + minutes; }
+          seconds = date.getUTCSeconds();
+          if (seconds < 10) { seconds = '0' + seconds; }
 
           templ = "-------------------------------------------------------------------\n" +
                   DAYS[date.getUTCDay()] + " " + MONTHS[date.getUTCMonth()] + " " + day + " " +
-                  date.getUTCHours() + ":" + date.getUTCMinutes() + ":" + date.getUTCSeconds() + " UTC " + date.getUTCFullYear() +
+                  hours + ":" + minutes + ":" + seconds + " UTC " + date.getUTCFullYear() +
                   " - <%= @user.value('email') %>\n" +
                   "\n" + "- \n" + "\n";
 
@@ -37,4 +47,4 @@
   <% else %>
     <%= render :partial => "shared/editor", :locals => {:text => @file, :mode => guess_code_class(@filename), :read_only => true} %>
   <% end %>
-</div>
+</p>

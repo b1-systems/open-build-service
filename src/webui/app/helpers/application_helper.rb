@@ -111,10 +111,9 @@ module ApplicationHelper
     abs_path
   end
 
-  def gravatar_image(email, size=20)
-    hash = Digest::MD5.hexdigest(email.downcase)
-    return image_tag "https://secure.gravatar.com/avatar/#{hash}?s=#{size}&d=" + image_url('local/default_face.png'), 
-      :width => size, :height => size
+  def user_icon(login, size=20)
+    return image_tag(url_for(:controller => :home, :action => :icon, :id => login.to_s, :size => size), 
+                     :width => size, :height => size)
   end
 
   def fuzzy_time_string(time)
@@ -295,7 +294,7 @@ module ApplicationHelper
 
   def valid_xml_id(rawid)
     rawid = '_' + rawid if rawid !~ /^[A-Za-z_]/ # xs:ID elements have to start with character or '_'
-    ERB::Util::h(rawid.gsub(/[+&: .\/\~]/, '_'))
+    ERB::Util::h(rawid.gsub(/[+&: .\/\~\(\)@]/, '_'))
   end
 
   def format_comment(comment)
@@ -325,7 +324,7 @@ module ApplicationHelper
   def tab(text, opts)
     opts[:package] = @package.to_s if @package
     opts[:project] = @project.to_s
-    if @current_action.to_s == opts[:action].to_s
+    if @current_action.to_s == opts[:action].to_s and @current_controller.to_s == opts[:controller]
       link = "<li class='selected'>"
     else
       link = "<li>"
@@ -422,48 +421,5 @@ module ApplicationHelper
     end
   end
 
-  def sorted_filenames_from_sourcediff(sourcediff)
-    # Sort files into categories by their ending and add all of them to a hash. We
-    # will later use the sorted and concatenated categories as key index into the per action file hash.
-    changes_file_keys, spec_file_keys, patch_file_keys, other_file_keys = [], [], [], []
-    files_hash, issues_hash = {}, {}
-
-    sourcediff.files.each do |file|
-      if file.new
-        filename = file.new.name.to_s
-      elsif file.old # in case of deleted files
-        filename = file.old.name.to_s
-      end
-      if filename.include?('/')
-        other_file_keys << filename
-      else
-        if filename.ends_with?('.spec')
-          spec_file_keys << filename
-        elsif filename.ends_with?('.changes')
-          changes_file_keys << filename
-        elsif filename.match(/.*.(patch|diff|dif)/)
-          patch_file_keys << filename
-        else
-          other_file_keys << filename
-        end
-      end
-      files_hash[filename] = file
-    end
-
-    if sourcediff.has_element?(:issues)
-      sourcediff.issues.each do |issue|
-        issues_hash[issue.value('long-name')] = issue.value('show-url')
-      end
-    end
-
-    parsed_sourcediff = {
-      :old => sourcediff.old,
-      :new => sourcediff.new,
-      :filenames => changes_file_keys.sort + spec_file_keys.sort + patch_file_keys.sort + other_file_keys.sort,
-      :files => files_hash,
-      :issues => issues_hash
-    }
-    return parsed_sourcediff
-  end
 end
 

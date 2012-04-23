@@ -7,10 +7,21 @@ class InterConnectTests < ActionController::IntegrationTest
    
   def test_anonymous_access
     ActionController::IntegrationTest::reset_auth 
-    get "/public/lastevents"
+    get "/public/lastevents" # OBS 2.1
     assert_response :success
-    post "/public/lastevents", nil
+    assert_tag :tag => "events", :attributes => {:sync => "lost"}
+    post "/public/lastevents?start=1"
     assert_response :success
+    assert_tag :tag => "event", :attributes => {:type => "project"}
+    assert_no_tag :tag => "events", :attributes => {:sync => "lost"}
+
+    post "/public/lastevents", nil # OBS 2.3 and later
+    assert_response :success
+    assert_tag :tag => "events", :attributes => {:sync => "lost"}
+    post "/public/lastevents", :start => "1"
+    assert_response :success
+    assert_tag :tag => "event", :attributes => {:type => "project"}
+    assert_no_tag :tag => "events", :attributes => {:sync => "lost"}
 
     # direct access
     get "/public/source/BaseDistro"
@@ -212,6 +223,11 @@ class InterConnectTests < ActionController::IntegrationTest
     assert_response :success
     post "/source/UseRemoteInstance/pack1", :cmd => "branch"
     assert_response :success
+    # test source modifications
+    post "/build/UseRemoteInstance/pack1", :cmd => "set_flag"
+    assert_response 403
+    post "/build/UseRemoteInstance/pack1", :cmd => "unlock"
+    assert_response 403
     get "/source/UseRemoteInstance/NotExisting"
     assert_response 404
     get "/source/UseRemoteInstance/NotExisting/_meta"

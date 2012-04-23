@@ -3,37 +3,12 @@
 
 <%= render :partial => 'tabs' %>
 
-<h3><%= @pagetitle %></h3>
-
 <% content_for :content_for_head do %>
   <%= stylesheet_link_tag 'jquery.tooltip' %>
 <% end %>
-<%= javascript_include_tag 'jquery.tablesorter', 'jquery.tooltip.min' %>
+<%= javascript_include_tag 'jquery.tablesorter', 'jquery.tooltip.min', 'jquery.expander.min' %>
 
-<% content_for :head_javascript do %>
-  function updateIncidentDisplay() {
-    $('#spinner').show();
-    $.ajax({
-      url: '<%= url_for(:controller => :project, :action => :list_incidents, :project => @project) %>',
-      data: {
-        'type': $('#incident_type_select')[0].value,
-      },
-      success: function(data) {
-        $('#incident_display').html(data);
-          if (data.indexOf('No incidents') == -1) {
-            incident_count = $('#incident_table tbody').children().length;
-            $('#incident_count').html('(' + incident_count.toString() + ')');
-          } else {
-            $('#incident_count').html('');
-          }
-        $('#spinner').hide();
-      }
-    });
-  }
-<% end %>
-<% content_for :ready_function do %>
-  <%= "updateIncidentDisplay();" unless defined?(@incidents) %>
-<% end %>
+<h3><%= @pagetitle %></h3>
 
 <p>
   Display <%= select_tag("incident_type_select", options_for_select(['open', 'closed'], 'open'), :onchange => "updateIncidentDisplay();") %>
@@ -43,5 +18,66 @@
 </p>
 
 <div id="incident_display">
-  <%= render(:partial => 'shared/incidents', :locals => { :incidents => @incidents }) unless not defined?(@incidents) %>
+  <%= render(:partial => 'shared/incident_table', :locals => {:incidents => @incidents, :incident_table_id => 'incident_table'}) unless not defined?(@incidents) %>
 </div>
+
+<% javascript_tag do %>
+  function updateIncidentDisplay() {
+    $('#spinner').show();
+    $.ajax({
+      url: '<%= url_for(:controller => :project, :action => :list_incidents, :project => @project) %>',
+      data: {
+        'type': $('#incident_type_select')[0].value,
+        'limit': 20,
+      },
+      success: function(data) {
+        $('#incident_display').html(data);
+        if (data.indexOf('No incidents') == -1) {
+        incident_count = $('tbody > tr:not(.hidden) > td:first-child > a').length;
+          $('#incident_count').html('(' + incident_count.toString() + ')');
+          appendIncidents();
+        } else {
+          $('#incident_count').html('');
+        }
+      },
+      complete: function(data) {
+        $('#spinner').hide();
+      },
+    });
+  }
+
+  function appendIncidents() {
+    old_incident_count = $('tbody > tr:not(.hidden) > td:first-child > a').length;
+    $('#spinner').show();
+    $.ajax({
+      url: '<%= url_for(:controller => :project, :action => :list_incidents, :project => @project) %>',
+      data: {
+        'type': $('#incident_type_select')[0].value,
+        'append': true,
+        'limit': 20,
+        'offset': old_incident_count,
+      },
+      success: function(data) {
+        $('#incident_table tbody').append(data);
+        if (data.indexOf('No incidents') == -1) {
+          incident_count = $('tbody > tr:not(.hidden) > td:first-child > a').length;
+          $('#incident_count').html('(' + incident_count.toString() + ')');
+          if ((old_incident_count + 20) == incident_count) {
+            appendIncidents();
+          }
+        } else {
+          $('#incident_count').html('');
+        }
+      },
+      complete: function(data) {
+        $('#spinner').hide();
+      },
+    });
+  }
+
+  <% if defined?(@incidents) %>
+    appendIncidents();
+  <% else %>
+    updateIncidentDisplay();
+  <% end %>
+<% end %>

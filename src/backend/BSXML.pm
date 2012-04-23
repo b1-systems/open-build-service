@@ -58,6 +58,10 @@ our $repo = [
 	    'project',
 	    'repository',
      ]],
+     [ 'hostsystem' =>
+	    'project',
+	    'repository',
+     ],
       [ 'arch' ],
 	'status',
 ];
@@ -233,9 +237,15 @@ our $patchinfo = [
             [],
 	  [ 'package' ],# optional
 	  [ 'binary' ],	# optional
+	 [[ 'releasetarget' => # optional
+		'project',
+		'repository',
+         ]],
          [[ 'issue' =>
 		'tracker',
 		'id',
+		'documented',
+                [],
 		'_content',
 	 ]],
             'category',
@@ -244,6 +254,7 @@ our $patchinfo = [
             'description',
             'swampid',	# obsolete
             'packager',
+            'stopped',
             'zypp_restart_needed',
             'reboot_needed',
             'relogin_needed',
@@ -254,6 +265,7 @@ our $projpack = [
     'repoid',
      [[ 'project' =>
 	    'name',
+	    'kind',
 	     [],
 	    'title',
 	    'description',
@@ -360,6 +372,7 @@ our $fileinfo = [
 	'version',
 	'release',
 	'arch',
+	'source',
 	'summary',
 	'description',
 	'size',
@@ -440,6 +453,7 @@ our $buildinfo = [
 	[],
 	'job',
 	'arch',
+	'hostarch',     # for cross build
 	'error',
 	'srcmd5',
 	'verifymd5',
@@ -474,6 +488,7 @@ our $buildinfo = [
 	'project',
 	'repository',
 	'repoarch',
+	'binary',
 	'package',
 	'srcmd5',
      ]],
@@ -685,6 +700,7 @@ our $link = [
 	'project',
 	'package',
 	'rev',
+	'vrev',
 	'cicount',
 	'baserev',
 	'missingok',
@@ -756,6 +772,7 @@ our $jobhistlay = [
 	'workerid',
 	'hostarch',
 	'reason',
+	'verifymd5',
 ];
 
 our $jobhist = [
@@ -838,6 +855,14 @@ our $summary = [
      ]],
 ];
 
+our $schedulerstats = [
+    'stats' =>
+	'lastchecked',
+	'checktime',
+	'lastfinished',
+	'lastpublished',
+];
+
 our $result = [
     'result' =>
 	'project',
@@ -850,6 +875,7 @@ our $result = [
       [ $buildstatus ],
       [ $binarylist ],
         $summary,
+	$schedulerstats,
 ];
 
 our $resultlist = [
@@ -1020,6 +1046,7 @@ our $request = [
 	  [ 'target' =>
 		'project',
 		'package',
+		'releaseproject', # for incident request
 	        'repository', # for merge request
 	  ],
 	  [ 'person' =>
@@ -1187,11 +1214,13 @@ our $dispatchprios = [
 # list of used services for a package or project
 our $services = [
     'services' =>
-    [[ 'service' =>
-       'name',
-       'mode', # "localonly" is skipping this service on server side, "trylocal" is trying to merge changes directly in local files, "disabled" is just skipping it
-       [],
-       [[ 'param' => 'name', '_content' ]],
+     [[ 'service' =>
+            'name',
+            'mode', # "localonly" is skipping this service on server side, "trylocal" is trying to merge changes directly in local files, "disabled" is just skipping it
+         [[ 'param' =>
+	        'name',
+                '_content'
+         ]],
     ]],
 ];
 
@@ -1203,18 +1232,19 @@ our $servicetype = [
         [],
         'summary',
         'description',
-        [[ 'parameter' =>
-                     'name',
-                     [],
-                     'description',
-                     'required', # don't run without this parameter
-                     'allowmultiple', # This parameter can be used multiple times
-                     [[ 'allowedvalue' => '_content' ]], # list of possible values
-        ]],
+     [[ 'parameter' =>
+	    'name',
+	    [],
+	    'description',
+	    'required',		# don't run without this parameter
+	    'allowmultiple',	# This parameter can be used multiple times
+          [ 'allowedvalue' ],	# list of possible values
+     ]],
 ];
+
 our $servicelist = [
     'servicelist' =>
-        [ $servicetype ],
+      [ $servicetype ],
 ];
 
 our $updateinfoitem = [
@@ -1272,6 +1302,7 @@ our $updateinfoitem = [
 
 our $updateinfo = [
     'updates' =>
+      'xmlns',
       [ $updateinfoitem ],
 ];
 
@@ -1348,10 +1379,10 @@ our $sourcediff = [
       [ 'issues' =>
 	 [[ 'issue' =>
 		'state',
-		'issue-tracker',
+		'tracker',
 		'name',
-		'long-name',
-		'show-url',
+		'label',
+		'url',
 	 ]]
       ],
 ];
@@ -1363,7 +1394,7 @@ our $issue_trackers = [
 	    'name',
 	    'description',
 	    'kind',
-            'long-name',
+            'label',
             'enable-fetch',
 	    'regex',
 	    'user',
@@ -1372,6 +1403,45 @@ our $issue_trackers = [
 	    'url',
             'issues-updated',
      ]],
+];
+
+our $appdataitem = [ 
+    'application' =>
+      [ 'id' => 
+	    'type', 
+	    '_content'
+      ],
+	'pkgname',
+	'name',
+	'summary',
+      [ 'icon' => 
+	    'type', 
+	    [],
+	    'name',
+	 [[ 'filecontent' =>
+		'file',
+		'_content'
+         ]],
+      ],
+      [ 'appcategories' => 
+          [ 'appcategory' ] 
+      ],
+      [ 'mimetypes' =>
+          [ 'mimetype' ]
+      ],
+      [ 'keywords' => 
+          [ 'keyword' ]
+      ],
+      [ 'url' => 
+	    'type', 
+	    '_content' 
+      ]
+];
+    
+our $appdata = [
+    'applications' =>
+	'version',
+      [ $appdataitem ]
 ];
 
 1;

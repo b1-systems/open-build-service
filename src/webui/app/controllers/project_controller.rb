@@ -3,14 +3,13 @@ require 'collection'
 require 'buildresult'
 require 'role'
 require 'models/package'
+require 'json'
 
 include ActionView::Helpers::UrlHelper
 include ApplicationHelper
 include RequestHelper
 
 class ProjectController < ApplicationController
-
-  class NoChangesError < Exception; end
 
   before_filter :require_project, :except => [:repository_arch_list,
     :autocomplete_projects, :clear_failed_comment, :edit_comment_form, :index, 
@@ -278,9 +277,6 @@ class ProjectController < ApplicationController
       @nr_releasetargets += 1 if repo.has_element?('releasetarget')
     end
 
-    @issues = {}
-    @issues = @project.issues() if @project.kind && @project.kind == "maintenance_incident"
-
     render :show, :status => params[:nextstatus] if params[:nextstatus]
   end
 
@@ -350,9 +346,7 @@ class ProjectController < ApplicationController
   protected :load_buildresult
 
   def buildresult
-    unless request.xhr?
-      render :text => 'no ajax', :status => 400 and return
-    end
+    render :text => 'no ajax', :status => 400 and return unless request.xhr?
     load_buildresult false
     render :partial => 'buildstatus'
   end
@@ -593,6 +587,8 @@ class ProjectController < ApplicationController
   end
 
   def requests
+    @default_request_type = params[:type] if params[:type]
+    @default_request_state = params[:state] if params[:state]
   end
 
   def save_new
@@ -1048,14 +1044,12 @@ class ProjectController < ApplicationController
       frontend.put_file(params[:meta], :project => params[:project], :filename => '_meta')
     rescue ActiveXML::Transport::Error => e
       message, code, api_exception = ActiveXML::Transport.extract_error_message e
-      flash[:error] = message
-      @meta = params[:meta]
-      render :template => "project/edit_meta" and return
+      render :text => message, :status => 400, :content_type => "text/plain"
+      return
     end
 
-    flash[:note] = "Config successfully saved"
     Project.free_cache params[:project]
-    redirect_to :action => :meta, :project => params[:project] and return
+    render :text => "Config successfully saved", :content_type => "text/plain"
   end
 
   def prjconf
@@ -1136,41 +1130,32 @@ class ProjectController < ApplicationController
     render :partial => "edit_comment"
   end
 
-  def get_changes_md5(project, package)
-    begin
-      dir = find_cached(Directory, :project => project, :package => package, :expand => "1")
-    rescue => e
-      dir = nil
-    end
-    return nil unless dir
-    changes = []
-    dir.each_entry do |entry|
-      name = entry.name.to_s
-      if name =~ /.changes$/
-        if name == package + ".changes"
-          return entry.md5.to_s
-        end
-        changes << entry.md5.to_s
-      end
-    end
-    if changes.size == 1
-      return changes[0]
-    end
-    logger.debug "can't find unique changes file: " + dir.dump_xml
-    raise NoChangesError, "no .changes file in #{project}/#{package}"
+  def status_filter_user(project, package, filter_for_user, project_maintainer_cache)
+     return nil if filter_for_user.nil?
+     if package['persons']
+       # if the package has specific maintainer, we ignore project maintainers
+       founduser = nil
+       #logger.debug "filter #{package.inspect}"
+       package['persons'].elements("person") do |u|
+         if u['userid'] == filter_for_user and u['role'] == 'maintainer'
+           founduser = true
+         end
+       end
+       return true if founduser.nil?
+     else
+       unless project_maintainer_cache.has_key? project
+         devel_project = find_cached(Project, project)
+         project_maintainer_cache[project] = devel_project.is_maintainer? filter_for_user
+       end
+       return true unless project_maintainer_cache[project]
+     end
+     return nil
   end
-  private :get_changes_md5
-
-  def changes_file_difference(project1, package1, project2, package2)
-    md5_1 = get_changes_md5(project1, package1)
-    md5_2 = get_changes_md5(project2, package2)
-    return md5_1 != md5_2
-  end
-  private :changes_file_difference
+  private :status_filter_user
 
   def status
     status = Rails.cache.fetch("status_%s" % @project, :expires_in => 10.minutes) do
-      ProjectStatus.find(:project => @project)
+      ProjectStatus.find(:project => @project).to_hash
     end
 
     all_packages = "All Packages"
@@ -1180,6 +1165,7 @@ class ProjectController < ApplicationController
     @limit_to_fails = !(!params[:limit_to_fails].nil? && params[:limit_to_fails] == 'false')
     @limit_to_old = !(params[:limit_to_old].nil? || params[:limit_to_old] == 'false')
     @include_versions = !(!params[:include_versions].nil? && params[:include_versions] == 'false')
+    filter_for_user = params[:filter_for_user]
     
     attributes = find_cached(PackageAttribute, :namespace => 'OBS',
       :name => 'ProjectStatusPackageFailComment', :project => @project, :expires_in => 2.minutes)
@@ -1193,52 +1179,79 @@ class ProjectController < ApplicationController
 
     if @include_versions || @limit_to_old
       attributes = find_cached(PackageAttribute, :namespace => 'openSUSE',
-        :name => 'UpstreamVersion', :project => @project, :expires_in => 2.minutes)
+        :name => 'UpstreamVersion', :project => @project, :expires_in => 20.minutes)
       attributes.each('/attribute/project/package') do |p|
         upstream_versions[p.value(:name)] = p.find_first("values/value").text
       end if attributes
 
       attributes = find_cached(PackageAttribute, :namespace => 'openSUSE',
-        :name => 'UpstreamTarballURL', :project => @project, :expires_in => 2.minutes)
+        :name => 'UpstreamTarballURL', :project => @project, :expires_in => 20.minutes)
       attributes.each('/attribute/project/package') do |p|
         upstream_urls[p.value(:name)] = p.find_first("values/value").text
       end if attributes
     end
 
-    raw_requests = Rails.cache.fetch("requests_new", :expires_in => 5.minutes) do
-      Collection.find(:what => 'request', :predicate => "(state/@name='new' or state/@name='review')")
+    raw_requests = Rails.cache.fetch("requests_new_hash", :expires_in => 5.minutes) do
+      Collection.find(:what => 'request', :predicate => "(state/@name='new' or state/@name='review')").to_hash
     end
 
     @requests = Hash.new
     submits = Hash.new
-    raw_requests.each_request do |r|
-      id = r.value('id').to_i
+    raw_requests.elements("request") do |r|
+      id = r['id'].to_i
       @requests[id] = r
-      #logger.debug r.dump_xml + " " + (r.has_element?('action') ? r.action.value('type') : "false")
-      if r.has_element?('action') && r.action.value('type') == "submit"
-        target = r.action.target
-        key = target.value('project') + "/" + target.value('package')
+      r.elements('action') do |action|
+        next unless action['type'] == "submit"
+        target = action['target']
+        key = target['project'] + "/" + target['package']
         submits[key] ||= Array.new
         submits[key] << id
       end
     end
 
-    @develprojects = Array.new
+    declines = Hash.new
+    declined_requests = BsRequest.list({:states => 'declined', :roles => "target", :project => @project.name})
+    declined_requests.each do |r|
+      r = r.to_hash
+      id = r['id'].to_i
+      @requests[id] = r
+      r.elements('action') do |action|
+        next unless action['type'] == 'submit'
+        target = action['target']
+        source = action['source']
+        key = target['package']
+        unless declines[key] && declines[key][:id] > id
+          declines[key] = {
+            :id => id, 
+            :project => source['project'], 
+            :package => source['package'], 
+            :rev => source['rev'] }
+        end
+      end
+    end
+    
+    #logger.debug declines.inspect
+
+    @develprojects = Hash.new
+    project_maintainer_cache = Hash.new
 
     @packages = Array.new
-    status.each_package do |p|
+    status.elements("package") do |p|
       currentpack = Hash.new
-      currentpack['name'] = p.name
-      currentpack['failedcomment'] = comments[p.name] if comments.has_key? p.name
-      newest = 0
+      pname = p["name"]
+      #next unless pname =~ %r{mkv.*}
+      currentpack['name'] = pname
+      currentpack['failedcomment'] = comments[pname] if comments.has_key? pname
 
-      p.each_failure do |f|
-        next if f.repo =~ /snapshot/
-        next if newest > (Integer(f.time) rescue 0)
-        next if f.srcmd5 != p.srcmd5
-        currentpack['failedarch'] = f.repo.split('/')[1]
-        currentpack['failedrepo'] = f.repo.split('/')[0]
-        newest = Integer(f.time)
+      newest = 0
+      p.elements("failure") do |f|
+        next if f['repo'] =~ /snapshot/
+        ftime = Integer(f['time']) rescue 0
+        next if newest > ftime
+        next if f['srcmd5'] != p['srcmd5']
+        currentpack['failedarch'] = f['repo'].split('/')[1]
+        currentpack['failedrepo'] = f['repo'].split('/')[0]
+        newest = ftime
         currentpack['firstfail'] = newest
       end
 
@@ -1246,16 +1259,16 @@ class ProjectController < ApplicationController
       currentpack['requests_from'] = Array.new
       currentpack['requests_to'] = Array.new
 
-      key = @project.name + "/" + p.name
+      key = @project.name + "/" + pname
       if submits.has_key? key
         currentpack['requests_from'].concat(submits[key])
       end
 
-      currentpack['version'] = p.version
-      if upstream_versions.has_key? p.name
-        upstream_version = upstream_versions[p.name]
+      currentpack['version'] = p["version"]
+      if upstream_versions.has_key? pname
+        upstream_version = upstream_versions[pname]
         begin
-          gup = Gem::Version.new(p.version)
+          gup = Gem::Version.new(p["version"])
           guv = Gem::Version.new(upstream_version)
         rescue ArgumentError
           # if one of the versions can't be parsed we simply can't say
@@ -1263,55 +1276,85 @@ class ProjectController < ApplicationController
 
         if gup && guv && gup < guv
           currentpack['upstream_version'] = upstream_version
-          currentpack['upstream_url'] = upstream_urls[p.name] if upstream_urls.has_key? p.name
+          currentpack['upstream_url'] = upstream_urls[pname] if upstream_urls.has_key? pname
         end
       end
 
-      currentpack['md5'] = p.value 'verifymd5'
-      currentpack['md5'] ||= p.srcmd5
+      currentpack['md5'] = p['verifymd5']
+      currentpack['md5'] ||= p['srcmd5']
 
-      if p.has_element? :develpack
-        @develprojects << p.develpack.proj
-        currentpack['develproject'] = p.develpack.proj
-        if (@current_develproject != p.develpack.proj or @current_develproject == no_project) and @current_develproject != all_packages
+      currentpack['changesmd5'] = p.value 'changesmd5'
+
+      if p['develpack']
+        dproject = p['develpack']['proj']
+        @develprojects[dproject] = 1
+        currentpack['develproject'] = dproject
+        if (@current_develproject != dproject or @current_develproject == no_project) and @current_develproject != all_packages
           next
         end
-        currentpack['develpackage'] = p.develpack.pack
-        key = "%s/%s" % [p.develpack.proj, p.develpack.pack]
+        currentpack['develpackage'] = p['develpack']['pack']
+        key = "%s/%s" % [dproject, p['develpack']['pack']]
         if submits.has_key? key
           currentpack['requests_to'].concat(submits[key])
         end
-        if p.develpack.has_element? 'package'
-          currentpack['develmd5'] = p.develpack.package.value 'verifymd5'
-          currentpack['develmd5'] ||= p.develpack.package.srcmd5
+        dp = p['develpack']['package']
+        if dp
+          currentpack['develmd5'] = dp['verifymd5']
+          currentpack['develmd5'] ||= dp["srcmd5"]
+          currentpack['develchangesmd5'] = dp['changesmd5']
+          currentpack['develmtime'] = dp['maxmtime']
 
-          if p.develpack.package.has_element? :error
-             currentpack['problems'] << 'error-' + p.develpack.package.error.to_s
+          if dp['error']
+             currentpack['problems'] << 'error-' + dp['error']
           end
+
+          newest = 0
+          dp.elements("failure") do |f|
+            ftime = Integer(f['time']) rescue 0
+            next if newest > ftime
+            next if f['srcmd5'] != dp['srcmd5']
+            frepo = f['repo']
+            currentpack['develfailedarch'] = frepo.split('/')[1]
+            currentpack['develfailedrepo'] = frepo.split('/')[0]
+            newest = ftime
+            currentpack['develfirstfail'] = newest
+          end
+
+          next if status_filter_user(dproject, dp, filter_for_user, project_maintainer_cache)
         end
 
-        if currentpack['md5'] and currentpack['develmd5'] and currentpack['md5'] != currentpack['develmd5']
-          currentpack['problems'] << Rails.cache.fetch("dd_%s_%s" % [currentpack['md5'], currentpack['develmd5']]) do
-            begin
-              if changes_file_difference(@project.name, p.name, currentpack['develproject'], currentpack['develpackage'])
-                'different_changes'
-              else
-                'different_sources'
-              end
-            rescue NoChangesError => e
-              e.message
+        if currentpack['md5'] && currentpack['develmd5'] && currentpack['md5'] != currentpack['develmd5']
+          if declines[pname] && 
+              declines[pname][:project] == dp.value(:project) &&
+              declines[pname][:package] == dp.value(:name)
+            
+            sourcerev = Package.current_rev(dp.value(:project), dp.value(:name))
+            if sourcerev == declines[pname][:rev]
+              currentpack['currently_declined'] = declines[pname][:id]
+              currentpack['problems'] << 'currently_declined'
+            else
+              currentpack['declined_request'] = declines[pname]
+            end
+          end
+          if currentpack['currently_declined'].nil?
+            if currentpack['changesmd5'] != currentpack['develchangesmd5']
+              currentpack['problems'] << 'different_changes'
+            else
+              currentpack['problems'] << 'different_sources'
             end
           end
         end
       elsif @current_develproject != no_project
+        next if status_filter_user(@project.name, p, filter_for_user, project_maintainer_cache)
         next if @current_develproject != all_packages
       end
 
       if p.has_element? :link
-        if currentpack['md5'] != p.link.targetmd5
+        plink = p['link']
+        if currentpack['md5'] != plink['targetmd5']
           currentpack['problems'] << 'diff_against_link'
-          currentpack['lproject'] = p.link.project
-          currentpack['lpackage'] = p.link.package
+          currentpack['lproject'] = plink['project']
+          currentpack['lpackage'] = plink['package']
         end
       end
 
@@ -1326,14 +1369,22 @@ class ProjectController < ApplicationController
             !currentpack['problems'].empty? or !currentpack['requests_from'].empty? or !currentpack['requests_to'].empty?)
         end
       end
+      #currentpack['thefullthing'] = p
       @packages << currentpack
     end
 
-    @develprojects.sort! { |x,y| x.downcase <=> y.downcase }.uniq!
+    @develprojects = @develprojects.keys.sort { |x,y| x.downcase <=> y.downcase }
     @develprojects.insert(0, all_packages)
     @develprojects.insert(1, no_project)
 
     @packages.sort! { |x,y| x['name'] <=> y['name'] }
+
+    respond_to do |format|
+      format.json {
+        render :text => JSON.pretty_generate(@packages), :layout => false, :content_type => "text/plain"
+      } 
+      format.html 
+    end
   end
 
   def maintained_projects
@@ -1343,6 +1394,7 @@ class ProjectController < ApplicationController
   def add_maintained_project_dialog
     redirect_back_or_to :action => 'show', :project => @project and return unless @is_maintenance_project
   end
+
   def add_maintained_project
     redirect_back_or_to :action => 'show', :project => @project and return unless @is_maintenance_project
     if params[:maintained_project].nil? or params[:maintained_project].empty?
@@ -1380,7 +1432,7 @@ class ProjectController < ApplicationController
     if @spider_bot
       @incidents = []
     else
-      @incidents = @project.maintenance_incidents(params[:type] || 'open')
+      @incidents = @project.maintenance_incidents(params[:type] || 'open', {:limit => 20})
     end
   end
 
@@ -1388,8 +1440,28 @@ class ProjectController < ApplicationController
     if @spider_bot || !request.xhr?
       render :text => 'no ajax', :status => 400 and return
     end
-    incidents = @project.maintenance_incidents(params[:type] || 'open')
-    render :partial => 'shared/incidents', :locals => { :incidents => incidents }
+    incidents = @project.maintenance_incidents(params[:type] || 'open', params.slice(:limit, :offset))
+    if params[:append]
+      render :partial => 'shared/incident_table_entries', :locals => { :incidents => incidents }
+    else
+      render :partial => 'shared/incident_table', :locals => { :incidents => incidents }
+    end
+  end
+
+  def unlock_dialog
+  end
+  def unlock
+    valid_http_methods :post
+    begin
+      path = "/source/#{CGI.escape(params[:project])}/?cmd=unlock&comment=#{CGI.escape(params[:comment])}"
+      result = ActiveXML::Base.new(frontend.transport.direct_http(URI(path), :method => "POST", :data => ''))
+      flash[:success] = "Unlocked project #{params[:project]}"
+      Project.free_cache(params[:project])
+    rescue ActiveXML::Transport::Error => e
+      message, _, _ = ActiveXML::Transport.extract_error_message e
+      flash[:error] = message
+    end
+    redirect_to :action => 'show', :project => params[:project] and return
   end
 
   private
@@ -1445,8 +1517,10 @@ class ProjectController < ApplicationController
     end
     # Is this a maintenance incident project?
     @is_incident_project = false
-    @is_incident_project = true if @project.project_type and @project.project_type == "maintenance_incident"
-    #TODO: Prepare incident-related data
+    if @project.project_type and @project.project_type == 'maintenance_incident'
+      @is_incident_project = true
+      @open_release_requests = BsRequest.list({:states => 'new,review', :types => 'maintenance_release', :project => @project.value('name'), :roles => 'source'})
+    end
   end
 
   def load_requests

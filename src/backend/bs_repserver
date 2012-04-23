@@ -804,7 +804,6 @@ sub getbinary_info {
       }
     }
   }
-  delete $res->{'source'};
   delete $res->{'hdrmd5'};
   $res->{'mtime'} = $s[9];
   $res->{'size'} = $s[7];
@@ -1123,7 +1122,7 @@ sub getschedulerstate {
   if ($schedulerstate eq 'finished' && !$details) {
     return 'finished'     if -e "$eventdir/publish/${projid}::$repoid";
     return 'publishing'   if -e "$eventdir/publish/${projid}::${repoid}::inprogress";
-    return 'unpublished'  if (readstr("$reporoot/$projid/$repoid/$arch/:repodone", 1) || '') eq 'disabled';
+    return 'unpublished'  if (readstr("$reporoot/$projid/$repoid/$arch/:repodone", 1) || '') =~ /^disabled/;
     return 'published';
   }
   return ($schedulerstate, $details);
@@ -1148,7 +1147,7 @@ sub workerstatus {
   @a = ls($jobsdir) unless $cgi->{'scheduleronly'};
   for my $a (@a) {
     next unless -d "$jobsdir/$a";
-    my @d = grep {!/^\./ && !/:(?:dir|new)$/} ls("$jobsdir/$a");
+    my @d = grep {!/^\./ && !/:(?:dir|new|cross)$/} ls("$jobsdir/$a");
     my %d = map {$_ => 1} @d;
     for my $d (grep {/:status$/} @d) {
       delete $d{$d};
@@ -1617,6 +1616,7 @@ sub getresult {
   my %packfilter = map {$_ => 1} @{$cgi->{'package'} || []};
   my %code = map {$_ => 1} @{$cgi->{'code'} || []};
   my %buildingjobs;
+  my %lastpublished;
   for my $prpa (@$prpas) {
     my %sum;
     my ($projid, $repoid, $arch) = split('/', $prpa, 3);
@@ -1677,6 +1677,25 @@ sub getresult {
       my @sum = grep {exists $sum{$_}} @order;
       push @sum, grep {!$order{$_}} sort keys %sum;
       $sl->{'summary'} = {'statuscount' => [ map {{'code' => $_, 'count' => $sum{$_}}} @sum ] };
+    }
+    if ($cgi->{'withstats'}) {
+      my $stats = {};
+      my @s = stat("$reporoot/$prpa/:packstatus");
+      $stats->{'lastchecked'} = $s[9] if @s;
+      @s = stat("$reporoot/$prpa/:repoinfo");
+      $stats->{'lastfinished'} = $s[9] if @s;	# not really true for image builds...
+      my $prp = $prpa;
+      $prp =~ s/\/[^\/]+$//;
+      if (!exists($lastpublished{$prp})) {
+	$lastpublished{$prp} = undef;
+        my @s = stat("$reporoot/$prp/:repoinfo");
+	my $ri = BSUtil::retrieve("$reporoot/$prp/:repoinfo", 1);
+	if ($ri && $ri->{'state'}) {
+	  $lastpublished{$prp} = $s[9];
+	}
+      }
+      $stats->{'lastpublished'} = $lastpublished{$prp} if $lastpublished{$prp};
+      $sl->{'stats'} = $stats;
     }
     push @$r, $sl;
   }
@@ -1819,12 +1838,7 @@ sub getkiwiproductpackages {
 	  next unless grep {$deps{$_}} @{$depends->{'subpacks'}->{$apackid} || []};
         }
         # need package, scan content
-	my @bins;
-	if (-e "$reporoot/$aprp/$arch/$apackid/.bininfo") {
-	  @bins = map {substr($_, 34)} split("\n", readstr("$reporoot/$aprp/$arch/$apackid/.bininfo"));
-	} else {
-	  @bins = grep {/\.rpm$/} ls ("$reporoot/$aprp/$arch/$apackid");
-	}
+	my @bins = grep {/\.rpm$|\.xml$/} ls ("$reporoot/$aprp/$arch/$apackid");
         my $needit;
 	for my $b (@bins) {
 	  next unless $b =~ /^(.+)-[^-]+-[^-]+\.([a-zA-Z][^\.\-]*)\.rpm$/;
@@ -1837,6 +1851,9 @@ sub getkiwiproductpackages {
 	  next unless $b =~ /^(.+)-[^-]+-[^-]+\.([a-zA-Z][^\.\-]*)\.rpm$/;
 	  push @got, "$aprp/$arch/$apackid/$b";
 	}
+        for my $b (@bins) {
+	  push @got, "$aprp/$arch/$apackid/$b" if $b =~ /^.*-appdata.xml$/;
+        }
       }
     }
   }
@@ -2124,9 +2141,20 @@ sub getbuildinfo {
     my @bins = getkiwiproductpackages($proj, $repo, $pdata, $info, \@edeps);
     for my $b (@bins) {
       my @bn = split('/', $b);
-      next unless $bn[-1] =~ /^(.+)-([^-]+)-([^-]+)\.([a-zA-Z][^\.\-]*)\.rpm$/;
-      my $d = {'name' => $1, 'version' => $2, 'release' => $3, 'arch' => $4, 'project' => $bn[0], 'repository' => $bn[1], 'package' => $bn[3]};
+      my $d = { 'binary' => $bn[-1] };
+      if ($bn[-1] =~ /^(.+)-([^-]+)-([^-]+)\.([a-zA-Z][^\.\-]*)\.rpm$/) {
+        $d->{'name'} = $1;
+        $d->{'version'} = $2; 
+        $d->{'release'} = $3;
+        $d->{'arch'} = $4;
+      } else {
+        # for now we only support appdata.xml
+        next unless $bn[-1] =~ /^(.*)-appdata.xml$/;
+      }
+      $d->{'project'} = $bn[0];
+      $d->{'repository'} = $bn[1];
       $d->{'repoarch'} = $bn[2] if $bn[2] ne $arch;
+      $d->{'package'} = $bn[3];
       $d->{'noinstall'} = 1;
       push @bdeps, $d;
     }
@@ -2666,31 +2694,52 @@ sub publisheddir {
   my @res = ();
   if (!defined($projid)) {
     @res = listpublished($extrepodir);
+    if ($BSConfig::publishredirect) {
+      for (keys %{$BSConfig::publishredirect}) {
+        push @res, (split('/', $_, 2))[0];
+      }
+      @res = unify(@res);
+    }
   } elsif (!defined($repoid)) {
     my $prp_ext = $projid;
     $prp_ext =~ s/:/:\//g;
     @res = listpublished("$extrepodir/$prp_ext");
+    if ($BSConfig::publishredirect) {
+      for (keys %{$BSConfig::publishredirect}) {
+        my @p = split('/', $_, 2);
+	push @res, $p[1] if $p[0] eq $projid;
+      }
+      @res = unify(@res);
+    }
   } elsif (!defined($arch)) {
     my $prp_ext = "$projid/$repoid";
     $prp_ext =~ s/:/:\//g;
-    @res = listpublished("$extrepodir/$prp_ext", 1);
+    my $extrep = "$extrepodir/$prp_ext";
+    if ($BSConfig::publishredirect && $BSConfig::publishredirect->{"$projid/$repoid"}) {
+      $extrep = $BSConfig::publishredirect->{"$projid/$repoid"};
+    }
+    @res = listpublished($extrep, 1);
   } else {
     my $prp_ext = "$projid/$repoid";
     $prp_ext =~ s/:/:\//g;
-    if ($cgi->{'view'} eq 'ymp') {
+    my $extrep = "$extrepodir/$prp_ext";
+    if ($BSConfig::publishredirect && $BSConfig::publishredirect->{"$projid/$repoid"}) {
+      $extrep = $BSConfig::publishredirect->{"$projid/$repoid"};
+    }
+    return publishedfile($cgi, $projid, $repoid, undef, $arch) if -f "$extrep/$arch";
+    if ($cgi->{'view'} && $cgi->{'view'} eq 'ymp') {
       my $binaryname = $arch;
       my $binary;
-      my @archs = ls("$extrepodir/$prp_ext");
+      my @archs = ls($extrep);
       for my $a (@archs) {
-	next unless -d "$extrepodir/$prp_ext/$a";
-	$binary = findympbinary("$extrepodir/$prp_ext/$a", $binaryname);
+	next unless -d "$extrep/$a";
+	$binary = findympbinary("$extrep/$a", $binaryname);
 	last if $binary;
       }
-      $binary ||= "$extrepodir/$prp_ext/$binaryname";
+      $binary ||= "$extrep/$binaryname";
       return makeymp($projid, $repoid, $binary);
     }
-    return publishedfile($cgi, $projid, $repoid, undef, $arch) if -f "$extrepodir/$prp_ext/$arch";
-    @res = ls("$extrepodir/$prp_ext/$arch");
+    @res = ls("$extrep/$arch");
   }
   @res = sort @res;
   @res = map {{'name' => $_}} @res;
@@ -2792,6 +2841,7 @@ sub fileinfo {
       $q->{'name'} = $g0->{'name'} if defined $g0->{'name'};
       $q->{'summary'} = $g0->{'summary'} if defined $g0->{'summary'};
       $q->{'description'} = $g0->{'description'} if defined $g0->{'description'};
+      $q->{'size'} = $g0->{'size'} if defined $g0->{'size'};
       if ($g0->{'repositories'}) {
 	$q->{'recommends'} = [ map {$_->{'name'}} grep {$_->{'recommended'} && $_->{'recommended'} eq 'true'} @{$g0->{'packages'}->{'package'} || []} ];
 	$q->{'suggests'} = [ map {$_->{'name'}} grep {!($_->{'recommended'} && $_->{'recommended'} eq 'true')} @{$g0->{'packages'}->{'package'} || []} ];
@@ -2800,29 +2850,40 @@ sub fileinfo {
       }
     }
   }
-  for (qw{name epoch version release arch summary description provides requires recommends suggests}) {
+  my @s = stat($filepath);
+  $q->{'size'} = $s[7]  unless defined $q->{'size'};
+  $q->{'mtime'} = $s[9] unless defined $q->{'mtime'};
+  for (qw{name epoch version size mtime release arch summary description provides requires recommends suggests}) {
     $res->{$_} = $q->{$_} if defined $q->{$_};
   }
   return ($res, $BSXML::fileinfo);
 }
 
 sub publishedfile {
-  my ($cgi, $projid, $repoid, $arch, $filename) = @_;
+  my ($cgi, $projid, $repoid, $arch, $filename, $subfilename) = @_;
+  $filename .= "/$subfilename" if defined $subfilename;
   my $prp_ext = "$projid/$repoid";
-  $prp_ext .= "/$arch" if defined $arch;
   $prp_ext =~ s/:/:\//g;
-  if ($cgi->{'view'} && $cgi->{'view'} eq 'ymp') {
-    return makeymp($projid, $repoid, "$extrepodir/$prp_ext/$filename");
+  my $extrep = "$extrepodir/$prp_ext";
+  if ($BSConfig::publishredirect && $BSConfig::publishredirect->{"$projid/$repoid"}) {
+    $extrep = $BSConfig::publishredirect->{"$projid/$repoid"};
   }
-  die("no such file\n") unless -f "$extrepodir/$prp_ext/$filename";
+  $extrep .= "/$arch" if defined $arch;
+  if (-d "$extrep/$filename") {
+    return publisheddir($cgi, $projid, $repoid, "$arch/$filename");
+  }
+  if ($cgi->{'view'} && $cgi->{'view'} eq 'ymp') {
+    return makeymp($projid, $repoid, "$extrep/$filename");
+  }
+  die("no such file\n") unless -f "$extrep/$filename";
   if ($cgi->{'view'} && $cgi->{'view'} eq 'fileinfo') {
-    return fileinfo($cgi, "$extrepodir/$prp_ext/$filename", $filename);
+    return fileinfo($cgi, "$extrep/$filename", $filename);
   }
   my $type = 'application/octet-stream';
-  $type = 'application/x-rpm' if $filename=~ /\.rpm$/;
-  $type = 'application/x-debian-package' if $filename=~ /\.deb$/;
+  $type = 'application/x-rpm' if $filename =~ /\.rpm$/;
+  $type = 'application/x-debian-package' if $filename =~ /\.deb$/;
   $type = 'text/xml' if $filename=~ /\.xml$/;
-  BSServer::reply_file("$extrepodir/$prp_ext/$filename", "Content-Type: $type");
+  BSServer::reply_file("$extrep/$filename", "Content-Type: $type");
   return undef;
 }
 
@@ -2949,11 +3010,12 @@ my $dispatches = [
   '/published/$project/$repository' => \&publisheddir,
   '/published/$project/$repository/$arch:filename view:?' => \&publisheddir,
   '/published/$project/$repository/$arch:filename/$filename view:?' => \&publishedfile,
+  '/published/$project/$repository/$arch:filename/$filename/$subfilename:filename view:?' => \&publishedfile,
 
   # info
   '/workerstatus scheduleronly:bool? arch*' => \&workerstatus,
 
-  '/_result $prpa+ oldstate:md5? package* code:* lastbuild:bool? withbinarylist:bool? summary:bool?' => \&getresult,
+  '/_result $prpa+ oldstate:md5? package* code:* lastbuild:bool? withbinarylist:bool? withstats:bool? summary:bool?' => \&getresult,
   'POST:/_command $cmd: $prpa+ package* code:*' => \&docommand,
 
   '/serverstatus' => \&BSStdServer::serverstatus,
@@ -2966,7 +3028,7 @@ my $dispatches_ajax = [
   '/build/$project/$repository/$arch/$package/_log nostream:bool? start:intnum? end:num? view:?' => \&getlogfile,
   '/build/$project/$repository/$arch/$package:package_repository view:? binary:filename*' => \&getbinarylist,
   '/build/$project/$repository/$arch/$package:package_repository/$filename view:?' => \&getbinary,
-  '/_result $prpa+ oldstate:md5? package* code:* withbinarylist:bool? summary:bool?' => \&getresult,
+  '/_result $prpa+ oldstate:md5? package* code:* withbinarylist:bool? withstats:bool? summary:bool?' => \&getresult,
   '/getbinaries $project $repository $arch binaries: nometa:bool?' => \&getbinaries,
   '/getbinaryversions $project $repository $arch binaries: nometa:bool?' => \&getbinaryversions,
 ];

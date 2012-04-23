@@ -2,6 +2,7 @@ require 'json'
 
 include ProductHelper
 include MaintenanceHelper
+include ValidationHelper
 
 class SourceController < ApplicationController
 
@@ -58,8 +59,15 @@ class SourceController < ApplicationController
 
   def projectlist
     # list all projects (visible to user)
-    dir = Project.find :all
-    render :text => dir.dump_xml, :content_type => "text/xml"
+    dir = DbProject.find(:all, :select => 'name').map {|i| i.name }.sort
+    output = String.new
+    output << "<?xml version='1.0' encoding='UTF-8'?>\n"
+    output << "<directory>\n"
+    dir.each do |item|
+      output << "  <entry name=\"#{item.to_xs}\"/>\n"
+    end
+    output << "</directory>\n"
+    render :text => output, :content_type => "text/xml"
     return
   end
 
@@ -70,7 +78,7 @@ class SourceController < ApplicationController
     # init and validation
     #--------------------
     valid_http_methods :get, :post, :delete
-    valid_commands=["undelete", "showlinked", "remove_flag", "set_flag", "createpatchinfo", "createkey", "extendkey", "copy", "createmaintenanceincident"]
+    valid_commands=["undelete", "showlinked", "remove_flag", "set_flag", "createpatchinfo", "createkey", "extendkey", "copy", "createmaintenanceincident", "unlock"]
     raise IllegalRequestError.new "invalid_project_name" unless valid_project_name?(params[:project])
     if params[:cmd]
       raise IllegalRequestError.new "invalid_command" unless valid_commands.include?(params[:cmd])
@@ -225,8 +233,11 @@ class SourceController < ApplicationController
       end
 
       pro = DbProject.get_by_name project_name
-      # command: showlinked, set_flag, remove_flag, ...?
-      if command == "showlinked" or @http_user.can_modify_project?(pro)
+      # unlock
+      if command == "unlock" and @http_user.can_modify_project?(pro, ignoreLock=true)
+        dispatch_command
+      elsif command == "showlinked" or @http_user.can_modify_project?(pro)
+        # command: showlinked, set_flag, remove_flag, ...?
         dispatch_command
       else
         render_error :status => 403, :errorcode => "cmd_execution_no_permission",
@@ -255,7 +266,7 @@ class SourceController < ApplicationController
     valid_commands=['diff', 'branch', 'servicediff', 'linkdiff', 'showlinked', 'copy', 'remove_flag', 'set_flag', 
                     'rebuild', 'undelete', 'wipe', 'runservice', 'commit', 'commitfilelist', 
                     'createSpecFileTemplate', 'deleteuploadrev', 'linktobranch', 'updatepatchinfo',
-                    'getprojectservices']
+                    'getprojectservices', 'unlock']
     # list of commands which are allowed even when the project has the package only via a project link
     read_commands = ['branch', 'diff', 'linkdiff', 'servicediff', 'showlinked', 'getprojectservices']
     source_untouched_commands = ['branch', 'diff', 'linkdiff', 'servicediff', 'showlinked', 'rebuild', 'wipe', 'remove_flag', 'set_flag', 'getprojectservices']
@@ -356,9 +367,16 @@ class SourceController < ApplicationController
         tpkg = DbPackage.get_by_project_and_name(target_project_name, target_package_name, use_source = true, follow_project_links = follow_project_links)
         tprj = tpkg.db_project unless tpkg.nil? # for remote package case
         if request.delete? or (request.post? and not read_commands.include? command)
-          unless @http_user.can_modify_package?(tpkg)
-            render_error :status => 403, :errorcode => "cmd_execution_no_permission",
-              :message => "no permission to execute command '#{command}' for package #{tpkg.name}"
+          # unlock
+          if command == "unlock" 
+            unless @http_user.can_modify_package?(tpkg, ignoreLock=true)
+              render_error :status => 403, :errorcode => "cmd_execution_no_permission",
+                :message => "no permission to unlock package #{tpkg.name} in project #{tpkg.db_project.name}"
+              return
+            end
+          elsif not @http_user.can_modify_package?(tpkg)
+            render_error :status => 403, :errorcode => "delete_package_no_permission",
+              :message => "no permission to delete package #{tpkg.name} in project #{tpkg.db_project.name}"
             return
           end
         end
@@ -550,7 +568,8 @@ class SourceController < ApplicationController
 
       # exec
       ac.destroy
-      @attribute_container.store
+# FIXME: define how to write it to backend
+#      @attribute_container.store
       render_ok
 
     # /request.delete?
@@ -612,7 +631,8 @@ class SourceController < ApplicationController
           return
         end
       end
-      @attribute_container.store
+# FIXME: define how to write it to backend
+#      @attribute_container.store
       render_ok
 
     # /request.post?
@@ -693,10 +713,17 @@ class SourceController < ApplicationController
       if prj
         # is lock explicit set to disable ? allow the un-freeze of the project in that case ...
         ignoreLock = nil
-        ignoreLock = 1 if rdata.has_element?("lock/disable")
+# do not support unlock via meta data, just via command or request revoke for now
+#        ignoreLock = 1 if rdata.has_element?("lock/disable")
 
         # project exists, change it
         unless @http_user.can_modify_project?(prj, ignoreLock)
+          if prj.is_locked?
+            logger.debug "no permission to modify LOCKED project #{prj.name}"
+            render_error :status => 403, :errorcode => "change_project_no_permission", 
+              :message => "The project #{prj.name} is locked"
+            return
+          end
           logger.debug "user #{user.login} has no permission to modify project #{prj.name}"
           render_error :status => 403, :errorcode => "change_project_no_permission", 
             :message => "no permission to change project"
@@ -761,54 +788,27 @@ class SourceController < ApplicationController
 
       # find linking repos which get deleted
       removedRepositories = Array.new
+      linkingRepositories = Array.new
       if prj
         prj.repositories.each do |repo|
           if !rdata.has_element?("repository[@name='#{repo.name}']") and not repo.remote_project_name
-            repo.linking_repositories.each do |lrep|
-              removedRepositories << lrep
-            end
+            # collect repositories to remove
+            removedRepositories << repo
+            linkingRepositories += repo.linking_repositories
           end
         end
       end
-      if removedRepositories.length > 0
-        if params[:force] and not params[:force].empty?
-          # replace links to this projects with links to the "deleted" project
-          del_repo = DbProject.find_by_name("deleted").repositories[0]
-          removedRepositories.each do |link_rep|
-            link_rep.path_elements.find(:all).each { |pe| pe.destroy }
-            link_rep.path_elements.create(:link => del_repo, :position => 1)
-            link_rep.save
-            # update backend
-            link_rep.db_project.store
-          end
-        else
-          lrepstr = removedRepositories.map{|l| l.db_project.name+'/'+l.name}.join "\n"
+      if linkingRepositories.length > 0
+        unless params[:force] and not params[:force].empty?
+          lrepstr = linkingRepositories.map{|l| l.db_project.name+'/'+l.name}.join "\n"
           render_error :status => 400, :errorcode => "repo_dependency",
             :message => "Unable to delete repository; following repositories depend on this project:\n#{lrepstr}\n"
           return
         end
       end
-
-      # Check for maintenance-related parts
-      # The attribute 'type' is only set for maintenance and maintenance incident projects.
-      kind_element = rdata.value(:kind)
-      if kind_element == "maintenance"
-        if prj
-          # First remove all maintained project relations, if project exists already
-          DbProject.find_all_by_maintenance_project_id(prj.id).each do |maintained_project|
-            maintained_project.maintenance_project_id = nil
-            maintained_project.save
-          end
-        end
-        # Set this project as the maintenance project for all maintained projects found in the XML
-        rdata.each("maintenance/maintains") do |maintains|
-          maintained_project = DbProject.get_by_name(maintains.value('project'))
-          maintained_project.maintenance_project_id = prj.id
-          maintained_project.save
-        end
-      elsif kind_element == "maintenance_incident"
-        # Handle maintenance incident project data
-        #TODO
+      if removedRepositories.length > 0
+        # do remove
+        private_remove_repositories( removedRepositories, (params[:remove_linking_repositories] and not params[:remove_linking_repositories].empty?) )
       end
 
       # exec
@@ -953,7 +953,8 @@ class SourceController < ApplicationController
         # is lock explicit set to disable ? allow the un-freeze of the project in that case ...
         rdata = ActiveXML::Base.new(request.raw_post.to_s)
         ignoreLock = nil
-        ignoreLock = 1 if rdata.has_element?("lock/disable")
+# unlock only via command for now
+#        ignoreLock = 1 if rdata.has_element?("lock/disable")
 
         pkg = DbPackage.get_by_project_and_name( project_name, package_name, use_source=false )
         unless @http_user.can_modify_package?(pkg, ignoreLock)
@@ -1092,7 +1093,7 @@ class SourceController < ApplicationController
         end
       end
 
-      # set patchinfo information in db
+      # verify patchinfo data
       if params[:file] == "_patchinfo"
         data = ActiveXML::Base.new(request.raw_post.to_s)
         if data and data.packager
@@ -1102,6 +1103,27 @@ class SourceController < ApplicationController
             #FIXME: update _patchinfo file
           end
           packager = User.get_by_login data.packager.to_s unless packager
+        end
+        # are releasetargets specified ? validate that this project is actually defining them.
+        if data and data.releasetarget
+          data.each_releasetarget do |rt|
+            found = false
+            prj.repositories.each do |r|
+              r.release_targets.each do |prt|
+                if rt.repository
+                  found = true if prt.target_repository.db_project.name == rt.project and prt.target_repository.name == rt.repository
+                else
+                  found = true if prt.target_repository.db_project.name == rt.project
+                end
+              end
+            end
+
+            unless found
+              render_error :status => 404, :errorcode => 'releasetarget_not_found',
+                :message => "Release target '#{rt.project}/#{rt.repository}' is not defined in this project '#{prj.name}'"
+              return
+            end
+          end
         end
       end
 
@@ -1234,495 +1256,65 @@ class SourceController < ApplicationController
     render_ok :data => {:targetproject => incident.db_project.name}
   end
 
-  # POST /source?cmd=branch (aka osc mbranch)
-  def index_branch
-    do_branch
+  def private_remove_repositories( repositories, full_remove = false )
+    del_repo = DbProject.find_by_name("deleted").repositories[0]
+
+    repositories.each do |repo|
+      linking_repos = repo.linking_repositories
+      prj = repo.db_project
+
+
+      if full_remove == true
+        # recursive for INDIRECT linked repositories
+        unless linking_repos.length < 1
+          private_remove_repositories( linking_repos, true )
+        end
+
+        # try to remove the repository 
+        # but never remove the deleted one
+        unless repo == del_repo
+          # permission check
+          unless @http_user.can_modify_project?(prj)
+            render_error :status => 403, :errorcode => 'change_project_no_permission',
+              :message => "No permission to remove a repository in project '#{prj.name}'"
+            return
+          end
+        end
+      else
+        # just modify foreign linking repositories. Always allowed
+        linking_repos.each do |lrepo|
+          lrepo.path_elements.each do |pe|
+            if pe.link == repo
+              pe.link = del_repo
+              pe.save
+            end
+          end
+          lrepo.db_project.store({:lowprio => true}) # low prio storage
+        end
+      end
+
+      # remove this repository, but be careful, because we may have done it already.
+      if Repository.exists?(repo) and r=prj.repositories.find(repo)
+         logger.info "updating project '#{prj.name}'"
+         r.destroy
+         prj.save
+         prj.store({:lowprio => true}) # low prio storage
+      end
+    end
   end
 
-  # generic branch function for package based, project wide or request based branch
-  def do_branch
-    #
-    # 1) BaseProject <-- 2) UpdateProject <-- 3) DevelProject/Package
-    # X) BranchProject
-    #
-    # 2/3) are optional
-    #
-    # X) is target_project with target_package, the project where new sources get created
-    #
-    # link_target_project points to 3) or to 2) in copy_from_devel case
-    #
-    # name of 1) may get used in package or repo names when using :extend_name
-    #
-
-    # set defaults
-    unless params[:attribute]
-      params[:attribute] = "OBS:Maintained"
-    end
-    target_project = nil
-    if params[:target_project]
-      target_project = params[:target_project]
-    else
-      if params[:request]
-        target_project = "home:#{@http_user.login}:branches:REQUEST_#{params[:request]}"
-      elsif params[:project]
-        target_project = nil # to be set later after first source location lookup
+  # POST /source?cmd=branch (aka osc mbranch)
+  def index_branch
+    ret = do_branch params
+    if ret[:status] == 200
+      if ret[:text]
+        render ret
       else
-        target_project = "home:#{@http_user.login}:branches:#{params[:attribute].gsub(':', '_')}"
-        target_project += ":#{params[:package]}" if params[:package]
+        render_ok ret
       end
-    end
-    unless params[:update_project_attribute]
-      params[:update_project_attribute] = "OBS:UpdateProject"
-    end
-    if target_project and not valid_project_name? target_project
-      render_error :status => 400, :errorcode => "invalid_project_name",
-        :message => "invalid project name '#{target_project}'"
-    end
-    add_repositories = params[:add_repositories]
-    # use update project ?
-    aname = params[:update_project_attribute]
-    update_project_at = aname.split(/:/)
-    if update_project_at.length != 2
-      raise ArgumentError, "attribute '#{aname}' must be in the $NAMESPACE:$NAME style"
-    end
-    # create hidden project ?
-    noaccess = false
-    noaccess = true if params[:noaccess]
-    # extend repo and package names ?
-    extend_names = false
-    extend_names = true if params[:extend_package_names]
-    # copy from devel package instead branching ?
-    copy_from_devel = false
-
-    # find packages to be branched
-    @packages = []
-    if params[:request]
-      # find packages from request
-      data = Suse::Backend.get("/request/#{params[:request]}").body
-      req = BsRequest.new(data)
-
-      req.each_action do |action|
-        prj=nil
-        pkg=nil
-        if action.has_element? 'source'
-          if action.source.has_attribute? 'package'
-            pkg = DbPackage.get_by_project_and_name action.source.project, action.source.package
-          elsif action.source.has_attribute? 'project'
-            prj = DbProject.get_by_name action.source.project
-          end
-        end
-
-        @packages.push({ :link_target_project => action.source.project, :package => pkg, :target_package => "#{pkg.name}.#{pkg.db_project.name}" })
-      end
-    elsif params[:project] and params[:package]
-      pkg = nil
-      prj = DbProject.get_by_name params[:project]
-      if params[:missingok]
-        if DbPackage.exists_by_project_and_name(params[:project], params[:package], follow_project_links=true, allow_remote_packages=true)
-          render_error :status => 400, :errorcode => 'not_missing',
-            :message => "Branch call with missingok paramater but branch source (#{params[:project]}/#{params[:package]}) exists."
-          return
-        end
-      else
-        pkg = DbPackage.get_by_project_and_name params[:project], params[:package]
-        unless prj.class == DbProject and prj.find_attribute("OBS", "BranchTarget")
-          prj = pkg.db_project if pkg 
-        end
-      end
-      tpkg_name = params[:target_package]
-      tpkg_name = params[:package] unless tpkg_name
-      tpkg_name += ".#{params[:project]}" if extend_names
-      if pkg
-        # local package
-        @packages.push({ :base_project => prj, :link_target_project => prj, :package => pkg, :rev => params[:rev], :target_package => tpkg_name })
-      else
-        # remote or not existing package
-        @packages.push({ :base_project => prj, :link_target_project => (prj||params[:project]), :package => params[:package], :rev => params[:rev], :target_package => tpkg_name })
-      end
-    else
-      extend_names = true
-      copy_from_devel = true
-      add_repositories = true # osc mbranch shall create repos by default
-      # find packages via attributes
-      at = AttribType.find_by_name(params[:attribute])
-      unless at
-        render_error :status => 403, :errorcode => 'not_found',
-          :message => "The given attribute #{params[:attribute]} does not exist"
-        return
-      end
-      if params[:value]
-        DbPackage.find_by_attribute_type_and_value( at, params[:value], params[:package] ) do |pkg|
-          logger.info "Found package instance #{pkg.db_project.name}/#{pkg.name} for attribute #{at.name} with value #{params[:value]}"
-          @packages.push({ :base_project => pkg.db_project, :link_target_project => pkg.db_project, :package => pkg, :target_package => "#{pkg.name}.#{pkg.db_project.name}" })
-        end
-        # FIXME: how to handle linked projects here ? shall we do at all or has the tagger (who creates the attribute) to create the package instance ?
-      else
-        # Find all direct instances of a package
-        DbPackage.find_by_attribute_type( at, params[:package] ).each do |pkg|
-          logger.info "Found package instance #{pkg.db_project.name}/#{pkg.name} for attribute #{at.name} and given package name #{params[:package]}"
-          @packages.push({ :base_project => pkg.db_project, :link_target_project => pkg.db_project, :package => pkg, :target_package => "#{pkg.name}.#{pkg.db_project.name}" })
-        end
-        # Find all indirect instance via project links
-        if params[:package]
-          packages = []
-          DbProject.find_by_attribute_type( at ).each do |prj|
-            # FIXME: this will not find packages on linked remote projects
-            pkgs = prj.find_package( params[:package] )
-            packages << pkgs if pkgs
-          end
-          packages.each do |pkg|
-            unless @packages.map {|p| p[:package] }.include? pkg # avoid double instances
-              logger.info "Found package instance via project link in #{pkg.db_project.name}/#{pkg.name} for attribute #{at.name} and given package name #{params[:package]}"
-              ltprj = pkg.db_project
-              ltprj = prj if prj.find_attribute("OBS", "BranchTarget")
-              @packages.push({ :base_project => pkg.db_project, :link_target_project => ltprj, :package => pkg, :target_package => "#{pkg.name}.#{pkg.db_project.name}" })
-            end
-          end
-        end
-      end
-    end
-
-    unless @packages.length > 0
-      render_error :status => 403, :errorcode => "not_found",
-        :message => "no packages found by search criteria"
       return
     end
-
-    #logger.debug "XXXXXXX BEFORE"
-    #@packages.each do |p|
-    #  logger.debug "X #{p[:package].db_project.name} #{p[:package].name} will point to #{p[:link_target_project].name}"
-    #end
-
-    # lookup update project, devel project or local linked packages.
-    # Just requests should be nearly the same
-    unless params[:request]
-      @packages.each do |p|
-        next unless p[:link_target_project].class == DbProject # only for local source projects
-        if p[:package].class == DbPackage
-          logger.debug "Check DbPackage #{p[:package].db_project.name}/#{p[:package].name}"
-        else
-          logger.debug "Check package string #{p[:package]}"
-        end
-        pkg = p[:package]
-        prj = p[:link_target_project]
-        if pkg.class == DbPackage
-          prj = pkg.db_project
-          pkg_name = pkg.name
-        else
-          pkg_name = pkg
-        end
-
-        # Check for defined update project
-        if prj and a = prj.find_attribute(update_project_at[0], update_project_at[1]) and a.values[0]
-          if pa = DbPackage.find_by_project_and_name( a.values[0].value, pkg_name )
-            # We have a package in the update project already, take that
-            p[:package] = pa
-            unless p[:link_target_project].class == DbProject and p[:link_target_project].find_attribute("OBS", "BranchTarget")
-              p[:link_target_project] = pa.db_project
-              logger.info "branch call found package in update project #{pa.db_project.name}"
-            end
-          else
-            update_prj = DbProject.find_by_name( a.values[0].value )
-            if update_prj
-              unless p[:link_target_project].class == DbProject and p[:link_target_project].find_attribute("OBS", "BranchTarget")
-                p[:link_target_project] = update_prj
-              end
-              update_pkg = update_prj.find_package( pkg_name )
-              if update_pkg
-                # We have no package in the update project yet, but sources are reachable via project link
-                if update_prj.develproject and up = update_prj.develproject.find_package(pkg.name)
-                  # nevertheless, check if update project has a devel project which contains an instance
-                  p[:package] = up
-                  unless p[:link_target_project].class == DbProject and p[:link_target_project].find_attribute("OBS", "BranchTarget")
-                    p[:link_target_project] = up.db_project unless copy_from_devel
-                  end
-                  logger.info "link target will create package in update project #{up.db_project.name} for #{prj.name}"
-                else
-                  p[:package] = pkg
-                  logger.info "link target will use old update in update project #{pkg.db_project.name} for #{prj.name}"
-                end
-              else
-                # The defined update project can't reach the package instance at all.
-                # So we need to create a new package and copy sources
-                params[:missingok] = 1 # implicit missingok or better report an error ?
-                p[:copy_from_devel] = p[:package] if p[:package].class == DbPackage
-                p[:package] = pkg_name
-              end
-            end
-          end
-          # Reset target package name
-          # not yet existing target package
-          p[:target_package] = p[:package]
-          # existing target
-          p[:target_package] = "#{p[:package].name}" if p[:package].class == DbPackage
-          # user specified target name
-          p[:target_package] = params[:target_package] if params[:target_package]
-          # extend parameter given
-          p[:target_package] += ".#{p[:link_target_project].name}" if extend_names
-        end
-   
-        # validate and resolve devel package or devel project definitions
-        unless params[:ignoredevel] or p[:copy_from_devel]
-          if copy_from_devel
-            p[:copy_from_devel] = p[:package].resolve_devel_package
-            logger.info "sources will get copied from devel project #{p[:copy_from_devel].db_project.name}/#{p[:copy_from_devel].name}"
-          elsif p[:package].class == DbPackage and ( p[:package].develproject or p[:package].develpackage or p[:package].db_project.develproject )
-            p[:package] = p[:package].resolve_devel_package
-            p[:link_target_project] = p[:package].db_project
-            p[:target_package] = p[:package].name
-            p[:target_package] += ".#{p[:link_target_project].name}" if extend_names
-            logger.info "devel project is #{p[:link_target_project].name} #{p[:package].name}"
-          end
-        end
-
-        # set default based on first found package location
-        unless target_project
-          target_project = "home:#{@http_user.login}:branches:#{p[:link_target_project].name}"
-        end
-
-        # link against srcmd5 instead of plain revision
-        unless p[:rev].nil?
-          begin
-            dir = Directory.find({ :project => params[:project], :package => params[:package], :rev => params[:rev]})
-          rescue
-            render_error :status => 400, :errorcode => 'invalid_filelist',
-              :message => "no such revision"
-            return
-          end
-          if dir.has_attribute? 'srcmd5'
-            p[:rev] = dir.srcmd5
-          else
-            render_error :status => 400, :errorcode => 'invalid_filelist',
-              :message => "no srcmd5 revision found"
-            return
-          end
-        end
-      end
-
-      # add packages which link them in the same project to support build of source with multiple build descriptions
-      @packages.each do |p|
-        next unless p[:package].class == DbPackage # only for local packages
-        p[:package].find_project_local_linking_packages.each do |llp|
-          target_package = llp.name
-          target_package += "." + p[:target_package].gsub(/^[^\.]*\./,'') if extend_names
-          logger.info "found local linked package in project #{p[:package].db_project.name}, adding it as well #{llp.name}"
-          @packages.push({ :base_project => p[:base_project], :link_target_project => p[:link_target_project], :package => llp, :target_package => target_package, :local_link => 1 })
-        end
-      end
-    end
-
-    #logger.debug "XXXXXXX AFTER"
-    #@packages.each do |p|
-    #  logger.debug "X #{p[:package].db_project.name} #{p[:package].name} will point to #{p[:link_target_project].name}"
-    #end
-
-    unless target_project
-      target_project = "home:#{@http_user.login}:branches:#{params[:project]}"
-    end
-
-    #
-    # Data collection complete at this stage
-    #
-
-    # Just report the result in dryrun, but not action
-    if params[:dryrun]
-      # dry run, just report the result, but no effect
-      @packages.sort! { |x,y| x[:target_package] <=> y[:target_package] }
-      builder = Builder::XmlMarkup.new( :indent => 2 )
-      xml = builder.collection() do
-        @packages.each do |p|
-          if p[:package].class == DbPackage
-            builder.package(:project => p[:link_target_project].name, :package => p[:package].name) do
-              builder.target(:project => target_project, :package => p[:target_package])
-            end
-          else
-            builder.package(:project => p[:link_target_project], :package => p[:package]) do 
-              builder.target(:project => target_project, :package => p[:target_package])
-            end
-          end
-        end
-      end
-      render :text => xml, :content_type => "text/xml"
-      return
-    end
-
-    #create branch project
-    if DbProject.exists_by_name target_project
-      if noaccess
-        render_error :status => 403, :errorcode => "create_project_no_permission",
-          :message => "The destination project already exists, so the api can't make it not readable"
-        return
-      end
-    else
-      # permission check
-      unless @http_user.can_create_project?(target_project)
-        render_error :status => 403, :errorcode => "create_project_no_permission",
-          :message => "no permission to create project '#{target_project}' while executing branch command"
-        return
-      end
-
-      title = "Branch project for package #{params[:package]}"
-      description = "This project was created for package #{params[:package]} via attribute #{params[:attribute]}"
-      if params[:request]
-        title = "Branch project based on request #{params[:request]}"
-        description = "This project was created as a clone of request #{params[:request]}"
-      end
-      add_repositories = true # new projects shall get repositories
-      DbProject.transaction do
-        tprj = DbProject.new :name => target_project, :title => title, :description => description
-        tprj.add_user @http_user, "maintainer"
-        tprj.flags.create( :flag => 'build', :status => "disable" ) if extend_names
-        tprj.flags.create( :flag => 'access', :status => "disable" ) if noaccess
-        tprj.store
-      end
-      if params[:request]
-        ans = AttribNamespace.find_by_name "OBS"
-        at = AttribType.find( :first, :joins => ans, :conditions=>{:name=>"RequestCloned"} )
-
-        tprj = DbProject.get_by_name target_project
-        a = Attrib.new(:db_project => tprj, :attrib_type => at)
-        a.values << AttribValue.new(:value => params[:request], :position => 1)
-        a.save
-      end
-    end
-
-    tprj = DbProject.get_by_name target_project
-    unless @http_user.can_modify_project?(tprj)
-      render_error :status => 403, :errorcode => "modify_project_no_permission",
-        :message => "no permission to modify project '#{target_project}' while executing branch project command"
-      return
-    end
-
-    # create package branches
-    # collect also the needed repositories here
-    response = nil
-    @packages.each do |p|
-      pac = p[:package]
-      if pac.class == DbPackage
-        prj = pac.db_project
-      elsif p[:link_target_project].class == DbProject
-        # new package for local project
-        prj = p[:link_target_project]
-      else
-        # package in remote project
-        prj = p[:project]
-      end
-
-      # find origin package to be branched
-      branch_target_package = p[:target_package]
-      proj_name = target_project.gsub(':', '_')
-      pack_name = branch_target_package.gsub(':', '_')
-
-      # create branch package
-      # no find_package call here to check really this project only
-      if tpkg = tprj.db_packages.find_by_name(pack_name)
-        unless params[:force]
-          render_error :status => 400, :errorcode => "double_branch_package",
-            :message => "branch target package already exists: #{tprj.name}/#{tpkg.name}"
-          return
-        end
-      else
-        if pac.class == DbPackage
-          tpkg = tprj.db_packages.new(:name => pack_name, :title => pac.title, :description => pac.description)
-        else
-          tpkg = tprj.db_packages.new(:name => pack_name)
-        end
-        tprj.db_packages << tpkg
-      end
-
-      # create repositories, if missing
-      if p[:link_target_project].class == DbProject
-        p[:link_target_project].repositories.each do |repo|
-          repoName = repo.name
-          if extend_names
-            repoName = p[:link_target_project].name.gsub(':', '_')
-            if p[:link_target_project].repositories.count > 1
-              # keep short names if project has just one repo
-              repoName += "_"+repo.name
-            end
-          end
-          if add_repositories
-            unless tprj.repositories.find_by_name(repoName)
-              trepo = tprj.repositories.create :name => repoName
-              trepo.architectures = repo.architectures
-              trepo.path_elements.create(:link => repo, :position => 1)
-              trigger = "manual"
-              trigger = "maintenance" if MaintenanceIncident.find_by_db_project_id( tprj.id ) # is target an incident project ?
-              trepo.release_targets.create(:target_repository => repo, :trigger => trigger) if p[:link_target_project].project_type == "maintenance_release"
-            end
-          end
-          # enable package builds if project default is disabled
-          tpkg.flags.create( :position => 1, :flag => 'build', :status => "enable", :repo => repoName ) if tprj.flags.find_by_flag_and_status( 'build', 'disable' )
-          # take over debuginfo config from origin project
-          tpkg.flags.create( :position => 1, :flag => 'debuginfo', :status => "enable", :repo => repoName ) if prj.enabled_for?('debuginfo', repo.name, nil)
-        end
-        unless extend_names
-          # take over flags, but explicit disable publishing by default and enable building. Ommiting also lock or we can not create packages
-          p[:link_target_project].flags.each do |f|
-            unless [ "build", "publish", "lock" ].include?(f.flag)
-              unless tprj.flags.find_by_flag_and_status( f.flag, f.status, f.repo, f.architecture )
-                tprj.flags.create(:status => f.status, :flag => f.flag, :architecture => f.architecture, :repo => f.repo)
-              end
-            end
-          end
-          if add_repositories
-            tprj.flags.create(:status => "disable", :flag => 'publish') unless tprj.flags.find_by_flag_and_status( 'publish', 'disable' )
-          end
-        end
-      else
-        # FIXME for remote project instances
-      end
-      tpkg.store
-
-      if p[:local_link]
-        # copy project local linked packages
-        Suse::Backend.post "/source/#{tpkg.db_project.name}/#{tpkg.name}?cmd=copy&oproject=#{CGI.escape(p[:link_target_project].name)}&opackage=#{CGI.escape(p[:package].name)}&user=#{CGI.escape(@http_user.login)}", nil
-        # and fix the link
-        link = backend_get "/source/#{tpkg.db_project.name}/#{tpkg.name}/_link"
-        ret = ActiveXML::XMLNode.new(link)
-        ret.delete_attribute('project') # its a local link, project name not needed
-        linked_package = ret.package
-        linked_package = params[:target_package] if params[:target_package] and params[:package] == ret.package  # user enforce a rename of base package
-        linked_package += "." + tpkg.name.gsub(/^[^\.]*\./,'') if extend_names
-        ret.set_attribute('package', linked_package)
-        answer = Suse::Backend.put "/source/#{tpkg.db_project.name}/#{tpkg.name}/_link?user=#{CGI.escape(@http_user.login)}", ret.dump_xml
-        tpkg.sources_changed
-      else
-        path = "/source/#{URI.escape(tpkg.db_project.name)}/#{URI.escape(tpkg.name)}"
-        oproject = p[:link_target_project].class == DbProject ? p[:link_target_project].name : p[:link_target_project]
-        myparam = { :cmd => "branch",
-                    :oproject => oproject,
-                    :opackage => p[:package],
-                    :user => @http_user.login,
-                  }
-        myparam[:opackage] = p[:package].name if p[:package].class == DbPackage
-        myparam[:orev] = p[:rev] if p[:rev] and not p[:rev].empty?
-        myparam[:missingok] = "1" if params[:missingok]
-        path << build_query_from_hash(myparam, [:cmd, :oproject, :opackage, :user, :comment, :orev, :missingok])
-        # branch sources in backend
-        answer = Suse::Backend.post path, nil
-        if response
-          # multiple package transfers, just tell the target project
-          response = {:targetproject => tpkg.db_project.name}
-        else
-          # just a single package transfer, detailed answer
-          response = {:targetproject => tpkg.db_project.name, :targetpackage => tpkg.name, :sourceproject => oproject, :sourcepackage => myparam[:opackage]}
-        end
-
-        # fetch newer sources from devel package, if defined
-        if p[:copy_from_devel]
-          answer = Suse::Backend.post "/source/#{tpkg.db_project.name}/#{tpkg.name}?cmd=copy&keeplink=1&expand=1&oproject=#{CGI.escape(p[:copy_from_devel].db_project.name)}&opackage=#{CGI.escape(p[:copy_from_devel].name)}&user=#{CGI.escape(@http_user.login)}&comment=fetch+updates+from+devel+package", nil
-        end
-
-        tpkg.sources_changed
-      end
-    end
-
-    # store project data in DB and XML
-    tprj.store
-
-    # all that worked ? :)
-    render_ok :data => response
+    render_error ret
   end
 
   # create a id collection of all projects doing a project link to this one
@@ -1742,6 +1334,59 @@ class SourceController < ApplicationController
       end
     end
     render :text => xml, :content_type => "text/xml"
+  end
+
+  # unlock a project
+  # POST /source/<project>?cmd=unlock
+  def index_project_unlock
+    valid_http_methods :post
+    project_name = params[:project]
+
+    if params[:comment].blank?
+      render_error :status => 400, :errorcode => "no_comment",
+        :message => "Unlock command requires a comment"
+      return
+    end
+
+    pro = DbProject.get_by_name(project_name)
+    if pro.project_type == "maintenance_incident"
+      predicate = "(state/@name='new' or state/@name='review' or state/@name='declined') and action/@type='maintenance_release' and action/source/@project='#{pro.name}'"
+      collection = Suse::Backend.post("/search/request?match=#{CGI.escape(predicate)}", nil).body
+      c = collection.scan(/request id\="(\d+)"/)
+      if c.length > 0
+        render_error :status => 403, :errorcode => "open_release_request",
+          :message => "Unlock of maintenance incident #{} is not possible, because there is a running release request: #{c.flatten}"
+        return
+      end
+    end
+
+    p = { :comment => params[:comment] }
+
+    f = pro.flags.find_by_flag_and_status("lock", "enable")
+    unless f
+      render_error :status => 400, :errorcode => "not_locked",
+        :message => "project '#{pro.name}' is not locked"
+      return
+    end
+    pro.flags.delete(f)
+    pro.store(p)
+
+    # maintenance incidents need special treatment
+    if pro.project_type == "maintenance_incident"
+      # reopen all release targets
+      pro.repositories.each do |repo|
+        repo.release_targets.each do |releasetarget|
+          releasetarget.trigger = "maintenance"
+          releasetarget.save!
+        end
+      end
+      pro.store(p)
+
+      # ensure higher build numbers for re-release
+      Suse::Backend.post "/build/#{URI.escape(pro.name)}?cmd=wipe", nil
+    end
+
+    render_ok
   end
 
   # POST /source/<project>?cmd=extendkey
@@ -1887,24 +1532,31 @@ class SourceController < ApplicationController
     # create patchinfo package
     pkg = nil
     if DbPackage.exists_by_project_and_name( params[:project], pkg_name )
+      pkg = DbPackage.get_by_project_and_name params[:project], pkg_name
       unless params[:force]
-        render_error :status => 400, :errorcode => "patchinfo_file_exists",
-          :message => "createpatchinfo command: the patchinfo file exists already. Either use force=1 to re-create it or updatepatchinfo for updating."
+        if pkg.db_package_kinds.find_by_kind 'patchinfo'
+          render_error :status => 400, :errorcode => "patchinfo_file_exists",
+            :message => "createpatchinfo command: the patchinfo #{pkg_name} exists already. Either use force=1 re-create the _patchinfo or use updatepatchinfo for updating."
+        else
+          render_error :status => 400, :errorcode => "package_already_exists",
+            :message => "createpatchinfo command: the package #{pkg_name} exists already, but is  no patchinfo. Please create a new package instead."
+        end
         return
       end
-      pkg = DbPackage.get_by_project_and_name params[:project], pkg_name
     else
       prj = DbProject.get_by_name( params[:project] )
       pkg = DbPackage.new(:name => pkg_name, :title => "Patchinfo", :description => "Collected packages for update")
       prj.db_packages << pkg
       pkg.add_flag("build", "enable", nil, nil)
+      pkg.add_flag("publish", "enable", nil, nil) unless prj.flags.find_by_flag_and_status("access", "disable")
+      pkg.add_flag("useforbuild", "disable", nil, nil)
       pkg.store
     end
 
     # create patchinfo XML file
     node = Builder::XmlMarkup.new(:indent=>2)
     attrs = { }
-    if MaintenanceIncident.count( :conditions => ["db_project_id = BINARY ?", pkg.db_project.id] )
+    if pkg.db_project.project_type == "maintenance_incident"
       # this is a maintenance incident project, the sub project name is the maintenance ID
       attrs[:incident] = pkg.db_project.name.gsub(/.*:/, '')
     end
@@ -1931,12 +1583,12 @@ class SourceController < ApplicationController
     pkg = DbPackage.get_by_project_and_name params[:project], params[:package]
 
     # get existing file
-    patchinfo_path = "/source/#{CGI.escape(pkg.db_project.name)}/#{CGI.escape(pkg.name)}/_patchinfo"
+    patchinfo_path = "/source/#{URI.escape(pkg.db_project.name)}/#{URI.escape(pkg.name)}/_patchinfo"
     data = ActiveXML::Base.new(backend_get(patchinfo_path))
-    xml = update_patchinfo( data, pkg )
+    xml = update_patchinfo( data, pkg, true )
 
     p={ :user => @http_user.login, :comment => "updated via updatepatchinfo call" }
-    patchinfo_path = "/source/#{CGI.escape(pkg.db_project.name)}/#{CGI.escape(pkg.name)}/_patchinfo"
+    patchinfo_path = "/source/#{URI.escape(pkg.db_project.name)}/#{URI.escape(pkg.name)}/_patchinfo"
     patchinfo_path << build_query_from_hash(p, [:user, :comment])
     answer = backend_put( patchinfo_path, xml.dump_xml )
     pkg.sources_changed
@@ -1944,29 +1596,31 @@ class SourceController < ApplicationController
     render_ok
   end
 
-  def update_patchinfo(patchinfo, pkg)
-    # collect bugnumbers from diff
-    issues = Array.new()
-    pkg.db_project.db_packages.each do |p|
-      # create diff per package
-      begin
-        answer = Suse::Backend.post("/source/#{CGI.escape(pkg.db_project.name)}/#{CGI.escape(p.name)}?unified=1&cmd=diff&filelimit=0&expand=1", nil)
-        issues += IssueTracker.issues_in(answer.body, true)
-      rescue Suse::Backend::HTTPError
-      end
+  # unlock a package
+  # POST /source/<project>/<package>?cmd=unlock
+  def index_package_unlock
+    valid_http_methods :post
+
+    if params[:comment].blank?
+      render_error :status => 400, :errorcode => "no_comment",
+        :message => "Unlock command requires a comment"
+      return
     end
 
-    issues.each do |i|
-      next if patchinfo.has_element?("issue[(@id='#{i.name}' and @tracker='#{i.issue_tracker.name}')]")
-      e = patchinfo.add_element "issue"
-      e.set_attribute "tracker", i.issue_tracker.name
-      e.set_attribute "id"     , i.name
-      patchinfo.category.text = "security" if i.issue_tracker.kind == "cve"
-    end
+    p = { :comment => params[:comment] }
 
-    return patchinfo
+    pkg = DbPackage.get_by_project_and_name(params[:project], params[:package])
+    f = pkg.flags.find_by_flag_and_status("lock", "enable")
+    unless f
+      render_error :status => 400, :errorcode => "not_locked",
+        :message => "package '#{pkg.db_project.name}/#{pkg.name}' is not locked"
+      return
+    end
+    pkg.flags.delete(f)
+    pkg.store(p)
+
+    render_ok
   end
-  private :update_patchinfo
 
   # Collect all project source services for a package
   # POST /source/<project>/<package>?cmd=getprojectservices
@@ -2236,7 +1890,16 @@ class SourceController < ApplicationController
 
   # POST /source/<project>/<package>?cmd=branch&target_project="optional_project"&target_package="optional_package"&update_project_attribute="alternative_attribute"&comment="message"
   def index_package_branch
-    do_branch
+    ret = do_branch params
+    if ret[:status] == 200
+      if ret[:text]
+        render ret
+      else
+        render_ok ret
+      end
+      return
+    end
+    render_error ret
   end
 
   # POST /source/<project>/<package>?cmd=set_flag&repository=:opt&arch=:opt&flag=flag&status=status
@@ -2322,68 +1985,6 @@ class SourceController < ApplicationController
     prj.remove_flag(params[:flag], params[:repository], params[:arch])
     prj.store
     render_ok
-  end
-
-  def valid_project_name? name
-    return true if name =~ /^\w[-_+\w\.:]*$/
-    return false
-  end
-
-  def valid_package_name? name
-    return true if name == "_patchinfo"
-    return true if name == "_pattern"
-    return true if name == "_project"
-    return true if name == "_product"
-    return true if name =~ /^_product:\w[-_+\w\.]*$/
-    return true if name =~ /^_patchinfo:\w[-_+\w\.]*$/ # obsolete, just for backward compatibility
-    name =~ /^\w[-_+\w\.]*$/
-  end
-
-  # load last package meta file and just check if sourceaccess flag was used at all, no per user checking atm
-  def validate_read_access_of_deleted_package(project, name)
-    prj = DbProject.get_by_name project
-    raise DbProject::ReadAccessError, "#{project}" if prj.disabled_for? 'access', nil, nil
-    raise DbPackage::ReadSourceAccessError, "#{target_project_name}/#{target_package_name}" if prj.disabled_for? 'sourceaccess', nil, nil
-
-    begin
-      r = Suse::Backend.get("/source/#{CGI.escape(project)}/#{name}/_history?deleted=1&meta=1")
-    rescue
-      raise DbPackage::UnknownObjectError, "#{project}/#{name}"
-    end
-
-    data = ActiveXML::XMLNode.new(r.body.to_s)
-    lastrev = nil
-    data.each_revision {|rev| lastrev = rev}
-    metapath = "/source/#{CGI.escape(project)}/#{name}/_meta"
-    if lastrev
-      srcmd5 = lastrev.value('srcmd5')
-      metapath += "?rev=#{srcmd5}" # only add revision if package has some
-    end
-
-    r = Suse::Backend.get(metapath)
-    raise DbPackage::UnknownObjectError, "#{project}/#{name}" unless r
-    dpkg = Package.new(r.body)
-    raise DbPackage::UnknownObjectError, "#{project}/#{name}" unless dpkg
-    raise DbPackage::ReadSourceAccessError, "#{project}/#{name}" if dpkg.disabled_for? 'sourceaccess' and not @http_user.is_admin?
-  end
-
-  def validate_visibility_of_deleted_project(project)
-    begin
-      r = Suse::Backend.get("/source/#{CGI.escape(project)}/_project/_history?deleted=1&meta=1")
-    rescue
-      raise DbProject::UnknownObjectError, "#{project}"
-    end
-
-    data = ActiveXML::XMLNode.new(r.body.to_s)
-    lastrev = nil
-    data.each_revision {|rev| lastrev = rev}
-    raise DbProject::UnknownObjectError, "#{project}" unless lastrev
-
-    metapath = "/source/#{CGI.escape(project)}/_project/_meta?rev=#{lastrev.value('srcmd5')}&deleted=1"
-    r = Suse::Backend.get(metapath)
-    dprj = Project.new(r.body)
-    #FIXME: actually a per user checking would be more accurate here
-    raise DbProject::UnknownObjectError, "#{project}" if dprj.nil? or (dprj.disabled_for? 'access' and not @http_user.is_admin?)
   end
 
 end

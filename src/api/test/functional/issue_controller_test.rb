@@ -22,11 +22,11 @@ class IssueControllerTest < ActionController::IntegrationTest
     get '/issue_trackers/bnc/issues/123456'
     assert_response :success
     assert_tag :tag => 'name', :content => "123456"
-    assert_tag :tag => 'issue_tracker', :content => "bnc"
-    assert_tag :tag => 'long_name', :content => "bnc#123456"
+    assert_tag :tag => 'tracker', :content => "bnc"
+    assert_tag :tag => 'label', :content => "bnc#123456"
     assert_tag :tag => 'url', :content => "https://bugzilla.novell.com/show_bug.cgi?id=123456"
     assert_tag :tag => 'state', :content => "CLOSED"
-    assert_tag :tag => 'description', :content => "OBS is not bugfree!"
+    assert_tag :tag => 'summary', :content => "OBS is not bugfree!"
     assert_tag :parent => { :tag => 'owner' }, :tag => 'login', :content => "fred"
     assert_tag :parent => { :tag => 'owner' }, :tag => 'email', :content => "fred@feuerstein.de"
     assert_tag :parent => { :tag => 'owner' }, :tag => 'realname', :content => "Frederic Feuerstone"
@@ -36,7 +36,7 @@ class IssueControllerTest < ActionController::IntegrationTest
     get '/issue_trackers/bnc/issues/1234'
     assert_response :success
     assert_tag :tag => 'name', :content => "1234"
-    assert_tag :tag => 'issue_tracker', :content => "bnc"
+    assert_tag :tag => 'tracker', :content => "bnc"
     assert_no_tag :tag => 'password'
   end
 
@@ -52,20 +52,20 @@ class IssueControllerTest < ActionController::IntegrationTest
     get '/source/Devel:BaseDistro:Update/pack3?view=issues'
     assert_response :success
     assert_tag :parent => { :tag => 'issue' }, :tag => 'name', :content => "123456"
-    assert_tag :parent => { :tag => 'issue' }, :tag => 'issue_tracker', :content => "bnc"
+    assert_tag :parent => { :tag => 'issue' }, :tag => 'tracker', :content => "bnc"
     get '/source/Devel:BaseDistro:Update?view=issues'
     assert_response :success
     assert_tag :parent => { :tag => 'issue' }, :tag => 'name', :content => "123456"
-    assert_tag :parent => { :tag => 'issue' }, :tag => 'issue_tracker', :content => "bnc"
+    assert_tag :parent => { :tag => 'issue' }, :tag => 'tracker', :content => "bnc"
   end
 
   def test_search_issues
     ActionController::IntegrationTest::reset_auth
     get "/search/package_id", :match => 'issue/@name="123456"'
     assert_response 401
-    get "/search/package_id", :match => 'issue/@issue_tracker="bnc"'
+    get "/search/package_id", :match => 'issue/@tracker="bnc"'
     assert_response 401
-    get "/search/package_id", :match => 'issue/[@name="123456" and @issue_tracker="bnc"]'
+    get "/search/package_id", :match => 'issue/[@name="123456" and @tracker="bnc"]'
     assert_response 401
     get "/search/package_id", :match => 'issue/owner/@login="fred"'
     assert_response 401
@@ -99,8 +99,7 @@ class IssueControllerTest < ActionController::IntegrationTest
     assert_no_tag :parent => { :tag => "collection" }, :tag => "package", :attributes => { :project => 'Devel:BaseDistro:Update', :name => 'pack3' }
 
     # search via bug issue id
-    # FIXME2.3: @issue_name should be named correct, but current XPATH parse can handle that
-    get "/search/package_id", :match => 'issue/[@issue_name="123456" and @issue_tracker="bnc"]'
+    get "/search/package_id", :match => '[issue/[@name="123456" and @tracker="bnc"]]'
     assert_response :success
     assert_tag :parent => { :tag => "collection" }, :tag => "package", :attributes => { :project => 'Devel:BaseDistro:Update', :name => 'pack3' }
   end
@@ -122,7 +121,7 @@ Blubber bnc#15\n
     post "/source/home:Iggy:branches:BaseDistro/pack1", :cmd => "branch", :target_project => "home:Iggy:branches:BaseDistro", :target_package => "pack_new"
     assert_response :success
     changes += "-------------------------------------------------------------------\n
-Aha bnc#16\n
+Aha bnc#123456\n
 "
     changes.gsub!(/Blubber/, 'Blabber') # leads to changed
     changes.gsub!(/bnc#14/, '') # leads to removed
@@ -136,28 +135,138 @@ Aha bnc#16\n
     assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'kept'}}, :tag => 'name', :content => "13"
     assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'deleted'}}, :tag => 'name', :content => "14"
     assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'changed'}}, :tag => 'name', :content => "15"
-    assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'added'}}, :tag => 'name', :content => "16"
+    assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'added'}}, :tag => 'name', :content => "123456"
 
     get "/source/home:Iggy:branches:BaseDistro/pack_new?view=issues&changes=added"
     assert_response :success
     assert_no_tag :parent => { :tag => 'issue', :attributes => {:change => 'kept'}}, :tag => 'name', :content => "13"
     assert_no_tag :parent => { :tag => 'issue', :attributes => {:change => 'deleted'}}, :tag => 'name', :content => "14"
     assert_no_tag :parent => { :tag => 'issue', :attributes => {:change => 'changed'}}, :tag => 'name', :content => "15"
-    assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'added'}}, :tag => 'name', :content => "16"
+    assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'added'}}, :tag => 'name', :content => "123456"
 
     get "/source/home:Iggy:branches:BaseDistro/pack_new?view=issues&changes=kept,deleted"
     assert_response :success
     assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'kept'}}, :tag => 'name', :content => "13"
     assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'deleted'}}, :tag => 'name', :content => "14"
     assert_no_tag :parent => { :tag => 'issue', :attributes => {:change => 'changed'}}, :tag => 'name', :content => "15"
-    assert_no_tag :parent => { :tag => 'issue', :attributes => {:change => 'added'}}, :tag => 'name', :content => "16"
+    assert_no_tag :parent => { :tag => 'issue', :attributes => {:change => 'added'}}, :tag => 'name', :content => "123456"
 
     get "/source/home:Iggy:branches:BaseDistro?view=issues&changes=kept,deleted"
     assert_response :success
     assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'kept'}}, :tag => 'name', :content => "13"
     assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'deleted'}}, :tag => 'name', :content => "14"
     assert_no_tag :parent => { :tag => 'issue', :attributes => {:change => 'changed'}}, :tag => 'name', :content => "15"
-    assert_no_tag :parent => { :tag => 'issue', :attributes => {:change => 'added'}}, :tag => 'name', :content => "16"
+    assert_no_tag :parent => { :tag => 'issue', :attributes => {:change => 'added'}}, :tag => 'name', :content => "123456"
+
+    get "/source/home:Iggy:branches:BaseDistro?view=issues&login=unknown"
+    assert_response :success
+    assert_no_tag :parent => { :tag => 'issue' }
+    get "/source/home:Iggy:branches:BaseDistro/pack_new?view=issues&login=unknown"
+    assert_response :success
+    assert_no_tag :parent => { :tag => 'issue' }
+
+    get "/source/home:Iggy:branches:BaseDistro?view=issues&login=fred"
+    assert_response :success
+    assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'added'}}, :tag => 'name', :content => "123456"
+    get "/source/home:Iggy:branches:BaseDistro/pack_new?view=issues&login=fred"
+    assert_response :success
+    assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'added'}}, :tag => 'name', :content => "123456"
+
+    get "/source/home:Iggy:branches:BaseDistro?view=issues&states=FANTASY"
+    assert_response :success
+    assert_no_tag :parent => { :tag => 'issue' }
+    get "/source/home:Iggy:branches:BaseDistro/pack_new?view=issues&states=FANTASY"
+    assert_response :success
+    assert_no_tag :parent => { :tag => 'issue' }
+
+    get "/source/home:Iggy:branches:BaseDistro?view=issues&states=OPEN,CLOSED"
+    assert_response :success
+    assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'added'}}, :tag => 'name', :content => "123456"
+    get "/source/home:Iggy:branches:BaseDistro/pack_new?view=issues&states=OPEN,CLOSED"
+    assert_response :success
+    assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'added'}}, :tag => 'name', :content => "123456"
+
+    get "/search/package_id", :match => '[issue/[@name="123456" and @tracker="bnc" and @change="added"]]'
+    assert_response :success
+    assert_tag :parent => { :tag => "collection" }, :tag => "package", :attributes => { :project => 'home:Iggy:branches:BaseDistro', :name => 'pack_new' }
+
+    get "/search/package_id", :match => '[issue/[@name="123456" and @tracker="bnc" and (@change="added" or @change="changed")]]'
+    assert_response :success
+    assert_tag :parent => { :tag => "collection" }, :tag => "package", :attributes => { :project => 'home:Iggy:branches:BaseDistro', :name => 'pack_new' }
+
+    get "/search/package_id", :match => '[issue/[@name="123456" and @tracker="bnc" and @change="kept"]]'
+    assert_response :success
+    assert_no_tag :parent => { :tag => "collection" }, :tag => "package", :attributes => { :project => 'home:Iggy:branches:BaseDistro', :name => 'pack_new' }
+
+    #cleanup
+    delete "/source/home:Iggy:branches:BaseDistro"
+    assert_response :success
+  end
+
+  def test_commit_file_to_linked_package
+    changes = "-------------------------------------------------------------------\n
+Blah bnc#13\n
+-------------------------------------------------------------------\n
+Blah bnc#14\n
+-------------------------------------------------------------------\n
+Blubber bnc#15\n
+"
+
+    prepare_request_with_user "Iggy", "asdfasdf"
+    post "/source/BaseDistro/pack1", :cmd => "branch", :target_project => "home:Iggy:branches:BaseDistro"
+    assert_response :success
+    put "/source/home:Iggy:branches:BaseDistro/pack1/file.changes", changes
+    assert_response :success
+    post "/source/home:Iggy:branches:BaseDistro/pack1", :cmd => "branch", :target_project => "home:Iggy:branches:BaseDistro", :target_package => "pack_new"
+    assert_response :success
+    changes += "-------------------------------------------------------------------\n
+Aha bnc#123456\n
+"
+    changes.gsub!(/Blubber/, 'Blabber') # leads to changed
+    changes.gsub!(/bnc#14/, '') # leads to removed
+    put "/source/home:Iggy:branches:BaseDistro/pack_new/file.changes?rev=repository", changes
+    assert_response :success
+    post "/source/home:Iggy:branches:BaseDistro/pack_new?cmd=commitfilelist&keeplink=1", ' <directory> <entry name="file.changes" md5="'+ Digest::MD5.hexdigest(changes) + '" /> </directory> '
+    assert_response :success
+
+    get "/source/home:Iggy:branches:BaseDistro/pack1?view=issues"
+    assert_response :success
+    get "/source/home:Iggy:branches:BaseDistro/pack_new?view=issues"
+    assert_response :success
+    assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'kept'}}, :tag => 'name', :content => "13"
+    assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'deleted'}}, :tag => 'name', :content => "14"
+    assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'changed'}}, :tag => 'name', :content => "15"
+    assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'added'}}, :tag => 'name', :content => "123456"
+
+    #cleanup
+    delete "/source/home:Iggy:branches:BaseDistro"
+    assert_response :success
+  end
+
+  def test_issues_of_missingok_package
+    changes = "-------------------------------------------------------------------\n
+Blah bnc#13\n
+-------------------------------------------------------------------\n
+Blah bnc#14\n
+-------------------------------------------------------------------\n
+Blubber bnc#15\n
+"
+
+    prepare_request_with_user "Iggy", "asdfasdf"
+    post "/source/BaseDistro/new_package", :cmd => "branch", :missingok => 1, :target_project => "home:Iggy:branches:BaseDistro"
+    assert_response :success
+    put "/source/home:Iggy:branches:BaseDistro/new_package/file.changes", changes
+    assert_response :success
+    put "/source/home:Iggy:branches:BaseDistro/new_package/file.changes?rev=repository", changes
+    assert_response :success
+    post "/source/home:Iggy:branches:BaseDistro/new_package?cmd=commitfilelist&keeplink=1", ' <directory> <entry name="file.changes" md5="'+ Digest::MD5.hexdigest(changes) + '" /> </directory> '
+    assert_response :success
+
+    get "/source/home:Iggy:branches:BaseDistro/new_package?view=issues"
+    assert_response :success
+    assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'added'}}, :tag => 'name', :content => "13"
+    assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'added'}}, :tag => 'name', :content => "14"
+    assert_tag :parent => { :tag => 'issue', :attributes => {:change => 'added'}}, :tag => 'name', :content => "15"
 
     #cleanup
     delete "/source/home:Iggy:branches:BaseDistro"

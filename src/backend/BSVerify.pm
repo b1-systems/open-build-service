@@ -75,7 +75,11 @@ sub verify_patchinfo {
   my $p = $_[0];
   verify_filename($p->{'name'}) if defined($p->{'name'});
   my %allowed_categories = map {$_ => 1} qw{security recommended optional feature};
-  die("Invalid category defined in _patchinfo\n") if defined($p->{'category'}) && $p->{'category'} ne "" && !$allowed_categories{$p->{'category'}};
+  die("Invalid category defined in _patchinfo\n") if defined($p->{'category'}) && !$allowed_categories{$p->{'category'}};
+  for my $rt (@{$p->{'releasetarget'} || []}) {
+    verify_projid($rt->{'project'});
+    verify_repoid($rt->{'repository'}) if defined $rt->{'repository'};
+  }
 }
 
 sub verify_patchinfo_complete {
@@ -172,7 +176,7 @@ sub verify_prpa {
 
 sub verify_resultview {
   my $view = $_[0];
-  die("unknown view parameter: '$view'\n") if $view ne 'summary' && $view ne 'status' && $view ne 'binarylist';
+  die("unknown view parameter: '$view'\n") if $view ne 'summary' && $view ne 'status' && $view ne 'binarylist' && $view ne 'stats';
 }
 
 sub verify_disableenable {
@@ -207,6 +211,10 @@ sub verify_proj {
     }
     for my $a (@{$repo->{'arch'} || []}) {
       verify_arch($a);
+    }
+    for my $rt (@{$repo->{'releasetarget'} || []}) {
+      verify_projid($rt->{'project'});
+      verify_repoid($rt->{'repository'});
     }
   }
   for my $link (@{$proj->{'link'} || []}) {
@@ -245,6 +253,7 @@ sub verify_link {
   verify_packid($l->{'package'}) if exists $l->{'package'};
   verify_rev($l->{'rev'}) if exists $l->{'rev'};
   verify_rev($l->{'baserev'}) if exists $l->{'baserev'};
+  verify_simple($l->{'vrev'}) if defined $l->{'vrev'};
   die("link must contain some target description \n") unless exists $l->{'project'} || exists $l->{'package'} || exists $l->{'rev'};
   if (exists $l->{'cicount'}) {
     if ($l->{'cicount'} ne 'add' && $l->{'cicount'} ne 'copy' && $l->{'cicount'} ne 'local') {

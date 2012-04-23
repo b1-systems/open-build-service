@@ -12,16 +12,21 @@
 # Description:
 #   OBS WebUI testsuite on git master branch.
 #
-#   Runs unit and integration tests, generated coverage reports.
+#   Updates source code repository and runs unit and integration tests. It also
+#   generates coverage reports.
+#
+# Source Code Management:
+#   Git:
+#     Repositories: git://github.com/openSUSE/open-build-service.git
+#     Branches to build: master
+#     Repository browser: githubweb
+#       URL: https://github.com/openSUSE/open-build-service
 #
 # Build Triggers:
-#   Build after other projects are built:
-#     Project names: obs_testsuite_api
+#   Poll SCM:
+#     Schedule: */5 * * * *
 #
 # Build:
-#   Copy artifacts from another project:
-#     Project name: obs_testsuite_api
-#     Artifacts to copy: **/*
 #   Execute shell:
 #     Command: sh dist/ci/obs_testsuite_webui.sh
 #
@@ -33,7 +38,7 @@
 #   Publish Rails stats report: 1
 #     Rake working directory: src/webui
 #   Publish Rcov report:
-#     Rcov report directory:  src/webui/coverage/test
+#     Rcov report directory:  src/webui/coverage
 #
 
 ###############################################################################
@@ -42,6 +47,10 @@
 #
 # Either invoke as described above or copy into an 'Execute shell' 'Command'.
 #
+
+set -e
+set -x
+sh -xe `dirname $0`/obs_testsuite_common.sh
 
 echo "Enter WebUI rails root"
 cd src/webui
@@ -52,12 +61,10 @@ cp config/database.yml.example config/database.yml
 echo "Setup additional configuration"
 cp config/options.yml.example config/options.yml
 
-echo "Install missing gems locally and fetch rails_rcov"
+echo "Install missing gems locally"
 #rake gems:install # TODO: Fix webui to make this work!
-ruby script/plugin install http://svn.codahale.com/rails_rcov
 
 echo "Set environment variables"
-export CI_REPORTS=results
 export RAILS_ENV=test
 
 echo "Fix executable bits broken by 'Copy Artifacts' plugin"
@@ -66,14 +73,10 @@ chmod +x script/start_test_api \
          ../api/script/start_test_backend
 
 echo "Initialize test database, run migrations, load seed data"
-rake db:drop db:create db:migrate
-
-echo "Prepare for rcov"
-[ -d "coverage" ] && rm -rf coverage
-mkdir coverage
+rake --trace db:drop db:create db:migrate
 
 echo "Invoke rake"
-rake ci:setup:testunit test:test:rcov --trace RCOV_PARAMS="--aggregate coverage/aggregate.data"
+rake --trace ci:setup:testunit test CI_REPORTS=results
 cd ../..
 
 echo "Contents of src/api/log/test.log:"

@@ -217,9 +217,8 @@ table.tablesorter thead tr .headerSortDown, table.tablesorter thead tr .headerSo
 }
 
 /* package and project view */
-.show_left  { margin-left: 10px; margin-bottom: 0px; }
-.show_right { margin-right: 10px; margin-bottom: 0px; }
-.show_bottom { margin-bottom: 10px; }
+.show_left  { margin-left: 10px; }
+.show_right { margin-right: 10px; }
 
 table.patchinfo td { vertical-align: middle; }
 
@@ -243,4 +242,19 @@ table.patchinfo td { vertical-align: middle; }
 
 .clean_list {
   list-style: none inside;
+}
+
+.horizontal-list {
+  list-style: none inside;
+}
+.horizontal-list li {
+  float: left;
+  margin: 0 0 0.5em 0;
+}
+.horizontal-list:after {
+  content: ".";
+  display: block;
+  height: 0;
+  clear: both;
+  visibility: hidden;
 }

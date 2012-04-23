@@ -48,6 +48,7 @@ use Build;
 use BSDB;
 use Meta;
 use BSSolv;
+use BSCando;
 
 use strict;
 
@@ -90,6 +91,10 @@ if (@ARGV && ($ARGV[0] eq '--exit' || $ARGV[0] eq '--stop')) {
 }
 
 my $myarch = $ARGV[0] || 'i586';
+
+if (!$BSCando::knownarch{$myarch}) {
+  die("Architecture '$myarch' is unknown, please adapt BSCando.pm\n");
+}
 
 my $myjobsdir = "$jobsdir/$myarch";
 my $myeventdir = "$eventdir/$myarch";
@@ -506,6 +511,17 @@ sub killbuilding {
   }
 }
 
+sub add_crossmarker {
+  my ($bconf, $job) = @_;
+  my $hostarch = $bconf->{'hostarch'};
+  return if $hostarch eq $myarch;
+  return unless $BSCando::knownarch{$hostarch};
+  my $marker = "$jobsdir/$hostarch/$job:$myarch:cross";
+  return if -e $marker;
+  mkdir_p("$jobsdir/$hostarch");
+  BSUtil::touch($marker);
+}
+
 #
 # set_building  - create a new build job
 #
@@ -536,8 +552,11 @@ sub set_building {
   my $prp = "$projid/$repoid";
   my $srcmd5 = $pdata->{'srcmd5'};
   my $job = jobname($prp, $packid);
-  return "$job-$srcmd5" if -s "$myjobsdir/$job-$srcmd5";
-  return $job if -s "$myjobsdir/$job";
+  if (-s "$myjobsdir/$job-$srcmd5") {
+    add_crossmarker($bconf, "$job-$srcmd5") if $bconf->{'hostarch'};
+    return "$job-$srcmd5";
+  }
+  return $job if -s "$myjobsdir/$job";	# obsolete
   my @otherjobs = grep {/^\Q$job\E-[0-9a-f]{32}$/} ls($myjobsdir);
   $job = "$job-$srcmd5";
 
@@ -669,6 +688,7 @@ sub set_building {
     'needed' => $needed,
   };
   $binfo->{'syspath'} = $syspath if $syspath;
+  $binfo->{'hostarch'} = $bconf->{'hostarch'} if $bconf->{'hostarch'};
   if ($pdata->{'revtime'}) {
     $binfo->{'revtime'} = $pdata->{'revtime'};
     # use max of revtime for interproject links
@@ -694,6 +714,7 @@ sub set_building {
   $binfo->{'debuginfo'} = 1 if $debuginfo;
 
   writexml("$myjobsdir/.$job", "$myjobsdir/$job", $binfo, $BSXML::buildinfo);
+  add_crossmarker($bconf, $job) if $bconf->{'hostarch'};
   # all done. the dispatcher will now pick up the job and send it
   # to a worker.
   $ourjobs{$job} = 1;
@@ -821,6 +842,96 @@ sub set_repo_state {
 }
 
 
+# create a delta job
+#
+# output: $job           - the job identifier
+#         $error         - in case we could not start the job
+sub createdeltajob {
+  my ($projid, $repoid, $packid, $bconf, $prpsearchpath, $suffix, $needdelta) = @_;
+
+  my $job = jobname("$projid/$repoid", $packid);
+  $job .= "-$suffix" if defined $suffix;
+  if (-e "$myjobsdir/$job") {
+    return undef, 'building'; # delta creation already in progress
+  }
+  my $srcmd5 = '';
+  $srcmd5 .= $_->[2] for @$needdelta;
+  $srcmd5 = Digest::MD5::md5_hex($srcmd5);
+  my $jobdatadir = "$myjobsdir/$job:dir";
+  mkdir_p($jobdatadir);
+  BSUtil::cleandir($jobdatadir);
+  return (undef, "could not create jobdir") unless -d $jobdatadir;
+  for my $delta (@$needdelta) {
+    #print Dumper($delta);
+    my $deltaid = $delta->[2];
+    link($delta->[0], "$jobdatadir/$deltaid.old") || return (undef, "link error: $!");
+    link($delta->[1], "$jobdatadir/$deltaid.new") || return (undef, "link error: $!");
+    my $qold = Build::Rpm::query("$jobdatadir/$deltaid.old", 'evra' => 1);
+    my $qnew = Build::Rpm::query("$jobdatadir/$deltaid.new", 'evra' => 1);
+    return (undef, "bad rpms") unless $qold && $qnew;
+    return (undef, "name/arch mismatch") if $qold->{'name'} ne $qnew->{'name'} || $qold->{'arch'} ne $qnew->{'arch'};
+    $qold->{'epoch'} = '' unless defined $qold->{'epoch'};
+    $qnew->{'epoch'} = '' unless defined $qnew->{'epoch'};
+    my $info = '';
+    $info .= ucfirst($_).": $qnew->{$_}\n" for qw{name epoch version release arch};
+    $info .= "Old".ucfirst($_).": $qold->{$_}\n" for qw{name epoch version release arch};
+    writestr("$jobdatadir/$deltaid.info", undef, $info);
+  }
+  # create job
+  my $prptype = $bconf->{'type'};
+  my ($eok, @bdeps) = Build::get_build($bconf, [], "deltarpm");
+  if (!$eok) {
+    print "        unresolvables:\n";
+    print "          $_\n" for @bdeps;
+    return (undef, "unresolvable: ".join(', ', @bdeps));
+  }
+  my $now = time();
+  my @pdeps = Build::get_preinstalls($bconf);
+  my @vmdeps = Build::get_vminstalls($bconf);
+  my %runscripts = map {$_ => 1} Build::get_runscripts($bconf);
+  my %bdeps = map {$_ => 1} @bdeps;
+  my %pdeps = map {$_ => 1} @pdeps;
+  my %vmdeps = map {$_ => 1} @vmdeps;
+  @bdeps = unify(@pdeps, @vmdeps, @bdeps);
+  for (@bdeps) {
+    $_ = {'name' => $_}; 
+    $_->{'preinstall'} = 1 if $pdeps{$_->{'name'}};
+    $_->{'vminstall'} = 1 if $vmdeps{$_->{'name'}};
+    $_->{'runscripts'} = 1 if $runscripts{$_->{'name'}};
+    $_->{'notmeta'} = 1;
+  }
+  my $searchpath = [];
+  for (@$prpsearchpath) {
+    my @pr = split('/', $_, 2);
+    if ($remoteprojs{$pr[0]}) {
+      push @$searchpath, {'project' => $pr[0], 'repository' => $pr[1], 'server' => $BSConfig::srcserver};
+    } else {
+      push @$searchpath, {'project' => $pr[0], 'repository' => $pr[1], 'server' => $BSConfig::reposerver};
+    }
+  }
+
+  my $binfo = {
+    'project' => $projid,
+    'repository' => $repoid,
+    'package' => $packid,
+    'file' => '_delta',
+    'srcmd5' => $srcmd5,
+    'reason' => 'source change',
+    'srcserver' => $BSConfig::srcserver,
+    'reposerver' => $BSConfig::reposerver,
+    'job' => $job,
+    'arch' => $myarch,
+    'readytime' => $now,
+    'bdep' => \@bdeps,
+    'path' => $searchpath,
+    'needed' => 0,
+  };
+
+  writexml("$myjobsdir/.$job", "$myjobsdir/$job", $binfo, $BSXML::buildinfo);
+  print "    created deltajob...\n";
+  return $job;
+}
+
 # make sure that we have all of the deltas we need
 # create a deltajob if some are missing
 # note that we must have the repo lock so that $extrep does not change!
@@ -838,7 +949,25 @@ sub makedeltas {
   my %deltaids;
 
   my $partial_job;
+  my $unfinished;
   my $jobsize = 0;
+
+  my $suffix;
+  my $running_jobs = 0;
+  my $maxjobs = 100;
+
+  my %running_ids;
+  if ($maxjobs > 1) {
+    $suffix = 0;
+    my $jobprefix = jobname($prp, '_deltas');
+    for my $job (grep {$_ eq $jobprefix || /^\Q$jobprefix-\E\d+$/} ls($myjobsdir)) {
+      $running_jobs++;
+      if ($job =~ /(\d+)$/) {
+        $suffix = $1 if $1 > $suffix;
+      }
+      $running_ids{$_} = 1 for grep {s/\.info$//} ls("$myjobsdir/$job:dir");
+    }
+  }
 
   for my $packid (@{$packs || []}) {
     next if $pubenabled && !$pubenabled->{$packid};
@@ -897,12 +1026,23 @@ sub makedeltas {
 	      push @{$havedelta{"$packid/$bin"}}, [ $deltaid, $obin ];
 	    }
 	  } else {
+	    $unfinished = 1;
+	    next if $running_ids{$deltaid};
 	    push @needdelta, [ "$aextrep/$binarch/$obin", "$pdir/$bin", $deltaid ];
 	    $jobsize += $s[7] + $binstat[7];
 	    if ($jobsize > 500000000) {
-	      $partial_job = 1;
-	      print "    partial delta job\n";
-	      last;
+	      # flush the job
+	      if ($running_jobs >= $maxjobs) {
+		print "    too many delta jobs running\n";
+	        $partial_job = 1;
+	        last;
+	      }
+	      $suffix++ if defined $suffix;
+	      my ($job, $joberror) = createdeltajob($projid, $repoid, '_deltas', $bconf, $prpsearchpath, $suffix, \@needdelta);
+	      return (undef, $joberror) if $joberror;
+	      $running_jobs++ if $job;
+	      @needdelta = ();
+	      $jobsize = 0;
 	    }
 	  }
 	}
@@ -913,101 +1053,23 @@ sub makedeltas {
     last if $partial_job;
   }
 
-  # ddir maintenance
-  if (!$partial_job) {
-    my @ddir = sort(ls($ddir));
-    for my $deltaid (grep {!$deltaids{$_} && !/\.dseq$/} @ddir) {
-      next if $deltaid eq 'logfile';
-      unlink("$ddir/$deltaid");		# no longer need this one
-      unlink("$ddir/$deltaid.dseq");	# no longer need this one
-    }
+  if (@needdelta && $running_jobs < $maxjobs) {
+    $suffix++ if defined $suffix;
+    my ($job, $joberror) = createdeltajob($projid, $repoid, '_deltas', $bconf, $prpsearchpath, $suffix, \@needdelta);
+    return (undef, $joberror) if $joberror;
   }
 
-  if (@needdelta) {
-    # create a delta job
-    my $packid = '_deltas';
-    my $job = jobname($prp, $packid);
-    if (-e "$myjobsdir/$job") {
-      # delta creation already in progress. wait...
-      print "    delta creation already in progress...\n";
-      return undef, 'building';
-    }
-    my $srcmd5 = '';
-    $srcmd5 .= $_->[2] for @needdelta;
-    $srcmd5 = Digest::MD5::md5_hex($srcmd5);
-    my $jobdatadir = "$myjobsdir/$job:dir";
-    mkdir_p($jobdatadir);
-    BSUtil::cleandir($jobdatadir);
-    return undef unless -d $jobdatadir;
-    for my $delta (@needdelta) {
-      #print Dumper($delta);
-      my $deltaid = $delta->[2];
-      link($delta->[0], "$jobdatadir/$deltaid.old") || return undef;
-      link($delta->[1], "$jobdatadir/$deltaid.new") || return undef;
-      my $qold = Build::Rpm::query("$jobdatadir/$deltaid.old", 'evra' => 1);
-      my $qnew = Build::Rpm::query("$jobdatadir/$deltaid.new", 'evra' => 1);
-      return undef unless $qold && $qnew;
-      return undef if $qold->{'name'} ne $qnew->{'name'} || $qold->{'arch'} ne $qnew->{'arch'};
-      $qold->{'epoch'} = '' unless defined $qold->{'epoch'};
-      $qnew->{'epoch'} = '' unless defined $qnew->{'epoch'};
-      my $info = '';
-      $info .= ucfirst($_).": $qnew->{$_}\n" for qw{name epoch version release arch};
-      $info .= "Old".ucfirst($_).": $qold->{$_}\n" for qw{name epoch version release arch};
-      writestr("$jobdatadir/$deltaid.info", undef, $info);
-    }
-    # create job
-    my $prptype = $bconf->{'type'};
-    my ($eok, @bdeps) = Build::get_build($bconf, [], "deltarpm");
-    if (!$eok) {
-      print "        unresolvables:\n";
-      print "          $_\n" for @bdeps;
-      return (undef, "unresolvable: ".join(', ', @bdeps));
-    }
-    my $now = time();
-    my @pdeps = Build::get_preinstalls($bconf);
-    my @vmdeps = Build::get_vminstalls($bconf);
-    my %runscripts = map {$_ => 1} Build::get_runscripts($bconf);
-    my %bdeps = map {$_ => 1} @bdeps;
-    my %pdeps = map {$_ => 1} @pdeps;
-    my %vmdeps = map {$_ => 1} @vmdeps;
-    @bdeps = unify(@pdeps, @vmdeps, @bdeps);
-    for (@bdeps) {
-      $_ = {'name' => $_}; 
-      $_->{'preinstall'} = 1 if $pdeps{$_->{'name'}};
-      $_->{'vminstall'} = 1 if $vmdeps{$_->{'name'}};
-      $_->{'runscripts'} = 1 if $runscripts{$_->{'name'}};
-      $_->{'notmeta'} = 1;
-    }
-    my $searchpath = [];
-    for (@$prpsearchpath) {
-      my @pr = split('/', $_, 2);
-      if ($remoteprojs{$pr[0]}) {
-        push @$searchpath, {'project' => $pr[0], 'repository' => $pr[1], 'server' => $BSConfig::srcserver};
-      } else {
-        push @$searchpath, {'project' => $pr[0], 'repository' => $pr[1], 'server' => $BSConfig::reposerver};
-      }
-    }
-
-    my $binfo = {
-      'project' => $projid,
-      'repository' => $repoid,
-      'package' => $packid,
-      'file' => '_delta',
-      'srcmd5' => $srcmd5,
-      'reason' => 'source change',
-      'srcserver' => $BSConfig::srcserver,
-      'reposerver' => $BSConfig::reposerver,
-      'job' => $job,
-      'arch' => $myarch,
-      'readytime' => $now,
-      'bdep' => \@bdeps,
-      'path' => $searchpath,
-      'needed' => 0,
-    };
-
-    writexml("$myjobsdir/.$job", "$myjobsdir/$job", $binfo, $BSXML::buildinfo);
-    print "    creating deltas...\n";
+  if ($unfinished) {
+    print "    waiting for deltajobs to finish\n";
     return (undef, 'building');
+  }
+
+  # ddir maintenance
+  my @ddir = sort(ls($ddir));
+  for my $deltaid (grep {!$deltaids{$_} && !/\.dseq$/} @ddir) {
+    next if $deltaid eq 'logfile';
+    unlink("$ddir/$deltaid");		# no longer need this one
+    unlink("$ddir/$deltaid.dseq");	# no longer need this one
   }
   return \%havedelta;
 }
@@ -1183,7 +1245,7 @@ sub prpfinished {
     my $nosourceaccess = grep {$_ eq '.nosourceaccess'} @all;
     @all = grep {$_ ne 'history' && $_ ne 'logfile' && $_ ne 'meta' && $_ ne 'status' && $_ ne '.bininfo' && $_ ne 'reason' && $_ ne '.nosourceaccess'} @all;
     for my $bin (@all) {
-     next if $bin eq '.updateinfodata';
+      next if $bin eq '.updateinfodata';
       my $rbin = $bin;
       # XXX: should be source name instead?
       $rbin = "${packid}::$bin" if $debian || $bin eq 'updateinfo.xml';
@@ -1420,7 +1482,7 @@ sub update_dst_full {
 
   my ($projid, $repoid) = split('/', $prp, 2);
 
-  # check for lock
+  # check for lock and patchinfo
   if ($projpacks->{$projid} && $projpacks->{$projid}->{'package'} && $projpacks->{$projid}->{'package'}->{$packid}) {
     my $locked = 0;
     $locked = enabled($repoid, $projpacks->{$projid}->{'lock'}, $locked) if $projpacks->{$projid}->{'lock'};
@@ -1430,6 +1492,7 @@ sub update_dst_full {
       print "    package is locked\n";
       return;
     }
+    $useforbuildenabled = 0 if $pdata->{'patchinfo'};
   }
 
   my $jobrepo;
@@ -1739,6 +1802,7 @@ sub addjobhist {
   $jobhist->{'code'} = $code;
   $jobhist->{$_} = $js->{$_} for qw{readytime starttime endtime uri workerid hostarch};
   $jobhist->{$_} = $info->{$_} for qw{package rev srcmd5 versrel bcnt reason};
+  $jobhist->{'verifymd5'} = $info->{'verifymd5'} if $info->{'verifymd5'};
   $jobhist->{'readytime'} ||= $status->{'readytime'};	# backward compat
   mkdir_p("$reporoot/$prp/$myarch");
   BSFileDB::fdb_add("$reporoot/$prp/$myarch/:jobhistory", $BSXML::jobhistlay, $jobhist);
@@ -1956,8 +2020,7 @@ sub update_project_meta {
   my $cold = Build::read_config($myarch, split("\n", $oldproj->{'config'} || ''));
   my $cnew = Build::read_config($myarch, split("\n", $proj->{'config'} || ''));
   return 0 unless identical($cold->{'macros'}, $cnew->{'macros'});
-
-  # XXX: should really also compare build type
+  return 0 unless identical($cold->{'type'}, $cnew->{'type'});
   $projpacks->{$projid} = $proj;
   return 1;
 }
@@ -2394,6 +2457,38 @@ sub addrepo_remote {
 }
 
 #
+# patch the packstatus entry of package $packid so that it reflects the finished state
+# and does not revert back to scheduled
+#
+sub patchpackstatus {
+  my ($prp, $packid, $code) = @_;
+
+  my $pschanged;
+  my $ps = BSUtil::retrieve("$reporoot/$prp/$myarch/:packstatus", 1);
+  if (!$ps) {
+    # compatibility: read and convert old xml data
+    $ps = readxml("$reporoot/$prp/$myarch/:packstatus", $BSXML::packstatuslist, 1);
+    if ($ps) {
+      my %packstatus;
+      my %packerror;
+      for (@{$ps->{'packstatus'} || []}) {
+        $packstatus{$_->{'name'}} = $_->{'status'};
+        $packerror{$_->{'name'}} = $_->{'error'} if $_->{'error'};
+      }
+      $ps = {'packstatus' => \%packstatus, 'packerror' => \%packerror};
+      $pschanged = 1;
+    }
+  }
+  return unless $ps;
+  if (exists($ps->{'packstatus'}->{$packid}) && $ps->{'packstatus'}->{$packid} eq 'scheduled') {
+    $ps->{'packstatus'}->{$packid} = 'finished';
+    $ps->{'packerror'}->{$packid} = $code;
+    $pschanged = 1;
+  }
+  BSUtil::store("$reporoot/$prp/$myarch/.:packstatus", "$reporoot/$prp/$myarch/:packstatus", $ps) if $pschanged;
+}
+
+#
 # jobfinished - called when a build job is finished
 #
 # - move built packages into :full tree
@@ -2487,31 +2582,7 @@ sub jobfinished {
   }
 
   # update packstatus so that it doesn't fall back to scheduled
-  my $ps = BSUtil::retrieve("$reporoot/$prp/$myarch/:packstatus", 1);
-  if ($ps) {
-    if (exists($ps->{'packstatus'}->{$packid})) {
-      $ps->{'packstatus'}->{$packid} = 'finished';
-      $ps->{'packerror'}->{$packid} = $code;
-      BSUtil::store("$reporoot/$prp/$myarch/.:packstatus", "$reporoot/$prp/$myarch/:packstatus", $ps);
-    }
-  } else {
-    # compatibility: read and convert old xml data
-    $ps = readxml("$reporoot/$prp/$myarch/:packstatus", $BSXML::packstatuslist, 1);
-    if ($ps) {
-      my %packstatus;
-      my %packerror;
-      for (@{$ps->{'packstatus'} || []}) {
-        $packstatus{$_->{'name'}} = $_->{'status'};
-        $packerror{$_->{'name'}} = $_->{'error'} if $_->{'error'};
-      }
-      if (exists($packstatus{$packid})) {
-        $packstatus{$packid} = 'finished';
-        $packerror{$packid} = $code;
-      }
-      $ps = {'packstatus' => \%packstatus, 'packerror' => \%packerror};
-      BSUtil::store("$reporoot/$prp/$myarch/.:packstatus", "$reporoot/$prp/$myarch/:packstatus", $ps);
-    }
-  }
+  patchpackstatus($prp, $packid, $code);
 
   my $meta = $all{'meta'} ? "$jobdatadir/meta" : undef;
   if ($code eq 'unchanged') {
@@ -2632,6 +2703,7 @@ sub aggregatefinished {
   unlink("$dst/status");
   mkdir_p("$gdst/:meta");
   rename("$jobdatadir/meta", "$gdst/:meta/$packid") || die("rename $jobdatadir/meta $gdst/:meta/$packid: $!\n");
+  patchpackstatus($prp, $packid, 'succeeded');
 }
 
 sub deltafinished {
@@ -2659,6 +2731,8 @@ sub deltafinished {
   my $dst = "$gdst/$packid";
   mkdir_p($dst);
   my $code = $js->{'result'} || 'failed';
+  my $status = {'readytime' => $info->{'readytime'} || $info->{'starttime'}};
+  addjobhist($prp, $info, $status, $js, $code);
   if ($code ne 'succeeded') {
     print "  - $job: build failed\n";
     unlink("$dst/logfile");
@@ -3375,6 +3449,21 @@ sub checkpatchinfo {
   return ('broken', 'missing archs') unless @archs;	# can't happen
   my $patchinfo = $pdata->{'patchinfo'};
 
+  if (@{$patchinfo->{'releasetarget'} || []}) {
+    my $ok;
+    for my $rt (@{$patchinfo->{'releasetarget'}}) {
+      $ok = grep {$rt->{'project'} eq $_->{'project'} && (!defined($rt->{'repository'}) || $rt->{'repository'} eq $_->{'repository'})} @{$repo->{'releasetarget'} || []};
+      last if $ok;
+    }
+    return ('excluded') unless $ok;
+  }
+
+  return ('broken', "patchinfo is stopped: ".$patchinfo->{'stopped'}) if $patchinfo->{'stopped'};
+  return ('broken', 'patchinfo lacks category') unless $patchinfo->{'category'};
+
+  my $ptype = 'local';
+  $ptype = 'binary' if ($projpacks->{$projid}->{'kind'} || '') eq 'maintenance_incident';
+  
   my $broken;
   # find packages
   my @packages;
@@ -3447,6 +3536,24 @@ sub checkpatchinfo {
 
   return ('broken', $broken) if $broken;
 
+  my @new_meta;
+  push @new_meta, ($pdata->{'verifymd5'} || $pdata->{'srcmd5'})."  $packid";
+
+  if ($ptype eq 'local') {
+    # only rebuild if patchinfo source changes
+    my @meta;
+    if (open(F, '<', "$reporoot/$projid/$repoid/$myarch/:meta/$packid")) {
+      @meta = <F>;
+      close F;
+      chomp @meta;
+    }
+    if (@meta == 1 && $meta[0] eq $new_meta[0]) {
+      print "      - $packid (patchinfo)\n";
+      print "        nothing changed\n";
+      return ('done');
+    }
+  }
+
   # collect em
   my $apackstatus;
   my @blocked;
@@ -3483,16 +3590,28 @@ sub checkpatchinfo {
 	push @blocked, "$arch/$apackid";
 	$blockedarch = 1;
       }
-      my ($ameta) = split("\n", readstr("$reporoot/$projid/$repoid/$arch/:meta/$apackid", 1) || '', 2);
-      if (!$ameta) {
-	push @blocked, "$arch/$apackid";
-	$blockedarch = 1;
-      } else {
-        if ($metas{$apackid} && $metas{$apackid} ne $ameta) {
-	  push @blocked, "meta/$apackid";
+      if ($ptype eq 'binary') {
+	# like aggregates
+	my $d = "$reporoot/$projid/$repoid/$arch/$apackid";
+	my @d = grep {/\.rpm/} ls($d);
+	my $m = '';
+	for my $b (sort @d) {
+	  my @s = stat("$d/$b");
+	  $m .= "$b\0$s[9]/$s[7]/$s[1]\0" if @s;
+	}
+	$metas{"$arch/$apackid"} = Digest::MD5::md5_hex($m);
+      } elsif ($ptype eq 'direct' || $ptype eq 'transitive') {
+	my ($ameta) = split("\n", readstr("$reporoot/$projid/$repoid/$arch/:meta/$apackid", 1) || '', 2);
+	if (!$ameta) {
+	  push @blocked, "$arch/$apackid";
 	  $blockedarch = 1;
 	} else {
-	  $metas{$apackid} = $ameta;
+	  if ($metas{$apackid} && $metas{$apackid} ne $ameta) {
+	    push @blocked, "meta/$apackid";
+	    $blockedarch = 1;
+	  } else {
+	    $metas{$apackid} = $ameta;
+	  }
 	}
       }
       push @tocopy, "$arch/$apackid";
@@ -3511,14 +3630,13 @@ sub checkpatchinfo {
     return ('blocked', join(', ', @blocked));
   }
 
-  my @new_meta;
-  push @new_meta, ($pdata->{'verifymd5'} || $pdata->{'srcmd5'})."  $packid";
+  return ('broken', 'no binaries found') unless @tocopy;
+
   for (sort(keys %metas)) {
     push @new_meta, "$metas{$_}  $_";
   }
 
-
-  # is this a new one?
+  # compare with stored meta
   my @meta;
   if (open(F, '<', "$reporoot/$projid/$repoid/$myarch/:meta/$packid")) {
     @meta = <F>;
@@ -3532,12 +3650,14 @@ sub checkpatchinfo {
   }
 
   # now collect...
-  return ('scheduled', [ \@tocopy]);
+  return ('scheduled', [ \@tocopy, \%metas, $ptype]);
 }
 
 sub rebuildpatchinfo {
   my ($projid, $repoid, $packid, $pdata, $info, $data) = @_;
   my @tocopy = @{$data->[0]};
+  my $ckmetas = $data->[1];
+  my $ptype = $data->[2];
   
   print "      - $packid (patchinfo)\n";
   print "        rebuilding\n";
@@ -3551,7 +3671,6 @@ sub rebuildpatchinfo {
   unlink "$jobdatadir/$_" for ls($jobdatadir);
   mkdir_p($jobdatadir);
   my $jobrepo = {};
-  my %jobbins;
   my $error;
   my %donebins;
   my @upackages;
@@ -3561,46 +3680,74 @@ sub rebuildpatchinfo {
   my $updateinfodata;
   my %updateinfodata_tocopy;
   my %binaryfilter = map {$_ => 1} @{$patchinfo->{'binary'} || []};
+  my %filtered;
   
   if (-s "$reporoot/$prp/$myarch/$packid/.updateinfodata") {
     $updateinfodata = BSUtil::retrieve("$reporoot/$prp/$myarch/$packid/.updateinfodata");
     %updateinfodata_tocopy = map {$_ => 1} @{$updateinfodata->{'packages'} || []};
   }
 
-  # mark incomplete patchinfos as broken
-  return ('broken', "patchinfo lacks category") unless $patchinfo->{'category'};
-
   for my $tocopy (@tocopy) {
     my ($arch, $apackid) = split('/', $tocopy, 2);
     my @bins;
     my $meta;
     my $from;
+    my $mpackid;
 
-    ($meta) = split("\n", readstr("$reporoot/$projid/$repoid/$arch/:meta/$apackid", 1) || '', 2);
-    if ($updateinfodata_tocopy{$tocopy} && $meta && $updateinfodata->{'metas'}->{$apackid} eq $meta) {
+    if ($ptype eq 'local') {
+      # always reuse old packages
+    } elsif ($ptype eq 'binary') {
+      $mpackid = "$arch/$apackid";
+    } elsif ($ptype eq 'direct' || $ptype eq 'transitive') {
+      $mpackid = $apackid;
+    } else {
+      $broken = "illegal ptype";
+      last;
+    }
+    if ($updateinfodata->{'filtered'} && $updateinfodata->{'filtered'}->{$tocopy}) {
+      # we previously filtered packages, check if this is still true
+      if (grep {!%binaryfilter || $binaryfilter{$_}} keys %{$updateinfodata->{'filtered'}->{$tocopy}}) {
+	# can't reuse old packages, as the filter changed
+	delete $updateinfodata_tocopy{$tocopy};
+      }
+    }
+    if ($updateinfodata_tocopy{$tocopy} && (!defined($mpackid) || ($updateinfodata->{'metas'}->{$mpackid} || '') eq $ckmetas->{$mpackid})) {
       print "        reusing old packages for '$tocopy'\n";
       $from = "$reporoot/$projid/$repoid/$myarch/$packid";
       @bins = grep {$updateinfodata->{'binaryorigins'}->{$_} eq $tocopy} keys(%{$updateinfodata->{'binaryorigins'}});
     } else {
       $from = "$reporoot/$projid/$repoid/$tocopy";
       @bins = grep {/\.rpm$/} ls ($from);
-      print "$from @bins";
     }
-    if (!$meta) {
-      $broken = "$tocopy has no meta";
-      last;
+    if (defined($mpackid)) {
+      my $meta = $ckmetas->{$mpackid};
+      if (!$meta) {
+	$broken = "$tocopy has no meta";
+	last;
+      }
+      $metas{$mpackid} ||= $meta;
+      if ($metas{$mpackid} ne $meta) {
+	$broken = "$mpackid has different sources";
+	last;
+      }
     }
-    $metas{$apackid} ||= $meta;
-    if ($metas{$apackid} ne $meta) {
-      $broken = "$apackid has different sources";
-      last;
-    }
-    for my $bin (@bins) {
-      next if $donebins{$bin};
-      
+    my $m = '';
+    for my $bin (sort @bins) {
+      if ($donebins{$bin}) {
+        if ($ptype eq 'binary') {
+	  my @s = stat("$from/$bin");
+	  $m .= "$bin\0$s[9]/$s[7]/$s[1]\0" if @s;
+        }
+        next;
+      }
       if (!link("$from/$bin", "$jobdatadir/$bin")) {
         my $error = "link $from/$bin $jobdatadir/$bin: $!\n";
         return ('broken', $error);
+      }
+      if ($ptype eq 'binary') {
+        # be extra careful with em, recalculate meta
+	my @s = stat("$jobdatadir/$bin");
+	$m .= "$bin\0$s[9]/$s[7]/$s[1]\0" if @s;
       }
       my $d;
       eval {
@@ -3611,6 +3758,8 @@ sub rebuildpatchinfo {
         return ('broken', "$bin: bad rpm");
       }
       if (%binaryfilter && !$binaryfilter{$d->{'name'}}) {
+	$filtered{$tocopy} ||= {};
+	$filtered{$tocopy}->{$d->{'name'}} = 1;
         unlink("$jobdatadir/$bin");
         next;
       }
@@ -3630,7 +3779,11 @@ sub rebuildpatchinfo {
       $upd->{'restart_suggested'} = 'True' if exists $patchinfo->{'zypp_restart_needed'};
       push @upackages, $upd;
     }
+    $metas{$mpackid} = Digest::MD5::md5_hex($m) if $ptype eq 'binary';
   }
+
+  $broken ||= 'no binaries found' unless @upackages;
+
   my $update = {};
   $update->{'status'} = 'stable';
   $update->{'from'} = $patchinfo->{'packager'} if $patchinfo->{'packager'};
@@ -3641,7 +3794,11 @@ sub rebuildpatchinfo {
     }
   }
   $update->{'version'} = $patchinfo->{'version'} || '1';	# bodhi inserts its own version...
-  $update->{'id'} = $patchinfo->{'incident'} || $projid;
+  $update->{'id'} = $patchinfo->{'incident'};
+  if (!$update->{'id'}) {
+    $update->{'id'} = $projid;
+    $update->{'id'} =~ s/:/_/g;
+  }
   $update->{'type'} = $patchinfo->{'category'};
   $update->{'title'} = $patchinfo->{'summary'};
   $update->{'severity'} = $patchinfo->{'rating'} if defined $patchinfo->{'rating'};
@@ -3689,6 +3846,7 @@ sub rebuildpatchinfo {
     'metas' => \%metas,
     'binaryorigins' => \%donebins,
   };
+  $updateinfodata->{'filtered'} = \%filtered if %filtered;
   BSUtil::store("$jobdatadir/.updateinfodata", undef, $updateinfodata);
   if ($broken) {
     BSUtil::cleandir($jobdatadir);
@@ -3980,13 +4138,13 @@ sub rebuildaggregate {
 	  my $r = $ajobrepo->{$abin};
 	  next unless $r->{'source'};
 	  next if $abinfilter && !$abinfilter->{$r->{'name'}};
-	  next if $jobbins{$r->{'name'}};
-          # FIXME: How is debian handling debug packages ?
-          next if $nosource && ($r->{'name'} =~ /-debug(:?info|source)?$/);
-	  $jobbins{$r->{'name'}} = 1;
+	  # FIXME: How is debian handling debug packages ?
+	  next if $nosource && ($r->{'name'} =~ /-debug(:?info|source)?$/);
 	  my $basename = $abin;
 	  $basename =~ s/.*\///;
 	  $basename =~ s/^upload:// if $cpio;
+	  next if $jobbins{$basename};	# first one wins
+	  $jobbins{$basename} = 1;
 	  BSUtil::cp($abin, "$jobdatadir/$basename");
 	  $jobrepo->{"$jobdatadir/$basename"} = $r;
 	  $copysources = 1 unless $nosource;
@@ -4553,6 +4711,7 @@ while(1) {
     my %fetchprojpacks;
     my %fetchprojpacks_nodelay;
     my %deepcheck;
+    my %lowprioproject;
 
     if (@events > 1) {
       # sort events a bit, exit events go first ;-)
@@ -4640,10 +4799,11 @@ while(1) {
 	next;
       }
 
-      if ($ev->{'type'} eq 'projevent' || $ev->{'type'} eq 'project') {
+      if ($ev->{'type'} eq 'projevent' || $ev->{'type'} eq 'project' || $ev->{'type'} eq 'lowprioproject') {
 	my $projid = $ev->{'project'};
 	next unless defined $projid;
 	push @{$fetchprojpacks{$projid}}, undef;
+	$lowprioproject{$projid} = 1 if $ev->{'type'} eq 'lowprioproject';
 	next;
       }
 
@@ -4657,23 +4817,32 @@ while(1) {
 	next;
       }
 
-      if ($ev->{'type'} eq 'rebuild' || $ev->{'type'} eq 'recheck') {
+      if ($ev->{'type'} eq 'rebuild' || $ev->{'type'} eq 'recheck' || $ev->{'type'} eq 'admincheck') {
 	my $projid = $ev->{'project'};
 	my $packid = $ev->{'package'};
 	my $repoid = $ev->{'repository'};
+	my %admincheck;
         if (defined($repoid)) {
           my $prp = "$projid/$repoid";
           $changed_high{$prp} ||= 1;
           $changed_dirty{$prp} = 1;
+	  $admincheck{$prp} = 1 if $ev->{'type'} eq 'admincheck';
         } else {
           for my $prp (@prps) {
             if ((split('/', $prp, 2))[0] eq $projid) {
               $changed_high{$prp} ||= 1;
               $changed_dirty{$prp} = 1;
+	      $admincheck{$prp} = 1 if $ev->{'type'} eq 'admincheck';
             }
           }
 	  $changed_high{$projid} ||= 1;
         }
+	if (%admincheck) {
+	  @lookat_high = grep {!$admincheck{$_}} @lookat_high;
+	  unshift @lookat_high, sort keys %admincheck;
+	  delete $nextmed{$_} for keys %admincheck;
+	  $notlow = $notmed = 0;
+	}
 	next;
       }
 
@@ -4919,14 +5088,15 @@ while(1) {
       my %fetchlinkedprojpacks;
       my %fetchlinkedprojpacks_srcchange;
       for my $projid (sort keys %fetchprojpacks) {
+	my $changed = $lowprioproject{$projid} && $projpacks->{$projid} && !$deepcheck{$projid} ? \%changed_low : \%changed_high;
 	if (grep {!defined($_)} @{$fetchprojpacks{$projid}}) {
 	  for my $prp (@prps) {
             if ((split('/', $prp, 2))[0] eq $projid) {
-	      $changed_high{$prp} = 2;
-              $changed_dirty{$prp} = 1;
+	      $changed->{$prp} = 2;
+	      $changed_dirty{$prp} = 1;
 	    }
 	  }
-	  $changed_high{$projid} = 2;
+	  $changed->{$projid} = 2;
 	  # more work if the project was deleted
 	  # (if it's just a config change we really do not care about source links)
 	  if (!$projpacks->{$projid} || $deepcheck{$projid}) {
@@ -4935,14 +5105,15 @@ while(1) {
 	      push @{$fetchlinkedprojpacks{$linfo->{'myproject'}}}, $linfo->{'mypackage'};
 	    }
 	  }
-	}
-	for my $prp (@prps) {
-	  if ((split('/', $prp, 2))[0] eq $projid) {
-	    $changed_high{$prp} ||= 1;
-            $changed_dirty{$prp} = 1;
+	} else {
+	  for my $prp (@prps) {
+	    if ((split('/', $prp, 2))[0] eq $projid) {
+	      $changed_high{$prp} ||= 1;
+	      $changed_dirty{$prp} = 1;
+	    }
 	  }
+	  $changed_high{$projid} ||= 1;
 	}
-	$changed_high{$projid} ||= 1;
 
 	my %packids = map {$_ => 1} grep {defined($_)} @{$fetchprojpacks{$projid}};
 	for my $packid (sort keys %packids) {
@@ -5183,6 +5354,12 @@ while(1) {
     $prpfinished{$prp} = 1;
     next;
   }
+  if ($bconf->{'hostarch'} && !$BSCando::knownarch{$bconf->{'hostarch'}}) {
+    print "  - $prp: bad hostarch ($bconf->{'hostarch'})\n";
+    set_repo_state($prp, 'broken', "bad hostarch ($bconf->{'hostarch'})");
+    $prpfinished{$prp} = 1;
+    next;
+  }
   print "  - $prp\n";
 
   my $repo = (grep {$_->{'name'} eq $repoid} @{$projpacks->{$projid}->{'repository'} || []})[0];
@@ -5224,6 +5401,8 @@ while(1) {
     # delete full entries
     my $useforbuildenabled = 1;
     $useforbuildenabled = enabled($repoid, $projpacks->{$projid}->{'useforbuild'}, $useforbuildenabled);
+    # hmm, need to exclude patchinfos here. cheating.
+    $useforbuildenabled = 0 if -s "$gdst/$packid/.updateinfodata";
     update_dst_full($prp, $packid, "$gdst/$packid" , undef, undef, $useforbuildenabled, $prpsearchpath{$prp});
     $changed_med{$prp} = 2;
     sendrepochangeevent($prp);
@@ -5736,6 +5915,7 @@ while(1) {
       if (-s "$myjobsdir/$job") {
 	# print "      - $packid ($packtype)\n";
 	# print "        already scheduled\n";
+	add_crossmarker($bconf, $job) if $bconf->{'hostarch'};
         my $useforbuildenabled = enabled($repoid, $pdata->{'useforbuild'}, $prjuseforbuildenabled);
 	$building{$packid} = $job;
 	$notready{$pname} = 1 if $useforbuildenabled;
@@ -6023,21 +6203,24 @@ relsynccheck:
     }
     $repodonestate .= "\0$_" for sort keys %unfinished;
     $repodonestate = Digest::MD5::md5_hex($repodonestate);
+    if (@packs && !grep {$_} values %pubenabled) {
+      # all packages have publish disabled hint
+      $repodonestate = "disabled:$repodonestate";
+    }
     if (-e "$reporoot/$prp/$myarch/:repodone") {
       my $oldrepodone = readstr("$reporoot/$prp/$myarch/:repodone", 1) || '';
       unlink("$reporoot/$prp/$myarch/:repodone") if $oldrepodone ne $repodonestate;
     }
     my $publisherror;
     if (! -e "$reporoot/$prp/$myarch/:repodone") {
-      if (!@packs || grep {$_} values %pubenabled) {
+      if (($repodonestate !~ /^disabled/) || -d "$reporoot/$prp/$myarch/:repo") {
 	mkdir_p("$reporoot/$prp/$myarch");
 	$publisherror = prpfinished($prp, \@packs, \%pubenabled, $bconf, $prpsearchpath{$prp});
-	writestr("$reporoot/$prp/$myarch/:repodone", undef, $repodonestate) unless $publisherror || %unfinished;
-	$schedulerdetails = $publisherror if $publisherror;
       } else {
 	print "    publishing is disabled\n";
-	writestr("$reporoot/$prp/$myarch/:repodone", undef, "disabled");
       }
+      writestr("$reporoot/$prp/$myarch/:repodone", undef, $repodonestate) unless $publisherror || %unfinished;
+      $schedulerdetails = $publisherror if $publisherror;
     }
     if (!%unfinished && !$publisherror) {
       $prpfinished{$prp} = 1;
