@@ -17,7 +17,7 @@ if ARGV.length < 3 || ARGV.length > 5
 Call this script with <project> <repository> <architecture> [-v] arguments.
 To mirror openSUSE 10.2 as base distro, please call:
 
-  obs_mirror_project openSUSE:10.2 standard i586
+  obs_mirror_project openSUSE:12.1 standard i586
 
 "
   exit(1)
@@ -40,7 +40,23 @@ downloadurl = "http://download.opensuse.org/repositories/" + project + "/" + rep
 puts "Download URL: #{downloadurl}\n" if verbose
 
 require 'rexml/document'
+require 'etc'
 include REXML
+
+# check if opensuse api is in the configuration file
+config = File.readlines(("#{Etc.getpwuid.dir}/.oscrc"))
+result = nil
+config.each do |apiurl|
+  if apiurl.include?("[https://api.opensuse.org]")
+    result = 1
+  end
+end
+
+if result == nil
+  puts "Please configure your .oscrc file in your home directory to use the public openSUSE.org Build Service"
+  exit(1)
+end
+
 
 # prepare project
 puts "Creating directories: #{destinationdir} #{projectdir}\n" if verbose
