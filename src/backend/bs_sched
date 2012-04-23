@@ -1045,8 +1045,7 @@ sub createdeltajob {
   }
   # create job
   my $prptype = $bconf->{'type'};
-  my ($eok, $bdeps, $crossdeps) = Build::get_build($bconf, [], "deltarpm");
-  # FIXME: resolve and handle $crossdeps
+  my ($eok, $bdeps) = Build::get_build($bconf, [], "deltarpm");
   my @bdeps = @$bdeps;
   if (!$eok) {
     print "        unresolvables:\n";
