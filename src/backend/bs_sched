@@ -425,9 +425,9 @@ sub get_cross_deps {
   local *Build::expand = $ownexpand;
   use warnings 'redefine';
 
-  my ($eok, $edeps) = Build::get_deps($bconf, [], @{$pkgs});
+  my ($eok, @edeps) = Build::get_deps($bconf, [], @{$pkgs});
 
-  return ($eok, $edeps);
+  return ($eok, \@edeps);
 }
 
 
@@ -647,8 +647,8 @@ sub set_building {
     push @bdeps, grep {/^kiwi-.*:/} @{$info->{'dep'} || []};
   }
 
-  my ($eok, $bdeps) = Build::get_build($bconf, $subpacks, @bdeps);
-  @bdeps = @$bdeps;
+  my $eok;
+  ($eok, @bdeps) = Build::get_build($bconf, $subpacks, @bdeps);
   if (!$eok) {
     print "        unresolvables:\n";
     print "          $_\n" for @bdeps;
@@ -1045,8 +1045,7 @@ sub createdeltajob {
   }
   # create job
   my $prptype = $bconf->{'type'};
-  my ($eok, $bdeps) = Build::get_build($bconf, [], "deltarpm");
-  my @bdeps = @$bdeps;
+  my ($eok, @bdeps) = Build::get_build($bconf, [], "deltarpm");
   if (!$eok) {
     print "        unresolvables:\n";
     print "          $_\n" for @bdeps;
@@ -3042,8 +3041,7 @@ sub checkkiwiimage {
   local *Build::expand = $ownexpand;
   use warnings 'redefine';
 
-  my ($eok, $edeps) = Build::get_deps($bconf, [], @deps);
-  my @edeps = @$edeps;
+  my ($eok, @edeps) = Build::get_deps($bconf, [], @deps);
   if (!$eok) {
     print "      - $packid (kiwi-image)\n";
     print "        unresolvables:\n";
@@ -3255,8 +3253,8 @@ sub checkkiwiproduct {
     no warnings 'redefine';
     local *Build::expand = $ownexpand;
     use warnings 'redefine';
-    my ($eok, $kdeps) = Build::get_build($bconf, [], @kdeps);
-    @kdeps = @$kdeps; 
+    my $eok;
+    ($eok, @kdeps) = Build::get_build($bconf, [], @kdeps);
     if (!$eok) {
       print "        unresolvables:\n";
       print "          $_\n" for @kdeps;
@@ -6026,9 +6024,8 @@ while(1) {
       # retry expansion of this one
       my @deps = @{$info->{'dep'} || []};
       my $eok;
-      my $edeps;
-      ($eok, $edeps, $crossdeps) = Build::get_crossdeps($bconf, $subpacks{$info->{'name'}}, @deps);
-      my @edeps = @$edeps;
+      my @edeps;
+      ($eok, $crossdeps, @edeps) = Build::get_crossdeps($bconf, $subpacks{$info->{'name'}}, @deps);
       if (! $eok) {
 	print "      - $packid ($packtype)\n";
 	print "        unresolvables:\n";
