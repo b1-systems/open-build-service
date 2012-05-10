@@ -1425,8 +1425,16 @@ publishprog_done:
       qsystem('rsync', '-a', '--timeout', '60', "$extrepodir_sync/$projid", "$1::$2/$projid") && warn("    trigger rsync failed: $?\n");
     }
   }
-  if ($BSConfig::publishedhook && $BSConfig::publishedhook->{$prp}) {
-    qsystem($BSConfig::publishedhook->{$prp}, $prp, $extrep, @changed) && warn("    $BSConfig::publishedhook failed: $?");
+  # support for using regex in publishedhook
+  my $publish_prp = $prp;
+  for my $key (keys %$BSConfig::publishedhook) {
+    if ($prp =~ /$key/) {
+      $publish_prp = $key;
+      last;
+    }
+  }
+  if ($BSConfig::publishedhook && $BSConfig::publishedhook->{$publish_prp}) {
+    qsystem($BSConfig::publishedhook->{$publish_prp}, $prp, $extrep, @changed) && warn("    $BSConfig::publishedhook->{$publish_prp} failed: $?");
   }
 
   
