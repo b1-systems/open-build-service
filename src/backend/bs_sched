@@ -6258,10 +6258,12 @@ while(1) {
 	@meta = grep {!/\//} @meta;
 	@new_meta = grep {!/\//} @new_meta;
       }
+      # FIXME just temporary until rebuild on hostdependency change works
+      # if host's meta is not removed from @meta we get a rebuild circle
       my @cross_meta;
       if (defined  get_hostsysroot($projid, $repoid, $bconf->{'hostarch'}) ) {
-        @cross_meta = grep { $_ =~ /\@/ } @meta;
-        @meta = grep { $_ !~ /\@/ } @meta;
+        @cross_meta = grep { $_ =~ /::/ } @meta;
+        @meta = grep { $_ !~ /::/ } @meta;
       }
       if (@meta == @new_meta && join('\n', @meta) eq join('\n', @new_meta)) {
 	# print "      - $packid ($packtype)\n";
