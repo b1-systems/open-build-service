@@ -35,8 +35,10 @@ LDAP_START_TLS = :off
 # Authentication with Windows 2003 AD requires
 LDAP_REFERRALS = :off
 
-# Max number of times to attempt to contact the LDAP servers
+# Max number of times to attempt to contact the LDAP servers (Test via ICMP).
 LDAP_MAX_ATTEMPTS = 10
+# Enable availability tests (ping/ICMP) of LDAP Servers
+LDAP_PING_TEST = :on
 
 # OVERRIDE with your company's ldap search base for the users who will use OBS
 LDAP_SEARCH_BASE = "OU=Organizational Unit,DC=Domain Component"
