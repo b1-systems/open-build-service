@@ -887,7 +887,7 @@ module UserMixins
               while !ping and count < max_ldap_attempts
                 count += 1
                 server = ldap_servers[rand(ldap_servers.length)]
-                if not defined?( LDAP_SERVER_PING_TEST ) || (defined?( LDAP_SERVER_PING_TEST ) && LDAP_SERVER_PING_TEST == :on)
+                if not defined?( LDAP_PING_TEST ) || (defined?( LDAP_PING_TEST ) && LDAP_PING_TEST == :on)
                   # this is the default behaviour for 2.3 and earlier
 
                   # Ruby only contains TCP echo ping.  Use system ping for real ICMP ping.
