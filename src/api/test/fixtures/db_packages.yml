@@ -386,6 +386,7 @@ db_packages_253895098:
   url: ""
   db_project_id: "2042"
   id: "253895098"
+  bcntsynctag: pack1
   update_counter: "1"
   description: ""
   develpackage_id: 

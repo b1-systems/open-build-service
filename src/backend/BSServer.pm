@@ -283,7 +283,13 @@ sub server {
   }
   if ($conf->{'dispatch'}) {
     eval {
-      my $req = readrequest();
+      my $req;
+      do {
+        local $SIG{'ALRM'} = sub {POSIX::_exit(0);};
+        alarm(60);	# should be enough to read the request
+        $req = readrequest();
+        alarm(0);
+      };
       $conf->{'dispatch'}->($conf, $req);
     };
     reply_error($conf, $@) if $@;
@@ -663,7 +669,7 @@ sub reply_receiver {
   $replying = 2 if $chunked;
   while(1) {
     my $data = BSHTTP::read_data($hdr, 8192);
-    last unless $data;
+    last unless defined($data) && $data ne '';
     $data = sprintf("%X\r\n", length($data)).$data."\r\n" if $chunked;
     swrite($data);
   }

@@ -918,7 +918,6 @@ sub addrev {
       }
     }
   }
-
   if ($packid eq '_pattern' && ! -e "$projectsdir/$projid.pkg/$packid.xml") {
     # upgrade pseudo _pattern package to real package
     my $pack = {
@@ -2150,7 +2149,12 @@ sub getprojectservices {
   }
 
   # find further projects via package link
-  my $packagerev = getrev($projid, $packid, $cgi->{'rev'});
+  my $packagerev;
+  eval {
+     $packagerev = getrev($projid, $packid, $cgi->{'rev'});
+  };
+  return ($services, $BSXML::services) unless $packagerev;
+
   my $packagefiles = lsrev($packagerev);
   my $l;
   $l = repreadxml($packagerev, '_link', $packagefiles->{'_link'}, $BSXML::link, 1) if $packagefiles->{'_link'};
@@ -2653,8 +2657,9 @@ sub getprojpack {
 	      if ($type eq 'kiwi' && $d->{'imagetype'}[0] ne 'product') {
 	        $rinfo->{'error'} = 'excluded' if defined($BSConfig::localarch) && $arch eq 'local';
 	      }
-	      $rinfo->{'error'} = 'excluded' if $d->{'exclarch'} && !grep {$_ eq $arch} @{$d->{'exclarch'}};
-	      $rinfo->{'error'} = 'excluded' if $d->{'badarch'} && grep {$_ eq $arch} @{$d->{'badarch'}};
+	      my $myarch = $conf->{'target'} ? (split('-', $conf->{'target'}))[0] : $arch;
+	      $rinfo->{'error'} = 'excluded' if $d->{'exclarch'} && !grep {$_ eq $myarch} @{$d->{'exclarch'}};
+	      $rinfo->{'error'} = 'excluded' if $d->{'badarch'} && grep {$_ eq $myarch} @{$d->{'badarch'}};
 	      for ('imagetype', 'path', 'extrasource') {
 	        $rinfo->{$_} = $d->{$_} if exists $d->{$_};
 	      }
@@ -4459,7 +4464,9 @@ sub copyproject {
 	'project' => $projid,
 	'name' => $packid,
       };
-      for (qw{title description sourceaccess}) {
+      # everything except person, group, devel and lock
+      for (keys %$opack) {
+        next if $_ eq 'person' || $_ eq 'group' || $_ eq 'devel' || $_ eq 'lock';
         $pack->{$_} = $opack->{$_} if defined $opack->{$_};
       }
       mkdir_p($uploaddir);
@@ -4744,6 +4751,12 @@ sub sourcebranch {
   my $l = {};
   $l->{'project'} = $oprojid if $oprojid ne $projid;
   $l->{'package'} = $opackid if $opackid ne $packid;
+  # a missing package entry is bad if the project has sourceaccess
+  # disabled, so check if that's the case
+  eval {
+    checksourceaccess($oprojid, $opackid) if $opackid eq $packid && $oprojid ne $projid;
+  };
+  $l->{'package'} = $opackid if $@;
   $l->{'missingok'} = "true" if defined $cgi->{'missingok'} && $orev->{'srcmd5'} eq $emptysrcmd5;
   $l->{'rev'} = $cgi->{'orev'} if defined $cgi->{'orev'};
   $l->{'baserev'} = $orev->{'srcmd5'};
@@ -6431,11 +6444,12 @@ sub worker_lastevents {
       push @events, $ev;
     }
   }
-  # return a sync reply every 100 events for two reasons
+  # return a sync reply every 100 events / 5 minutes for two reasons
   # - get rid of old peers
   # - survive history truncation
   $cgi->{'start_orig'} ||= $cgi->{'start'};
-  if ($BSStdServer::isajax && !@events && $nextno < $cgi->{'start_orig'} + 100) {
+  $cgi->{'req_time'} ||= time();
+  if ($BSStdServer::isajax && !@events && $nextno < $cgi->{'start_orig'} + 100 && $s[9] < $cgi->{'req_time'} + 300) {
     # small hack: update cgi to the next event number
     $cgi->{'start'} = $nextno if $cgi->{'start'} < $nextno;
     return undef;

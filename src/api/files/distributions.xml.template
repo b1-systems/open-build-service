@@ -8,18 +8,18 @@
   <icon url="https://static.opensuse.org/distributions/logos/opensuse.png"/>
   <link>http://www.opensuse.org/</link>
  </distribution>
- <distribution vendor="openSUSE" version="12.1" id="opensuse-12.1">
-  <name>openSUSE 12.1</name>
-  <project>openSUSE.org:openSUSE:12.1</project>
-  <reponame>openSUSE_12.1</reponame>
+ <distribution vendor="openSUSE" version="12.2" id="opensuse-12.2">
+  <name>openSUSE 12.2</name>
+  <project>openSUSE.org:openSUSE:12.2</project>
+  <reponame>openSUSE_12.2</reponame>
   <repository>standard</repository>
   <icon url="https://static.opensuse.org/distributions/logos/opensuse.png"/>
   <link>http://www.opensuse.org/</link>
  </distribution>
- <distribution vendor="openSUSE" version="11.4" id="opensuse-11.4">
-  <name>openSUSE 11.4</name>
-  <project>openSUSE.org:openSUSE:11.4</project>
-  <reponame>openSUSE_11.4</reponame>
+ <distribution vendor="openSUSE" version="12.1" id="opensuse-12.1">
+  <name>openSUSE 12.1</name>
+  <project>openSUSE.org:openSUSE:12.1</project>
+  <reponame>openSUSE_12.1</reponame>
   <repository>standard</repository>
   <icon url="https://static.opensuse.org/distributions/logos/opensuse.png"/>
   <link>http://www.opensuse.org/</link>
@@ -88,26 +88,18 @@
   <icon url="https://static.opensuse.org/distributions/logos/debian.png"/>
   <link>http://www.debian.org/</link>
  </distribution>
- <distribution vendor="Debian" version="5.0" id="debian-5.0">
-  <name>Debian 5.0</name>
-  <project>openSUSE.org:Debian:5.0</project>
-  <reponame>Debian_5.0</reponame>
+ <distribution vendor="Fedora" version="17" id="fedora-15">
+  <name>Fedora 17</name>
+  <project>openSUSE.org:Fedora:17</project>
+  <reponame>Fedora_17</reponame>
   <repository>standard</repository>
-  <icon url="https://static.opensuse.org/distributions/logos/debian.png"/>
-  <link>http://www.debian.org/</link>
+  <icon url="https://static.opensuse.org/distributions/logos/fedora.png"/>
+  <link>http://fedoraproject.org/</link>
  </distribution>
  <distribution vendor="Fedora" version="16" id="fedora-15">
   <name>Fedora 16</name>
   <project>openSUSE.org:Fedora:16</project>
   <reponame>Fedora_16</reponame>
-  <repository>standard</repository>
-  <icon url="https://static.opensuse.org/distributions/logos/fedora.png"/>
-  <link>http://fedoraproject.org/</link>
- </distribution>
- <distribution vendor="Fedora" version="15" id="fedora-15">
-  <name>Fedora 15</name>
-  <project>openSUSE.org:Fedora:15</project>
-  <reponame>Fedora_15</reponame>
   <repository>standard</repository>
   <icon url="https://static.opensuse.org/distributions/logos/fedora.png"/>
   <link>http://fedoraproject.org/</link>
@@ -192,7 +184,15 @@
   <icon url="https://static.opensuse.org/distributions/logos/mandriva.png"/>
   <link>http://www.mandriva.com/</link>
  </distribution>
- <distribution vendor="Ubuntu" version="11.04" id="ubuntu-11.10">
+ <distribution vendor="Ubuntu" version="12.04" id="ubuntu-12.04">
+  <name>Ubuntu 12.04</name>
+  <project>openSUSE.org:Ubuntu:12.04</project>
+  <reponame>xUbuntu_12.04</reponame>
+  <repository>standard</repository>
+  <icon url="https://static.opensuse.org/distributions/logos/ubuntu.png"/>
+  <link>http://www.ubuntu.com/</link>
+ </distribution>
+ <distribution vendor="Ubuntu" version="11.10" id="ubuntu-11.10">
   <name>Ubuntu 11.10</name>
   <project>openSUSE.org:Ubuntu:11.10</project>
   <reponame>xUbuntu_11.10</reponame>
@@ -204,14 +204,6 @@
   <name>Ubuntu 11.04</name>
   <project>openSUSE.org:Ubuntu:11.04</project>
   <reponame>xUbuntu_11.04</reponame>
-  <repository>standard</repository>
-  <icon url="https://static.opensuse.org/distributions/logos/ubuntu.png"/>
-  <link>http://www.ubuntu.com/</link>
- </distribution>
- <distribution vendor="Ubuntu" version="10.10" id="ubuntu-10.10">
-  <name>Ubuntu 10.10</name>
-  <project>openSUSE.org:Ubuntu:10.10</project>
-  <reponame>xUbuntu_10.10</reponame>
   <repository>standard</repository>
   <icon url="https://static.opensuse.org/distributions/logos/ubuntu.png"/>
   <link>http://www.ubuntu.com/</link>
