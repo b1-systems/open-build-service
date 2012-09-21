@@ -6056,7 +6056,7 @@ while(1) {
     }
 
     # packtype is now spec/deb
-    
+
     my $crossdeps;
     my $hostdeps;
     if ($experrors{$packid}) {
@@ -6288,9 +6288,9 @@ while(1) {
       }
       for my $bpack (@{$pdeps{$packid}}) {
 	my $pkg = $dep2pkg{$bpack};
-        my $path = $pool->pkg2fullpath($pkg, $myarch);
-        if ($depislocal{$bpack} && $path) {
-          my $meta = $dep2meta->{$bpack};
+	my $path = $pool->pkg2fullpath($pkg, $myarch);
+	if ($depislocal{$bpack} && $path) {
+	  my $meta = $dep2meta->{$bpack};
 	  if (!$meta) {
 	    my @m;
 	    my $mf = substr("$reporoot/$path", 0, -4);
