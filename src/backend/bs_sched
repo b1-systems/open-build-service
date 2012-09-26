@@ -6078,14 +6078,15 @@ while(1) {
 
       my ($hostsysroot, @hostdeps);
       $hostsysroot = get_hostsysroot($projid, $repoid, $bconf->{'hostarch'});
-      @hostdeps = Build::get_required($hostsysroot->{'bconf'});
-      push @hostdeps, Build::get_preinstalls($hostsysroot->{'bconf'});
-      my @nosupports = Build::get_nosupports($bconf, $hostsysroot->{'label'});
-      my %nosupports = map { $_=> $_} @nosupports;
-      push @hostdeps, grep{!$nosupports{'!'.$_} }  Build::get_supports($hostsysroot->{'bconf'});
-
-      push @hostdeps, @{$crossdeps->{$hostsysroot->{'label'}} || []};
       if ($hostsysroot) {
+        @hostdeps = Build::get_required($hostsysroot->{'bconf'});
+        push @hostdeps, Build::get_preinstalls($hostsysroot->{'bconf'});
+        my @nosupports = Build::get_nosupports($bconf, $hostsysroot->{'label'});
+        my %nosupports = map { $_=> $_} @nosupports;
+        push @hostdeps, grep{!$nosupports{'!'.$_} }  Build::get_supports($hostsysroot->{'bconf'});
+
+        push @hostdeps, @{$crossdeps->{$hostsysroot->{'label'}} || []};
+
         my ($eok, $hostdeps) = get_cross_deps($hostsysroot->{'arch'},
                                               $hostsysroot->{'bconf'},
                                               $hostsysroot->{'project'},
