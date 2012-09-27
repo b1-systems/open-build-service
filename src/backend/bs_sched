@@ -6261,30 +6261,8 @@ while(1) {
         for my $bpack (@{$cross_pdeps{$packid}}) {
           my $pkg = $crossdep2pkg->{$bpack};
           my $path = $crosspool->pkg2fullpath($pkg, $myarch);
-#  	  if ($depislocal{$bpack} && $path) {
-#TODO schneemann needs to be implemented
-#print __LINE__, " depislocal for $bpack\n";
-#  	    my $meta = $dep2meta->{$bpack};#TODO schneemann: crossdep2meta needed?
-#	    if (!$meta) {
-#	      my @m;
-#	      my $mf = substr("$reporoot/$path", 0, -4);
-#	      #print "        reading meta for $r->{'path'}\n";
-#	      if (open(F, '<', "$mf.meta") || open(F, '<', "$mf-MD5SUMS.meta")) {
-#	        @m = <F>;
-#	        close F;
-#	        chomp @m;
-#	        s/  /  $bpack\// for @m;
-#	        $m[0] =~ s/  .*/  $bpack/ if @m;
-#	      }
-#	      @m = ($crosspool->pkg2pkgid($pkg)."  $bpack") unless @m;
-#	      $meta = \@m;
-#	      $dep2meta->{$bpack} = $meta;
-#	    }
-#	    push @new_meta, @$meta;
-#	  } else {
-	    my $pkgid = $crosspool->pkg2pkgid($pkg);
-	    push @new_meta, "$pkgid  $bpack\::$hostsysroot->{'project'}::$hostsysroot->{'repository'}::$hostsysroot->{'arch'}";
-#	  }
+	  my $pkgid = $crosspool->pkg2pkgid($pkg);
+	  push @new_meta, "$pkgid  $bpack\::$hostsysroot->{'project'}::$hostsysroot->{'repository'}::$hostsysroot->{'arch'}";
         }
       }
       for my $bpack (@{$pdeps{$packid}}) {
