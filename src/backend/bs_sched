@@ -394,8 +394,6 @@ sub create_cross_pool {
   my $prp = "$projid/$repoid";
   my @aprps = map {"$_->{'project'}/$_->{'repository'}"} @{$path || []};
 
-  print "scanning cross for $projid/$repoid/$arch ";
-
   my $c;
   $c .= "$_\n" for (@{$pkgs});
 
@@ -589,7 +587,7 @@ sub get_hostsysroot {
   $hostsysroot = (grep { $_->{'name'} eq $repoid} @{$projpacks->{$projid}->{'repository'} || []})[0]->{'hostsystem'} || "";
   return undef if !$hostsysroot;
   $hostsysroot->{'arch'} = $hostarch;
-  my $repos = $projpacks->{$hostsysroot->{'project'}}->{'repository'} || [];
+  my $repos = $projpacks->{$hostsysroot->{'project'}}->{'repository'} || []; 
   for my $repo (@$repos) {
     next unless grep {$_ eq $hostsysroot->{'arch'}} @{$repo->{'arch'} || []};
     @{$hostsysroot->{'paths'}} = expandsearchpath($hostsysroot->{'project'},$repo, $hostsysroot->{'arch'});
@@ -614,7 +612,7 @@ sub get_targetsysroot {
   $ts->{'label'} = "targetsystem";
   $ts->{'project'} = $projid;
   $ts->{'repository'} = $repoid;
-  $ts->{'arch'} = $arch;
+  $ts->{'arch'} = $arch; 
   $ts->{'path'} = $bconf->{'targetsysroot'} || "/opt/tcc/targetsysroot";
   $ts->{'paths'} = $searchpath; #FIXME set to [] to use default paths? this is just a copy of them..
 
@@ -752,9 +750,9 @@ sub set_building {
     @pdeps = Build::get_preinstalls($hostsysroot->{'bconf'});
     @vmdeps = Build::get_vminstalls($hostsysroot->{'bconf'});
     @supports = Build::get_supports($hostsysroot->{'bconf'});
-    my @nosupports = Build::get_nosupports($bconf, $hostsysroot->{'label'});
+    my @nosupports = Build::get_nosupports($bconf, $hostsysroot->{'label'}); 
     my %nosupports = map { $_=> $_} @nosupports;
-    @supports = grep{!$nosupports{'!'.$_} } @supports;
+    @supports = grep{!$nosupports{'!'.$_} } @supports; 
     %runscripts = map {$_ => 1} Build::get_runscripts($hostsysroot->{'bconf'});
 
   } else {
@@ -5692,16 +5690,9 @@ while(1) {
 
   my %pdeps;
   my %cross_pdeps;
-  my $crossdep2pkg;
-  my $crossdep2src;
-  my $crossdeps;
-  my $hostdeps;
   my %pkg2src;
   my %pkgdisabled;
   my %havepatchinfos;
-  my $hostsysroot = get_hostsysroot($projid, $repoid, $bconf->{'hostarch'});
-  my $crosspool;
-
   for my $packid (@packs) {
     my $pdata = $packs->{$packid};
 
@@ -5744,44 +5735,12 @@ while(1) {
       $pdeps{$packid} = \@deps;
       next;
     }
-    my ($eok, $crossdeps, @edeps) = Build::get_crossdeps($bconf, $subpacks{$info->{'name'}}, @deps);
+    my ($eok, @edeps) = Build::get_deps($bconf, $subpacks{$info->{'name'}}, @deps);
     if (! $eok) {
       @edeps = @deps;
       $experrors{$packid} = 1;
     }
     $pdeps{$packid} = \@edeps;
-
-    # get cross pdeps/
-    if ($hostsysroot) {
-      my @hostdeps = Build::get_required($hostsysroot->{'bconf'});
-      push @hostdeps, Build::get_preinstalls($hostsysroot->{'bconf'});
-      my @nosupports = Build::get_nosupports($bconf, $hostsysroot->{'label'});
-      my %nosupports = map { $_=> $_} @nosupports;
-      push @hostdeps, grep{!$nosupports{'!'.$_} }  Build::get_supports($hostsysroot->{'bconf'});
-      push @hostdeps, @{$crossdeps->{$hostsysroot->{'label'}} || []};
-
-      my ($eok, $hostdeps) = get_cross_deps($hostsysroot->{'arch'},
-                                            $hostsysroot->{'bconf'},
-                                            $hostsysroot->{'project'},
-                                            $hostsysroot->{'repository'},
-                                            $hostsysroot->{'paths'}, \@hostdeps);
-      if (! $eok) {
-        $experrors{$packid} = 1;
-      }
-      @{$crossdeps->{$hostsysroot->{'label'}}} = @$hostdeps;
-      for my $dep (@$hostdeps) {
-        next if grep{ $dep eq $_} @{$subpacks{$packid} || [] };
-        push @{$cross_pdeps{$packid}}, $dep;
-      }
-      $crosspool = create_cross_pool($hostsysroot->{'arch'},
-                                          $bconf,
-                                          $hostsysroot->{'project'},
-                                          $hostsysroot->{'repository'},
-                                          $hostsysroot->{'paths'},
-                                          $cross_pdeps{$packid}
-                                      );
-      ($crossdep2pkg, $crossdep2src) = get_cross_dep2($crosspool);
-    }
   }
 
   # sort packages by pdeps
@@ -6141,6 +6100,12 @@ while(1) {
           $packerror{$packid} = join(', ', @{$hostdeps});
           next;
         }
+        @{$crossdeps->{$hostsysroot->{'label'}}} = @$hostdeps;
+        for my $dep (@$hostdeps) {
+          next if grep{ $dep eq $_} @{$subpacks{$info->{'name'}} || [] };
+          push @{$cross_pdeps{$packid}}, $dep;
+        }
+        undef $hostsysroot; #not needed anymore
       }
     }
 
@@ -6264,7 +6229,18 @@ while(1) {
       }
       my $check = substr($mylastcheck, 32, 32);
       $check .= $repo->{'rebuild'} || 'transitive';
+      my $hostsysroot = get_hostsysroot($projid, $repoid, $bconf->{'hostarch'});
+      my ($crosspool, $crossdep2pkg, $crossdep2src);
       if ($hostsysroot) {
+        $crosspool = create_cross_pool($hostsysroot->{'arch'}, 
+                                          $bconf, 
+                                          $hostsysroot->{'project'}, 
+                                          $hostsysroot->{'repository'}, 
+                                          $hostsysroot->{'paths'}, 
+                                          $cross_pdeps{$packid} 
+                                      );
+        #(%crossdep2pkg) = get_cross_dep2($crosspool);
+        ($crossdep2pkg, $crossdep2src) = get_cross_dep2($crosspool);
         $check .= $crosspool->pkg2pkgid($crossdep2pkg->{$_}) for sort @{$cross_pdeps{$packid}} ;
       } else {
         $check .= $pool->pkg2pkgid($dep2pkg{$_}) for sort @{$pdeps{$packid}};
@@ -6285,8 +6261,30 @@ while(1) {
         for my $bpack (@{$cross_pdeps{$packid}}) {
           my $pkg = $crossdep2pkg->{$bpack};
           my $path = $crosspool->pkg2fullpath($pkg, $myarch);
-	  my $pkgid = $crosspool->pkg2pkgid($pkg);
-	  push @new_meta, "$pkgid  $bpack\::$hostsysroot->{'project'}::$hostsysroot->{'repository'}::$hostsysroot->{'arch'}";
+#  	  if ($depislocal{$bpack} && $path) {
+#TODO schneemann needs to be implemented
+#print __LINE__, " depislocal for $bpack\n";
+#  	    my $meta = $dep2meta->{$bpack};#TODO schneemann: crossdep2meta needed?
+#	    if (!$meta) {
+#	      my @m;
+#	      my $mf = substr("$reporoot/$path", 0, -4);
+#	      #print "        reading meta for $r->{'path'}\n";
+#	      if (open(F, '<', "$mf.meta") || open(F, '<', "$mf-MD5SUMS.meta")) {
+#	        @m = <F>;
+#	        close F;
+#	        chomp @m;
+#	        s/  /  $bpack\// for @m;
+#	        $m[0] =~ s/  .*/  $bpack/ if @m;
+#	      }
+#	      @m = ($crosspool->pkg2pkgid($pkg)."  $bpack") unless @m;
+#	      $meta = \@m;
+#	      $dep2meta->{$bpack} = $meta;
+#	    }
+#	    push @new_meta, @$meta;
+#	  } else {
+	    my $pkgid = $crosspool->pkg2pkgid($pkg);
+	    push @new_meta, "$pkgid  $bpack\::$hostsysroot->{'project'}::$hostsysroot->{'repository'}::$hostsysroot->{'arch'}";
+#	  }
         }
       }
       for my $bpack (@{$pdeps{$packid}}) {
@@ -6335,7 +6333,31 @@ while(1) {
 	@meta = grep {!/\//} @meta;
 	@new_meta = grep {!/\//} @new_meta;
       }
+      # FIXME just temporary until rebuild on hostdependency change works
+      # if host's meta is not removed from @meta we get a rebuild circle
+      my @cross_meta;
+#      if (defined  get_hostsysroot($projid, $repoid, $bconf->{'hostarch'}) ) {
+#        @cross_meta = grep { $_ =~ /::/ } @meta;
+#        @meta = grep { $_ !~ /::/ } @meta;
+#      }
+#FIXME sort new_meta and meta the same way...
+if ($hostsysroot) {
+  my %meta;
+  my %new_meta;
 
+#  for my $line (@meta) {
+#    my $pkg = split(/\s+/, $line);
+#    $meta{$pkg} = $line;
+#  }
+#  for my $line (@new_meta) {
+#    my $pkg = split(/\s+/, $line);
+#    $new_meta{$pkg} = $line;
+#  }
+#  @new_meta = ();
+#  for my $pkg (keys %meta) {
+#    push @new_meta, $new_meta{$pkg} if defined $new_meta{$pkg};
+#  }
+}
       if (@meta == @new_meta && join('\n', sort @meta) eq join('\n', sort @new_meta)) {
 	# print "      - $packid ($packtype)\n";
 	# print "        nothing changed (looked harder)\n";
@@ -6354,7 +6376,6 @@ while(1) {
       print "        $_\n" for @diff;
       print "        meta change, start build\n";
       $reason = { 'explain' => 'meta change', 'packagechange' => sortedmd5toreason(@diff) };
-die;
     }
 relsynccheck:
     if (!$reason) {
