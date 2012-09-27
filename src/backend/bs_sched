@@ -6291,6 +6291,8 @@ while(1) {
 	  push @new_meta, "$pkgid  $bpack";
 	}
       }
+      # remove indirect dependencies from meta
+      @new_meta = grep{ $_ !~ /\// } @new_meta if ($hostsysroot);
       @new_meta = BSSolv::gen_meta($subpacks{$info->{'name'}} || [], @new_meta);
       unshift @new_meta, ($pdata->{'verifymd5'} || $pdata->{'srcmd5'})."  $packid";
       if (Digest::MD5::md5_hex(join("\n", @new_meta)) eq substr($mylastcheck, 32, 32)) {
