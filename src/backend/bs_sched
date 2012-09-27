@@ -5772,7 +5772,6 @@ while(1) {
       for my $dep (@$hostdeps) {
         next if grep{ $dep eq $_} @{$subpacks{$packid} || [] };
         push @{$cross_pdeps{$packid}}, $dep;
-        print "yeah" if $dep =~ /zlib-devel/;
       }
       $crosspool = create_cross_pool($hostsysroot->{'arch'},
                                           $bconf,
