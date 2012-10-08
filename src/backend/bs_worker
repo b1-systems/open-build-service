@@ -1533,6 +1533,9 @@ sub fetch_and_prepare_rpmlist {
   }
 
 ####
+  if ($crossbuild) {
+    @meta = grep{ $_ !~ /\//} @meta;
+  }
 
   return { rpmlist => \@rpmlist, meta => \@meta };
 }
