@@ -581,6 +581,23 @@ sub add_crossmarker {
   BSUtil::touch($marker);
 }
 
+
+sub do_crossbuild {
+  my ($packid, $projid, $repoid, $hostarch, @nocrossbuild) = @_;
+  my $hostsysroot = get_hostsysroot($projid, $repoid, $hostarch);
+  if ($hostsysroot) {
+    # look at tcc_blacklist
+    if ( grep { /$packid/i } @nocrossbuild ) {
+      print "no crossbuild for $projid/$packid as mentioned in nocrossbuild in prjconf!\n";
+      return 0;
+    }
+    return 1;
+  } else {
+    #
+    return 0;
+  }
+}
+
 sub get_hostsysroot {
   my ($projid, $repoid, $hostarch) = @_;
   my $hostsysroot;
@@ -735,13 +752,13 @@ sub set_building {
   $reason->{'time'} = $now;
   writexml("$reporoot/$prp/$myarch/$packid/.reason", "$reporoot/$prp/$myarch/$packid/reason", $reason, $BSXML::buildreason);
 
-  my $hostsysroot = get_hostsysroot($projid, $repoid, $bconf->{'hostarch'});
-  my (%crossdeps, @hostdeps);
+  my ($hostsysroot, %crossdeps, @hostdeps);
   my $crossbuild = 0;
   my (@pdeps, @vmdeps, %runscripts, @supports);
-  $crossbuild = 1 if defined($hostsysroot);
+  $crossbuild = 1 if do_crossbuild($packid, $projid, $repoid, $bconf->{'hostarch'}, Build::get_nocrossbuild($bconf));
   my ($targetsysroot);
   if ($crossbuild) {
+    $hostsysroot = get_hostsysroot($projid, $repoid, $bconf->{'hostarch'});
     %crossdeps = %$crossdeps;
     @hostdeps = @{$crossdeps->{$hostsysroot->{'label'}}};
 
@@ -6077,8 +6094,8 @@ while(1) {
       $pdeps{$packid} = \@edeps;
 
       my ($hostsysroot, @hostdeps);
-      $hostsysroot = get_hostsysroot($projid, $repoid, $bconf->{'hostarch'});
-      if ($hostsysroot) {
+      if ( do_crossbuild($packid, $projid, $repoid, $bconf->{'hostarch'}, Build::get_nocrossbuild($bconf)) ) {
+        $hostsysroot = get_hostsysroot($projid, $repoid, $bconf->{'hostarch'});
         @hostdeps = Build::get_required($hostsysroot->{'bconf'});
         push @hostdeps, Build::get_preinstalls($hostsysroot->{'bconf'});
         my @nosupports = Build::get_nosupports($bconf, $hostsysroot->{'label'});
@@ -6229,9 +6246,9 @@ while(1) {
       }
       my $check = substr($mylastcheck, 32, 32);
       $check .= $repo->{'rebuild'} || 'transitive';
-      my $hostsysroot = get_hostsysroot($projid, $repoid, $bconf->{'hostarch'});
-      my ($crosspool, $crossdep2pkg, $crossdep2src);
-      if ($hostsysroot) {
+      my ($crosspool, $crossdep2pkg, $crossdep2src, $hostsysroot);
+      if ( do_crossbuild($packid, $projid, $repoid, $bconf->{'hostarch'}, Build::get_nocrossbuild($bconf)) ) {
+        $hostsysroot = get_hostsysroot($projid, $repoid, $bconf->{'hostarch'});
         $crosspool = create_cross_pool($hostsysroot->{'arch'}, 
                                           $bconf, 
                                           $hostsysroot->{'project'}, 

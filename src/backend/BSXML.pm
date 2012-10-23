@@ -468,6 +468,7 @@ our $buildinfo = [
 	    'server',
      ]],
      ]],                # used to set additional sysroots to get set up
+	'nocrossbuild',
 	'error',
 	'srcmd5',
 	'verifymd5',
