@@ -5707,6 +5707,8 @@ while(1) {
 
   my %pdeps;
   my %cross_pdeps;
+  my $crossdeps;
+  my $hostdeps;
   my %pkg2src;
   my %pkgdisabled;
   my %havepatchinfos;
@@ -5753,6 +5755,41 @@ while(1) {
       next;
     }
     my ($eok, @edeps) = Build::get_deps($bconf, $subpacks{$info->{'name'}}, @deps);
+    if ( do_crossbuild($packid, $projid, $repoid, $bconf->{'hostarch'}, Build::get_nocrossbuild($bconf)) ) {
+      ($eok, $crossdeps, @edeps) = Build::get_crossdeps($bconf, $subpacks{$info->{'name'}}, @deps);
+      if (! $eok) {
+        @edeps = @deps;
+        $experrors{$packid} = 1;
+      }
+
+      my ($hostsysroot, @hostdeps);
+      $hostsysroot = get_hostsysroot($projid, $repoid, $bconf->{'hostarch'});
+      @hostdeps = Build::get_required($hostsysroot->{'bconf'});
+      push @hostdeps, Build::get_preinstalls($hostsysroot->{'bconf'});
+      my @nosupports = Build::get_nosupports($bconf, $hostsysroot->{'label'});
+      my %nosupports = map { $_=> $_} @nosupports;
+      push @hostdeps, grep{!$nosupports{'!'.$_} }  Build::get_supports($hostsysroot->{'bconf'});
+
+      push @hostdeps, @{$crossdeps->{$hostsysroot->{'label'}} || []};
+
+      my ($eok, $hostdeps) = get_cross_deps($hostsysroot->{'arch'},
+                                            $hostsysroot->{'bconf'},
+                                            $hostsysroot->{'project'},
+                                            $hostsysroot->{'repository'},
+                                            $hostsysroot->{'paths'}, \@hostdeps);
+
+      if (! $eok) {
+        @edeps = @deps;
+        $experrors{$packid} = 1;
+      }
+      @{$crossdeps->{$hostsysroot->{'label'}}} = @$hostdeps;
+      for my $dep (@$hostdeps) {
+        next if grep{ $dep eq $_} @{$subpacks{$info->{'name'}} || [] };
+        push @{$cross_pdeps{$packid}}, $dep;
+      }
+      undef $hostsysroot; #not needed anymore
+    }
+
     if (! $eok) {
       @edeps = @deps;
       $experrors{$packid} = 1;
@@ -6074,8 +6111,6 @@ while(1) {
 
     # packtype is now spec/deb
 
-    my $crossdeps;
-    my $hostdeps;
     if ($experrors{$packid}) {
       # retry expansion of this one
       my @deps = @{$info->{'dep'} || []};
