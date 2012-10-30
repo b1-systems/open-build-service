@@ -5707,12 +5707,22 @@ while(1) {
 
   my %pdeps;
   my %cross_pdeps;
-  my $crossdeps;
+  my %crossdeps;
   my $hostdeps;
   my %pkg2src;
   my %pkgdisabled;
   my %havepatchinfos;
   for my $packid (@packs) {
+   my $hostsysroot;
+    my $do_crossbuild = do_crossbuild($packid,
+                                      $projid,
+                                      $repoid,
+                                      $bconf->{'hostarch'},
+                                      Build::get_nocrossbuild($bconf));
+    if ( $do_crossbuild ) {
+      $hostsysroot = get_hostsysroot($projid, $repoid, $bconf->{'hostarch'});
+
+    }
     my $pdata = $packs->{$packid};
 
     $havepatchinfos{$packid} = 1 if $pdata->{'patchinfo'};
@@ -5755,15 +5765,15 @@ while(1) {
       next;
     }
     my ($eok, @edeps) = Build::get_deps($bconf, $subpacks{$info->{'name'}}, @deps);
-    if ( do_crossbuild($packid, $projid, $repoid, $bconf->{'hostarch'}, Build::get_nocrossbuild($bconf)) ) {
+    if ( $do_crossbuild ) {
+      my $crossdeps;
       ($eok, $crossdeps, @edeps) = Build::get_crossdeps($bconf, $subpacks{$info->{'name'}}, @deps);
       if (! $eok) {
         @edeps = @deps;
         $experrors{$packid} = 1;
       }
 
-      my ($hostsysroot, @hostdeps);
-      $hostsysroot = get_hostsysroot($projid, $repoid, $bconf->{'hostarch'});
+      my (@hostdeps);
       @hostdeps = Build::get_required($hostsysroot->{'bconf'});
       push @hostdeps, Build::get_preinstalls($hostsysroot->{'bconf'});
       my @nosupports = Build::get_nosupports($bconf, $hostsysroot->{'label'});
@@ -5787,8 +5797,10 @@ while(1) {
         next if grep{ $dep eq $_} @{$subpacks{$info->{'name'}} || [] };
         push @{$cross_pdeps{$packid}}, $dep;
       }
-      undef $hostsysroot; #not needed anymore
+      $crossdeps{$packid} = $crossdeps;
+
     }
+
 
     if (! $eok) {
       @edeps = @deps;
@@ -6116,6 +6128,7 @@ while(1) {
       my @deps = @{$info->{'dep'} || []};
       my $eok;
       my @edeps;
+      my $crossdeps;
       ($eok, $crossdeps, @edeps) = Build::get_crossdeps($bconf, $subpacks{$info->{'name'}}, @deps);
       if (! $eok) {
 	print "      - $packid ($packtype)\n";
@@ -6129,7 +6142,13 @@ while(1) {
       $pdeps{$packid} = \@edeps;
 
       my ($hostsysroot, @hostdeps);
-      if ( do_crossbuild($packid, $projid, $repoid, $bconf->{'hostarch'}, Build::get_nocrossbuild($bconf)) ) {
+      my $do_crossbuild = do_crossbuild($packid,
+                                        $projid,
+                                        $repoid,
+                                        $bconf->{'hostarch'},
+                                        Build::get_nocrossbuild($bconf));
+
+      if ( $do_crossbuild ) {
         $hostsysroot = get_hostsysroot($projid, $repoid, $bconf->{'hostarch'});
         @hostdeps = Build::get_required($hostsysroot->{'bconf'});
         push @hostdeps, Build::get_preinstalls($hostsysroot->{'bconf'});
@@ -6157,6 +6176,7 @@ while(1) {
           next if grep{ $dep eq $_} @{$subpacks{$info->{'name'}} || [] };
           push @{$cross_pdeps{$packid}}, $dep;
         }
+        $crossdeps{$packid} = $crossdeps;
         undef $hostsysroot; #not needed anymore
       }
     }
@@ -6282,7 +6302,13 @@ while(1) {
       my $check = substr($mylastcheck, 32, 32);
       $check .= $repo->{'rebuild'} || 'transitive';
       my ($crosspool, $crossdep2pkg, $crossdep2src, $hostsysroot);
-      if ( do_crossbuild($packid, $projid, $repoid, $bconf->{'hostarch'}, Build::get_nocrossbuild($bconf)) ) {
+      my $do_crossbuild = do_crossbuild($packid,
+                                        $projid,
+                                        $repoid,
+                                        $bconf->{'hostarch'},
+                                        Build::get_nocrossbuild($bconf));
+
+      if ( $do_crossbuild ) {
         $hostsysroot = get_hostsysroot($projid, $repoid, $bconf->{'hostarch'});
         $crosspool = create_cross_pool($hostsysroot->{'arch'}, 
                                           $bconf, 
@@ -6315,7 +6341,7 @@ while(1) {
           my $path = $crosspool->pkg2fullpath($pkg, $myarch);
 	  my $pkgid = $crosspool->pkg2pkgid($pkg);
 	  push @new_meta, "$pkgid  $bpack\::$hostsysroot->{'project'}::$hostsysroot->{'repository'}::$hostsysroot->{'arch'}";
-        }
+         }
       }
       for my $bpack (@{$pdeps{$packid}}) {
 	my $pkg = $dep2pkg{$bpack};
@@ -6397,7 +6423,7 @@ relsynccheck:
         $needed->{$_}++ for map { $dep2src{$_} || $_ } @{$pdeps{$p}};
       }
     }
-    my ($job, $joberror) = set_building($projid, $repoid, $packid, $pdata, $info, $bconf, $subpacks{$info->{'name'}}, $pdeps{$packid}, $prpsearchpath{$prp}, $reason, $relsyncmax, $needed->{$packid} || 0, $crossdeps);
+    my ($job, $joberror) = set_building($projid, $repoid, $packid, $pdata, $info, $bconf, $subpacks{$info->{'name'}}, $pdeps{$packid}, $prpsearchpath{$prp}, $reason, $relsyncmax, $needed->{$packid} || 0, $crossdeps{$packid});
     if (!$job) {
       # could not start job...
       if ($joberror =~ /^unresolvable: (.*)$/) {
