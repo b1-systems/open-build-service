@@ -389,34 +389,39 @@ sub getconfig {
   return $c;
 }
 
+my %crossrepodatas; # like %repodatas, but for each cross repo as key
+
 sub create_cross_pool {
   my ($arch, $bconf, $projid, $repoid, $path, $pkgs ) = @_;
   my $prp = "$projid/$repoid";
-  my @aprps = map {"$_->{'project'}/$_->{'repository'}"} @{$path || []};
+  if ( !defined $crossrepodatas{$prp} ) {
+    my @aprps = map {"$_->{'project'}/$_->{'repository'}"} @{$path || []};
 
-  my $c;
-  $c .= "$_\n" for (@{$pkgs});
+    my $c;
+    $c .= "$_\n" for (@{$pkgs});
 
-  my $pool = BSSolv::pool->new();
-  $pool->settype('deb') if ($bconf->{'type'} || '')eq 'dsc';
+    my $pool = BSSolv::pool->new();
+    $pool->settype('deb') if ($bconf->{'type'} || '')eq 'dsc';
 
-  my %oldrepodatas = %repodatas;
-  %repodatas = ();
-  for my $aprp (@aprps) {
-    if (!checkprpaccess($aprp, $prp)) {
-      %repodatas = %oldrepodatas;
-      return (undef, "broken: cross repository $aprp is unavailable");
+    my %oldrepodatas = %repodatas;
+    %repodatas = ();
+    for my $aprp (@aprps) {
+      if (!checkprpaccess($aprp, $prp)) {
+        %repodatas = %oldrepodatas;
+        return (undef, "broken: cross repository $aprp is unavailable");
+      }
+      my $r = addrepo($pool, $aprp, $arch);
+      if (!$r) {
+        %repodatas = %oldrepodatas;
+        return (undef, "broken: cross repository $aprp is unavailable");
+      }
     }
-    my $r = addrepo($pool, $aprp, $arch);
-    if (!$r) {
-      %repodatas = %oldrepodatas;
-      return (undef, "broken: cross repository $aprp is unavailable");
-    }
+    %repodatas = %oldrepodatas;
+
+    $pool->createwhatprovides();
+    $crossrepodatas{$prp} = $pool;
   }
-  %repodatas = %oldrepodatas;
-
-  $pool->createwhatprovides();
-  return $pool;
+  return $crossrepodatas{$prp};
 }
 
 sub get_cross_deps {
@@ -6668,5 +6673,9 @@ relsynccheck:
     $sinfo->{'buildavg'} = $buildavg;
     writexml("$infodir/.schedulerinfo.$myarch", "$infodir/schedulerinfo.$myarch", $sinfo, $BSXML::schedulerinfo);
     $lastschedinfo = $now;
+  }
+  # delete crossrepodatas to work with fresh data every run...
+  for (keys %crossrepodatas) {
+    delete $crossrepodatas{$_};
   }
 }
