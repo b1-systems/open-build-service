@@ -609,6 +609,7 @@ sub get_hostsysroot {
   $hostsysroot = (grep { $_->{'name'} eq $repoid} @{$projpacks->{$projid}->{'repository'} || []})[0]->{'hostsystem'} || "";
   return undef if !$hostsysroot;
   $hostsysroot->{'arch'} = $hostarch;
+  return undef if !$hostsysroot->{'arch'};
   my $repos = $projpacks->{$hostsysroot->{'project'}}->{'repository'} || []; 
   for my $repo (@$repos) {
     next unless grep {$_ eq $hostsysroot->{'arch'}} @{$repo->{'arch'} || []};
