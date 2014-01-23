@@ -103,9 +103,6 @@ case "$1" in
 		rc_status
 	;;
 	reload)
-		# Do nothing but be LSB conform
-		echo -ne "Reloading obsscheduler (noop): "
-                rc_status -v
 	;;
 	status)
 		echo -n "Checking for obsscheduler: "
