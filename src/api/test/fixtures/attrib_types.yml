@@ -1,98 +1,98 @@
-OBS_ProjectStatusPackageFailComment: 
-  attrib_namespace_id: "9"
-  name: ProjectStatusPackageFailComment
-  value_count: "1"
-  id: "74"
-  type: 
-  description: 
-OBS_QualityCategory: 
-  attrib_namespace_id: "9"
-  name: QualityCategory
-  value_count: "1"
-  id: "75"
-  type: 
-  description: 
-OBS_ScreenShots: 
-  attrib_namespace_id: "9"
-  name: ScreenShots
-  value_count: 
-  id: "73"
-  type: 
-  description: 
-attrib_types_56: 
-  attrib_namespace_id: "9"
-  name: VeryImportantProject
-  value_count: "0"
-  id: "56"
-  type: 
-  description: 
-attrib_types_57: 
-  attrib_namespace_id: "9"
-  name: UpdateProject
-  value_count: "1"
-  id: "57"
-  type: 
-  description: 
-attrib_types_58: 
-  attrib_namespace_id: "9"
-  name: Maintained
-  value_count: "0"
-  id: "58"
-  type: 
-  description: 
-attrib_types_59: 
-  attrib_namespace_id: "8"
+NSTEST_status:
+  id: 59
   name: status
-  value_count: 
-  id: "59"
-  type: 
-  description: 
-attrib_types_60: 
-  attrib_namespace_id: "9"
-  name: RequestCloned
-  value_count: "1"
-  id: "60"
-  type: 
-  description: 
-attrib_types_61: 
-  attrib_namespace_id: "9"
-  name: InitializeDevelPackage
-  value_count: "0"
-  id: "61"
-  type: 
-  description: 
-attrib_types_62: 
-  attrib_namespace_id: "9"
-  name: MaintenanceProject
-  value_count: "0"
-  id: "62"
-  type: 
-  description: 
-attrib_types_63: 
-  attrib_namespace_id: "9"
-  name: MaintenanceIdTemplate
-  value_count: "1"
-  id: "63"
-  type: 
-  description: 
-attrib_types_64: 
-  attrib_namespace_id: "9"
-  name: RejectRequests
-  value_count: "1"
-  id: "64"
-  type: 
-  description: 
-attrib_types_65: 
-  attrib_namespace_id: "9"
+  attrib_namespace_id: 8
+  issue_list: 0
+OBS_ApprovedRequestSource:
+  id: 65
   name: ApprovedRequestSource
-  value_count: "0"
-  id: "65"
-  type: 
-  description: 
-attrib_types_66: 
-  attrib_namespace_id: "9"
+  value_count: 0
+  attrib_namespace_id: 9
+  issue_list: 0
+OBS_BranchRepositoriesFromProject:
+  id: 78
+  name: BranchRepositoriesFromProject
+  value_count: 1
+  attrib_namespace_id: 9
+  issue_list: 0
+OBS_BranchTarget:
+  id: 66
   name: BranchTarget
-  value_count: "0"
-  id: "66"
-  type: 
-  description: 
+  value_count: 0
+  attrib_namespace_id: 9
+  issue_list: 0
+OBS_InitializeDevelPackage:
+  id: 61
+  name: InitializeDevelPackage
+  value_count: 0
+  attrib_namespace_id: 9
+  issue_list: 0
+OBS_Issues:
+  id: 67
+  name: Issues
+  value_count: 0
+  attrib_namespace_id: 9
+  issue_list: 1
+OBS_Maintained:
+  id: 58
+  name: Maintained
+  value_count: 0
+  attrib_namespace_id: 9
+  issue_list: 0
+OBS_MaintenanceIdTemplate:
+  id: 63
+  name: MaintenanceIdTemplate
+  value_count: 1
+  attrib_namespace_id: 9
+  issue_list: 0
+OBS_MaintenanceProject:
+  id: 62
+  name: MaintenanceProject
+  value_count: 0
+  attrib_namespace_id: 9
+  issue_list: 0
+OBS_OwnerRootProject:
+  id: 77
+  name: OwnerRootProject
+  attrib_namespace_id: 9
+  issue_list: 0
+OBS_ProjectStatusPackageFailComment:
+  id: 74
+  name: ProjectStatusPackageFailComment
+  value_count: 1
+  attrib_namespace_id: 9
+  issue_list: 0
+OBS_QualityCategory:
+  id: 75
+  name: QualityCategory
+  value_count: 1
+  attrib_namespace_id: 9
+  issue_list: 0
+OBS_RejectRequests:
+  id: 64
+  name: RejectRequests
+  attrib_namespace_id: 9
+  issue_list: 0
+OBS_RequestCloned:
+  id: 60
+  name: RequestCloned
+  value_count: 1
+  attrib_namespace_id: 9
+  issue_list: 0
+OBS_ScreenShots:
+  id: 73
+  name: ScreenShots
+  attrib_namespace_id: 9
+  issue_list: 0
+OBS_UpdateProject:
+  id: 57
+  name: UpdateProject
+  value_count: 1
+  attrib_namespace_id: 9
+  issue_list: 0
+OBS_VeryImportantProject:
+  id: 56
+  name: VeryImportantProject
+  value_count: 0
+  attrib_namespace_id: 9
+  issue_list: 0

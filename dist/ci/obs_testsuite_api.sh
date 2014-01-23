@@ -1,7 +1,6 @@
 #!/bin/sh
 #
-# This script runs both API unit and integration tests and produces coverage
-# and todo/fixme reports as well as code statistics.
+# This script runs both API unit and integration tests 
 #
 
 ###############################################################################
@@ -12,8 +11,7 @@
 # Description:
 #   OBS API testsuite on git master branch.
 #
-#   Updates source code repository and sets up a working environment for all
-#   further tasks. Runs unit and integration tests generated coverage reports.
+#   Updates source code repository and runs unit and integration tests.
 #
 # Source Code Management:
 #   Git:
@@ -21,6 +19,8 @@
 #     Branches to build: master
 #     Repository browser: githubweb
 #       URL: https://github.com/openSUSE/open-build-service
+#     Excluded Regions:
+#       docs/.*
 #
 # Build Triggers:
 #   Poll SCM:
@@ -31,17 +31,12 @@
 #     Command: sh dist/ci/obs_testsuite_api.sh
 #
 # Post Build Actions:
-#   Archive the artifacts:
-#     Files to archive: **/*
-#     Discard all but the last successful/stable artifact to save disk space: 1
 #   Publish JUnit test result report:
 #     Test report XMLs: src/api/results/*.xml
 #   Publish Rails Notes report: 1
 #     Rake working directory: src/api
 #   Publish Rails stats report: 1
 #     Rake working directory: src/api
-#   Publish Rcov report:
-#     Rcov report directory:  src/api/coverage/test
 #
 
 ###############################################################################
@@ -51,48 +46,22 @@
 # Either invoke as described above or copy into an 'Execute shell' 'Command'.
 #
 
-echo "Setup git submodules"
-git submodule init
-git submodule update
+set -xe
+. `dirname $0`/obs_testsuite_common.sh
 
-echo "Setup backend configuration template"
-sed -i -e "s|my \$hostname = .*$|my \$hostname = 'localhost';|" \
-       -e "s|our \$bsuser = 'obsrun';|our \$bsuser = 'jenkins';|" \
-       -e "s|our \$bsgroup = 'obsrun';|our \$bsgroup = 'jenkins';|" src/backend/BSConfig.pm.template
-cp src/backend/BSConfig.pm.template src/backend/BSConfig.pm
+setup_git
+setup_api
 
-echo "Enter API rails root"
-cd src/api
-
-echo "Setup database configuration"
-cp config/database.yml.example config/database.yml
-sed -i "s|database: api|database: ci_api|" config/database.yml
-
-echo "Setup additional configuration"
-cp config/options.yml.example config/options.yml
-
-echo "Install missing gems locally and fetch rails_rcov"
-rake gems:install
-ruby script/plugin install http://svn.codahale.com/rails_rcov
-
-echo "Set environment variables"
-export CI_REPORTS=results
-export RAILS_ENV=test
-
-echo "Initialize test database, run migrations, load seed data"
-rake db:drop db:create db:setup db:migrate
-
-echo "Prepare for rcov"
-[ -d "coverage" ] && rm -rf coverage
-mkdir coverage
-
-echo "Invoke rake"
-rake ci:setup:testunit test:test:rcov --trace RCOV_PARAMS="--aggregate coverage/aggregate.data"
+cd src/backend
+echo "Invoke backend tests"
+bash testdata/test_dispatcher || ret=1
 cd ../..
 
-echo "Output test.log"
-cat src/api/log/test.log
-echo
+cd src/api
+echo "Invoke rake"
+bundle exec rake ci:setup:minitest test:api test:webui CI_REPORTS=results --trace || ret=1
+cd ../..
 
-echo "Remove log/tmp files to save disc space"
-rm -rf src/api/{log,tmp}/*
+cleanup
+exit $ret
+

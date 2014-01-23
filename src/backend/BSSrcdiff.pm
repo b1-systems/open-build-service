@@ -292,6 +292,16 @@ sub adddiffheader {
   return $r->{'_content'};
 }
 
+# strip first dir if it is the same for all files
+sub stripfirstdir {
+  my ($l) = @_;
+  return unless @$l;
+  my $l1 = $l->[0]->{'sname'};
+  $l1 =~ s/\/.*//s;
+  return if grep {!($_->{'sname'} eq $l1 || $_->{'sname'} =~ /^\Q$l1\E\//)} @$l;
+  $_->{'sname'} =~ s/^[^\/]*\/?// for @$l;
+}
+
 sub tardiff {
   my ($f1, $f2, %opts) = @_;
 
@@ -305,13 +315,12 @@ sub tardiff {
   for (@l1, @l2) {
     $_->{'sname'} = $_->{'name'};
     $_->{'sname'} =~ s/^\.\///;
+  }
+  stripfirstdir(\@l1);
+  stripfirstdir(\@l2);
+
+  for (@l1, @l2) {
     $_->{'sname'} = '' if "/$_->{'sname'}/" =~ /\/(?:CVS|\.cvsignore|\.svn|\.svnignore)\//;
-  }
-  if ((grep {$_->{'sname'} !~ /\//} @l1) == 1) {
-    $_->{'sname'} =~ s/^[^\/]*\/?// for @l1;
-  }
-  if ((grep {$_->{'sname'} !~ /\//} @l2) == 1) {
-    $_->{'sname'} =~ s/^[^\/]*\/?// for @l2;
   }
 
   my %l1 = map {$_->{'sname'} => $_} @l1;
@@ -416,8 +425,8 @@ my @simclasses = (
   'spec',
   'dsc',
   'changes',
-  '(?:diff?|patch)(?:\.gz|\.bz2)?',
-  '(?:tar|tar\.gz|tar\.bz2|tgz|tbz)',
+  '(?:diff?|patch)(?:\.gz|\.bz2|\.xz)?',
+  '(?:tar|tar\.gz|tar\.bz2|tar\.xz|tgz|tbz)',
 );
 
 sub findsim {
@@ -716,10 +725,12 @@ sub issues {
     pop @issues if @issues & 1;	# hmm
     my %issues = @issues;
     for (keys %issues) {
-      $ret->{$_} = {
+      my $label = $tracker->{'label'};
+      $label =~ s/\@\@\@/$issues{$_}/g;
+      $ret->{$label} = {
 	'name' => $issues{$_},
-	'long-name' => $_,
-        'issue-tracker' => $tracker,
+	'label' => $label,
+        'tracker' => $tracker,
       };
     }
   }
@@ -784,13 +795,13 @@ sub issuediff {
     push @deleted , $oldissues{$_};
   }
   for my $issue (@changed, @added, @deleted) {
-    my $tracker = $issue->{'issue-tracker'};
+    my $tracker = $issue->{'tracker'};
     my $url = $tracker->{'show-url'};
     if ($url) {
       $url =~ s/\@\@\@/$issue->{'name'}/g;
-      $issue->{'show-url'} = $url;
+      $issue->{'url'} = $url;
     }
-    $issue->{'issue-tracker'} = $tracker->{'name'};
+    $issue->{'tracker'} = $tracker->{'name'};
   }
   return [ @changed, @added, @deleted ];
 }

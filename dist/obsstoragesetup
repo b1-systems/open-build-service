@@ -1,5 +1,5 @@
 #! /bin/sh
-# Copyright (c) 2010, Novell Inc.
+# Copyright (c) 2010-12, SUSE Inc.
 #
 # Author: adrian@suse.de
 #
@@ -9,7 +9,7 @@
 #
 ### BEGIN INIT INFO
 # Provides:          obsstoragesetup
-# Start-Before:      mysql sshd
+# X-Start-Before:    mysql sshd
 # Should-Start:      xendomains haveged
 # Should-Stop:       $none
 # Required-Start:    $network
@@ -22,7 +22,9 @@
 . /etc/rc.status
 
 # package or appliance defaults
-source /etc/sysconfig/obs-server
+if [ -e /etc/sysconfig/obs-server ]; then
+  source /etc/sysconfig/obs-server
+fi
 
 # instance defaults
 if [ -e /etc/buildhost.config ]; then
@@ -51,6 +53,23 @@ fi
 rc_reset
 case "$1" in
 	start)
+
+		round_down_to_pe()
+		#    round_down_to_pe <REQUESTED_SIZE_MiB> <EXTENT_SIZE_kiB>
+		#
+		# Round size supplied to allign with the nearest lower
+		# PE count and print the result
+		{
+			local ARG_SIZE=$1
+			local ARG_PE=$2
+			echo $((
+					( ( $ARG_SIZE * 1024 )
+					- ( ( $ARG_SIZE * 1024 )
+						% $ARG_PE ) )
+					/ 1024
+			))
+		}
+
 		# configure sshd if wanted
 		if [ ! -e /root/.ssh/authorized_keys ]; then
 			if [ -n "$OBS_ROOT_SSHD_KEY_URL" ]; then
@@ -58,6 +77,8 @@ case "$1" in
 				[ -e /root/.ssh ] || mkdir /root/.ssh
 				curl $OBS_ROOT_SSHD_KEY_URL > /root/.ssh/authorized_keys
 				insserv sshd
+				# avoid dead lock in systemctl
+				export SYSTEMCTL_OPTIONS=--ignore-dependencies
 				rcsshd start
 			fi
 		fi
@@ -75,8 +96,8 @@ case "$1" in
 				echo "Collect all LVM partitions for the worker"
 				# remove everything first
 				vgreduce --removemissing --force OBS
-				vgremove -f OBS
-				pvremove `pvdisplay  | grep "PV Name" | awk '{ print $3 }'`
+				vgremove -ff OBS
+				pvremove -ff `pvdisplay  | grep "PV Name" | awk '{ print $3 }'`
 
 				# Find unpartitioned disks and create LVM partition on them
 				for disk in `hwinfo --disk | grep "Device File:" |\
@@ -115,43 +136,28 @@ case "$1" in
 				vgcreate OBS $DEVICES
 				vgscan
 			fi
+		elif [ "$OBS_SETUP_WORKER_PARTITIONS" = "use_obs_vg" ]; then
+			echo "Remove all LVM worker partitions in VG OBS for the worker"
+			if [ -d /dev/OBS ]; then
+			        lvremove -f /dev/OBS/worker_* /dev/OBS/cache
+                        else
+				echo "WARNING: The LVM volume group 'OBS' can not be used."
+                                echo "         Please create one to get worker partitions configured"
+			fi
 		fi
 
-		echo "Looking for OBS Server LVM Volume"
+		echo "Looking for existing OBS Server LVM Volume"
                 if [ -e /dev/OBS/server ]; then
-			[ -L /obs ] && rm /obs
-			[ -d /obs ] || { rm -f /obs; mkdir /obs ; }
-# this fails on a configuration with OBS-server lvm on sdb
-#			[ -e /obs/repos ] || { ln -sf /obs/repos /srv/obs/repos ; }
-# using instead:
-			[ -d $backenddir -a ! -L $backenddir ] && { rm -rf $backenddir ; }
-			[ -L $backenddir ] || { ln -sf /obs $backenddir ; }
-			mount /dev/OBS/server /obs
-			[ -d /obs/log ] || mkdir /obs/log
-			[ -d /obs/run ] || mkdir /obs/run
-			[ -d /obs/build ] || mkdir /obs/build
-			[ -d /obs/events ] || mkdir /obs/events
-			[ -d /obs/jobs ] || mkdir /obs/jobs
-			[ -d /obs/info ] || mkdir /obs/info
-			[ -d /obs/projects ] || mkdir /obs/projects
-			[ -d /obs/workers ] || mkdir /obs/workers
-			chown obsrun.obsrun /obs/{,log,run,build,events,jobs,info,projects,workers}
-		else
-			echo "Setup local storage"
-               		if [ -e /obs -a ! -L /obs ]; then
-	       			echo "/obs already exists !"
-               		        exit 1
-               		fi
-			ln -sf $backenddir /obs
+			mount /dev/OBS/server "$backenddir"
                 fi
 
 		# Only used if there is a local BSConfig
 		if [ -e /usr/lib/obs/server/BSConfig.pm ]; then
 			# create default gpg key if not existing
-			if [ ! -e /obs/obs-default-gpg.asc ] && grep -q "^our \$keyfile.*/obs/obs-default-gpg.asc.;$" /usr/lib/obs/server/BSConfig.pm; then
+			if [ ! -e "$backenddir"/obs-default-gpg.asc ] && grep -q "^our \$keyfile.*/obs-default-gpg.asc.;$" /usr/lib/obs/server/BSConfig.pm; then
 				echo -n Generating OBS default GPG key ....
-				mkdir -p /obs/gnupg/phrases
-				chmod -R 0700 /obs/gnupg
+				mkdir -p "$backenddir"/gnupg/phrases
+				chmod -R 0700 "$backenddir"/gnupg
 				cat >/tmp/obs-gpg.$$ <<EOF
 				     %echo Generating a default OBS instance key
 				     Key-Type: DSA
@@ -162,40 +168,40 @@ case "$1" in
 				     Name-Comment: key without passphrase
 				     Name-Email: defaultkey@localobs
 				     Expire-Date: 0
-				     %pubring /obs/gnupg/pubring.gpg
-				     %secring /obs/gnupg/secring.gpg
+				     %pubring $backenddir/gnupg/pubring.gpg
+				     %secring $backenddir/gnupg/secring.gpg
 				     %commit
 				     %echo done
 EOF
-				gpg2 --homedir /obs/gnupg --batch --gen-key /tmp/obs-gpg.$$
-				gpg2 --homedir /obs/gnupg --export -a > /obs/obs-default-gpg.asc
+				gpg2 --homedir $backenddir/gnupg --batch --gen-key /tmp/obs-gpg.$$
+				gpg2 --homedir $backenddir/gnupg --export -a > "$backenddir"/obs-default-gpg.asc
 				# empty file just for accepting the key
-				touch "/obs/gnupg/phrases/defaultkey@localobs"
+				touch "$backenddir/gnupg/phrases/defaultkey@localobs"
 			fi
 			# to update sign.conf also after an appliance update
-			if [ -e /obs/obs-default-gpg.asc ] && ! grep -q "^user" /etc/sign.conf; then
+			if [ -e "$backenddir"/obs-default-gpg.asc ] && ! grep -q "^user" /etc/sign.conf; then
 				# extend signd config
 				echo "user: defaultkey@localobs"   >> /etc/sign.conf
 				echo "server: 127.0.0.1"           >> /etc/sign.conf
 				echo "allowuser: obsrun"           >> /etc/sign.conf
 				echo "allow: 127.0.0.1"            >> /etc/sign.conf
-				echo "phrases: /obs/gnupg/phrases" >> /etc/sign.conf
+				echo "phrases: $backenddir/gnupg/phrases" >> /etc/sign.conf
 				echo done
 				rm /tmp/obs-gpg.$$
 				sed -i 's,^# \(our $sign =.*\),\1,' /usr/lib/obs/server/BSConfig.pm
 				sed -i 's,^# \(our $forceprojectkeys =.*\),\1,' /usr/lib/obs/server/BSConfig.pm
 			fi
-			if [ ! -e /obs/obs-default-gpg.asc ] ; then
+			if [ ! -e "$backenddir"/obs-default-gpg.asc ] ; then
 			    sed -i 's,^\(our $sign =.*\),# \1,' /usr/lib/obs/server/BSConfig.pm
 			    sed -i 's,^\(our $forceprojectkeys =.*\),# \1,' /usr/lib/obs/server/BSConfig.pm
 			fi
 
                         # Force mysql to update database. FIXME: only on version update
-                        touch /obs/MySQL/.run-mysql_upgrade
+                        [ -d "$backenddir"/MySQL/ ] && touch "$backenddir"/MySQL/.run-mysql_upgrade
 		fi
 
 		if [ "$OBS_SETUP_WORKER_PARTITIONS" = "take_all" -o "$OBS_SETUP_WORKER_PARTITIONS" = "use_obs_vg" ]; then
-			if [ "$OBS_WORKER_INSTANCES" -gt 0 ]; then
+			if [ 0"$OBS_WORKER_INSTANCES" -gt 0 ]; then
 				# got config setting from sysconfig or PXE server
 				NUM="$OBS_WORKER_INSTANCES"
 			else
@@ -216,13 +222,13 @@ EOF
 				fi
 			fi
 			if [ ! "0$NUM" -gt 0 ]; then
-				echo "ERROR: OBS worker instances are 0, either misconfiguration or not enough resources"
-				exit 1
+				echo "WARNING: OBS worker instances are 0, either misconfiguration or not enough resources"
+				exit 0
 			fi
 
 			# Look for PV devices in OBS VG
 			pvs=""
-			for i in `vgdisplay -v OBS 2>/dev/null | grep "PV Name" | awk '{ print $3 }'`; do
+			for i in `vgdisplay -v OBS 2>/dev/null | grep "PV Name" | awk '{ print $3 }' | sort`; do
 				if [ -L $i ]; then
 					pvs="$pvs `readlink -f $i`"
 				else
@@ -230,19 +236,23 @@ EOF
 				fi
 			done
 			pvs=( $pvs )
-			pv_count_real=${#pvs[@]}
+			pv_count=${#pvs[@]}
+			PE_SIZE=`vgdisplay -c OBS | cut -d: -f13`
+			[ "0$PE_SIZE" -gt 0 ] || exit 0
 
 			if [ -z "$OBS_WORKER_CACHE_SIZE" ]; then
 				# 25 GB sounds like a good default for cache.
 				OBS_WORKER_CACHE_SIZE=$(( 25 * 1024 ))
 			fi
+			OBS_WORKER_CACHE_SIZE=`round_down_to_pe $OBS_WORKER_CACHE_SIZE $PE_SIZE`
 
 			if [ -z "$OBS_WORKER_SWAP_SIZE" ]; then
 				OBS_WORKER_SWAP_SIZE=512
 			fi
+			OBS_WORKER_SWAP_SIZE=`round_down_to_pe $OBS_WORKER_SWAP_SIZE $PE_SIZE`
 
 			if [ -z "$OBS_WORKER_ROOT_SIZE" ]; then
-				VG_SIZE=`vgdisplay OBS --units M | grep "Free  PE" | sed 's,.* \([^ ]*\)\..*MB$,\1,'`
+				VG_SIZE=`vgdisplay -c OBS | awk -F':' '{print( int(int($12) / 1024) )}'`
 				VG_SIZE=$(( $VG_SIZE - $OBS_WORKER_CACHE_SIZE - ( $NUM * $OBS_WORKER_SWAP_SIZE ) ))
 				OBS_WORKER_ROOT_SIZE=$(( $VG_SIZE / $NUM ))
 				if test $OBS_WORKER_ROOT_SIZE -lt $(( 4 * 1024 )); then
@@ -250,40 +260,42 @@ EOF
 					exit 1
 				fi
 			fi
+			OBS_WORKER_ROOT_SIZE=`round_down_to_pe $OBS_WORKER_ROOT_SIZE $PE_SIZE`
 
-			if test "$NUM" -ge "$pv_count_real"; then
+			if test "$NUM" -ge "$pv_count"; then
 				# More or equal build instances than disks
 				# create LV's and try to distribute them on PV's best as possible
 				o1=0
 				o2=1
-				if [ $pv_count_real -gt 1 ]; then
-					pv_count=$(( ($pv_count_real / 2) * 2 )) # be sure that we have an equal number
-				elif [ $pv_count_real -eq 1 ]; then
-					o2=0
-					pv_count=1
-				else
-					# FIXME: error handling
-					echo "BUG"
-				fi
-				offset=1
-				if [ "$pv_count_real" == "$pv_count" ]; then
-				  offset=0
-				fi
+				# MAGIC AT WORK! we append the first items here for the code later to find a 2nd and 3rd offset in the loop
+				pvs=( ${pvs[*]} ${pvs[0]} ${pvs[0]})
 
 				pv_idx=0
 				I="0"
 				while test "$NUM" -gt "$I"; do
 					I=$(( $I + 1 ))
 		
-					lvcreate -n worker_root_${I} -L ${OBS_WORKER_ROOT_SIZE}M OBS ${pvs[$(( $pv_idx + $o1 + $offset ))]} || exit
-		                        lvcreate -n worker_swap_${I} -L ${OBS_WORKER_SWAP_SIZE}M OBS ${pvs[$(( $pv_idx + $o2 + $offset ))]} || exit
+					lverr=$(mktemp)
+					if ! lvcreate -n worker_root_${I} -L ${OBS_WORKER_ROOT_SIZE}M OBS ${pvs[$(( $pv_idx + $o1 ))]} 2> $lverr; then
+						if grep "Insufficient free space" $lverr; then 
+							I=$(( $I - 1 ))
+						else	
+							cat $lverr >&2
+							exit
+						fi
+					else
+ 			                        lvcreate -n worker_swap_${I} -L ${OBS_WORKER_SWAP_SIZE}M OBS ${pvs[$(( $pv_idx + $o2 ))]} || exit
+					fi
+					rm -f $lverr
 		                        pv_idx=$(( $pv_idx + 2 ))
-		                        if [ $pv_idx -ge $pv_count ]; then
+		                        if [ $pv_idx -eq $pv_count ]; then
 						pv_idx=0
 						# swap offset, so that swap and root partitions are not on same device
 						a=$o1
 						o1=$o2
 						o2=$a
+		                        elif [ $pv_idx -gt $pv_count ]; then
+						pv_idx=1
 		                        fi
 				done
 			else
@@ -291,7 +303,7 @@ EOF
 				# Use striping to boost IO performance
 				I="0"
 				# FIXME: this is a bit too simple, it can't handle float numbers
-				disks_per_instance=$(( $pv_count_real / $NUM ))
+				disks_per_instance=$(( $pv_count / $NUM ))
 				while test "$NUM" -gt "$I"; do
 					I=$(( $I + 1 ))
 	
@@ -311,6 +323,10 @@ EOF
 			#lvcreate -n cache -l 100%FREE OBS || exit
 			lvcreate -n cache -L "${OBS_WORKER_CACHE_SIZE}M" OBS || exit
 			mkfs -text4 /dev/OBS/cache || exit
+		fi
+
+		if [ ! "0$NUM" -gt 0 ]; then
+			exit 0
 		fi
 
 		echo "Looking for OBS Worker Cache LVM Volume"
@@ -339,9 +355,9 @@ EOF
 				echo "Found KVM virtualization"
 				RUN_VIRT=1
 		                # support virtio
-		                # FIXME: find a better way to do this without getting remove by kiwi again.
+		                # FIXME: find a better way to do this without getting removed by kiwi again.
 		                if ! grep -q "^INITRD_MODULES=.*virtio_pci virtio_blk" /etc/sysconfig/kernel; then
-		                   sed -i 's,^INITRD_MODULES="\(.*\)",INITRD_MODULES="\1 loop dm-mod dm-snapshot binfmt-misc fuse kqemu squashfs ext2 ext3 ext4 reiserfs binfmt_misc virtio_pci virtio_blk",' /etc/sysconfig/kernel
+		                   sed -i 's,^INITRD_MODULES="\(.*\)",INITRD_MODULES="\1 loop dm-mod dm-snapshot binfmt-misc fuse kqemu squashfs ext2 ext3 ext4 reiserfs nf_conntrack_ipv6 binfmt_misc virtio_pci virtio_blk fat vfat nls_cp437 nls_iso8859-1",' /etc/sysconfig/kernel
 		                   mkinitrd || unset RUN_VIRT
 		                fi
 			else
@@ -362,7 +378,10 @@ EOF
 			else
 				#plain chroot build
 				mkdir -p "$OBS_WORKER_DIRECTORY/$name"
+				mkfs -text4 $i || exit
 				mount $i "$OBS_WORKER_DIRECTORY/$name"
+				mkswap -f "$swap"
+				swapon "$swap"
 			fi
 			OBS_WORKER_INSTANCES=$(( $OBS_WORKER_INSTANCES + 1 ))
 		done
@@ -384,6 +403,25 @@ EOF
 			TOTALMEM=$(( `free | sed -n 's/^Mem:[ ]*\([^ ]*\).*/\1/p'` / 1024 ))
 			INSTANCEMEM=$(( $TOTALMEM / ( 2 * $OBS_WORKER_INSTANCES ) ))
 			echo "OBS_INSTANCE_MEMORY=\"$INSTANCEMEM\"" >> /etc/buildhost.config
+			if grep ^flags /proc/cpuinfo | egrep -q " (svm|vmx) " && test -n "$RUN_VIRT"; then
+                                # try to use hugetlb on kvm
+                                if ! grep -q \ /hugetlbfs /proc/mounts; then
+					mkdir -p /hugetlbfs
+			                HUGETLBINSTANCEMEM=$(( ($INSTANCEMEM * 512) / 1024 )) # 2M page sizes
+			                HUGETLMEM=$(( $HUGETLBINSTANCEMEM * $OBS_WORKER_INSTANCES ))
+                                        # register huge table memory pages
+                                        echo "$HUGETLMEM" > /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages
+                                        # enable it if it was successful
+                                        if [ "$HUGETLMEM" == `cat /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages` ] && \
+ 					   mount hugetlbfs /hugetlbfs -t hugetlbfs; then
+	                			echo "OBS_VM_USE_HUGETLBFS=\"/hugetlbfs\"" >> /etc/buildhost.config
+					else
+						echo "WARNING: registration of huge table memory pages failed!"
+                                                echo "Just `cat /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages` of $HUGETLMEM registered, resetting ..."
+	                                        echo "0" > /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages
+					fi
+                                fi
+                        fi
 			# append user presets
 			echo "" >> /etc/buildhost.config
 			echo "### preconfigured values from /etc/buildhost.config.presets" >> /etc/buildhost.config

@@ -125,27 +125,22 @@ sub read_data {
     }
   } else {
     my $qu = $hdr->{'__data'};
-    my $cl = $hdr->{'__cl'} || 0;
-    if (!$cl) {
-      $cl = $hdr->{'content-length'};
-      $cl = -1 if !$cl;
-    }
-    if ($cl < 0) {
-      die("unexpected EOF\n") if $exact && defined($maxl) && length($ret) < $maxl;
-      return '';
-    }
-    if (!defined($maxl) || $maxl > $cl) {
+    my $cl = $hdr->{'__cl'};
+    $cl = $hdr->{'content-length'} unless defined $cl;
+    if (defined($cl) && (!defined($maxl) || $maxl > $cl)) {
       die("unexpected EOF\n") if $exact && defined($maxl);
-      $maxl = $cl;
+      $maxl = $cl >= 0 ? $cl : 0;
     }
-    while (length($qu) < $maxl) {
-      my $m = $maxl - length($qu);
+    while (!defined($maxl) || length($qu) < $maxl) {
+      my $m = ($maxl || 0) - length($qu);
       $m = 8192 if $m < 8192;
       my $r = sysread(S, $qu, $m, length($qu));
-      die("unexpected EOF\n") unless $r;
+      if (!$r) {
+        die("unexpected EOF\n") if defined($cl) || ($exact && defined($maxl));
+        $cl = $maxl = length($qu);
+      }
     }
-    $cl -= $maxl;
-    $cl = -1 unless $cl;
+    $cl -= $maxl if defined($cl);
     $ret = substr($qu, 0, $maxl);
     $hdr->{'__cl'} = $cl;
     $hdr->{'__data'} = substr($qu, $maxl);
@@ -205,6 +200,7 @@ sub cpio_receiver {
   while(1) {
     my $cpiohead = read_data($hdr, 110, 1);
     die("cpio: not a 'SVR4 no CRC ascii' cpio\n") unless substr($cpiohead, 0, 6) eq '070701';
+    my $mode = hex(substr($cpiohead, 14, 8));
     my $mtime = hex(substr($cpiohead, 46, 8));
     my $size  = hex(substr($cpiohead, 54, 8));
     if ($size == 0xffffffff) {
@@ -223,20 +219,26 @@ sub cpio_receiver {
     my $sizepad = $size;
     $sizepad += 4 - ($size % 4) if $size % 4;
     last if !$size && $name eq 'TRAILER!!!';
-    die("cpio filename contains a '/': $name\n") if $name =~ /\//s;
+    if ($param->{'acceptsubdirs'} || $param->{'createsubdirs'}) {
+      die("cpio filename is illegal: $name\n") if "/$name/" =~ /\/\.{0,2}\//s;
+    } else {
+      die("cpio filename contains a '/': $name\n") if $name =~ /\//s;
+    }
     die("cpio filename is '.' or '..'\n") if $name eq '.' || $name eq '..';
+    my $ent = {'name' => $name, 'size' => $size, 'mtime' => $mtime, 'mode' => $mode};
     if ($param->{'accept'}) {
       if (ref($param->{'accept'})) {
-	die("illegal file in cpio archive: $name\n") unless $param->{'accept'}->($param, $name);
+	die("illegal file in cpio archive: $name\n") unless $param->{'accept'}->($param, $name, $ent);
       } else {
 	die("illegal file in cpio archive: $name\n") unless $name =~ /$param->{'accept'}/;
       }
     }
     if ($param->{'map'}) {
+      $ent->{'unmappedname'} = $name;
       if (ref($param->{'map'})) {
-	$name = $param->{'map'}->($param, $name);
+	$ent->{'name'} = $name = $param->{'map'}->($param, $name);
       } else {
-	$name = "$param->{'map'}$name";
+	$ent->{'name'} = $name = "$param->{'map'}$name";
       }
     }
     if (!defined($name)) {
@@ -248,13 +250,24 @@ sub cpio_receiver {
       }
       next;
     }
-    push @res, {'name' => $name, 'size' => $size, 'mtime' => $mtime};
+    push @res, $ent;
     my $ctx;
     $ctx = Digest::MD5->new if $withmd5;
     if (defined($dn)) {
-      open(F, '>', "$dn/$name") || die("$dn/$name: $!\n");
+      my $filename = "$dn/$name";
+      if (($mode & 0xf000) == 0x4000 && $param->{'createsubdirs'}) {
+	die("directory has non-zero size\n") if $sizepad;
+	if (! -d $filename) {
+	  unlink($filename) unless $param->{'no_unlink'};
+	  mkdir($filename) || die("mkdir $filename: $!\n");
+	}
+      } else {
+	die("can only unpack plain files from cpio archive, file $name, mode was $mode\n") unless ($mode & 0xf000) == 0x8000;
+	unlink($filename) unless $param->{'no_unlink'};
+	open(F, '>', $filename) || die("$filename: $!\n");
+      }
     } else {
-      $res[-1]->{'data'} = '';
+      $ent->{'data'} = '';
     }
     while ($sizepad) {
       my $m = $sizepad > 8192 ? 8192 : $sizepad;
@@ -265,15 +278,16 @@ sub cpio_receiver {
       if (defined($dn)) {
         (syswrite(F, $data, $m) || 0) == $m || die("syswrite: $!\n");
       } else {
-        $res[-1]->{'data'} .= substr($data, 0, $m);
+        $ent->{'data'} .= substr($data, 0, $m);
       }
       $ctx->add($size >= 0 ? $data : substr($data, 0, $m)) if $ctx;
     }
-    if (defined($dn)) {
+    if (defined($dn) && ($mode & 0xf000) != 0x4000) {
       close(F) || die("close: $!\n");
       utime($mtime, $mtime, "$dn/$name");
     }
-    $res[-1]->{'md5'} = $ctx->hexdigest if $ctx;
+    $ent->{'md5'} = $ctx->hexdigest if $ctx && ($mode & 0xf000) != 0x4000;
+    $param->{'cpiopostfile'}->($param, $ent) if $param->{'cpiopostfile'};
   }
   return \@res;
 }
@@ -317,7 +331,8 @@ sub cpio_sender {
       $s[7] = length($file->{'data'});
       $s[9] = time;
     }
-    $data = "07070100000000000081a4000000000000000000000001";
+    my $mode = $file->{'mode'} || 0x81a4;
+    $data = sprintf("07070100000000%08x000000000000000000000001", $mode);
     if ($s[7] > 0xffffffff) {
       # build service length extension
       my $top = int($s[7] / 4294967296.);

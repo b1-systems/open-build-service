@@ -25,10 +25,10 @@ module Suse
 
       return true if @user.has_global_permission?( "global_project_change" )
 
-      if project.kind_of? DbProject
+      if project.kind_of? Project
         prj = project
-      elsif project.kind_of? Project or project.kind_of? String
-        prj = DbProject.find_by_name( project )
+      elsif project.kind_of? String
+        prj = Project.find_by_name( project )
       end
 
       if prj.nil?
@@ -49,63 +49,24 @@ module Suse
       logger.debug "User #{@user.login} wants to change the package"
 
       # Get DbPackage object
-      if package.kind_of? DbPackage
+      if package.kind_of? Package
         pkg = package
       else
         if project.nil?
-          if not package.kind_of? Package
-            raise RuntimeError, "autofetch of project only works with objects of class Package"
-          end
-          if package.parent_project_name.nil?
-            raise RuntimeError, "unable to determine parent project for package #{package}"
-          end
-          project = package.parent_project
+          raise RuntimeError, "autofetch of project only works with objects of class Package"
         end
 
-        if package.kind_of? Package
-           package = package.name
-        end
-        if project.kind_of? Project
-           project = project.name
-        end
         if project.kind_of? String
            project = project
         end
 
-        pkg = DbPackage.find_by_project_and_name( project, package )
+        pkg = Package.find_by_project_and_name( project, package )
         if pkg.nil?
           raise ArgumentError, "unable to find package object for #{project} / #{package}"
         end
       end
 
       return true if @user.can_modify_package?( pkg )
-      return false
-    end
-
-    def package_create?( obj )
-      logger.debug "User #{@user.login} wants to change the package"
-
-
-      # Get DbPackage object
-      if obj.kind_of? DbPackage
-        prj = obj.db_project
-      elsif obj.kind_of? DbProject
-        prj = obj
-      elsif obj.kind_of? Package
-        prj = DbProject.find_by_name( obj.parent_project.name )
-      elsif obj.kind_of? Project
-        prj = DbProject.find_by_name( obj.name )
-      elsif obj.kind_of? String
-        prj = DbProject.find_by_name( obj )
-      else
-        raise RuntimeError, "Unhandle object type"
-      end
-
-      if pkg.nil?
-        raise "unable to find package object for #{project} / #{package}"
-      end
-
-      return true if @user.can_create_package_in?( prj )
       return false
     end
 
@@ -128,7 +89,7 @@ module Suse
     end
 
     def logger
-      RAILS_DEFAULT_LOGGER
+      Rails.logger
     end
   end
 end

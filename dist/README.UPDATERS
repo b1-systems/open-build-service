@@ -1,3 +1,86 @@
+For Updaters to OBS 2.5 from OBS 2.4
+====================================
+
+Appliance users can just do a package update and reboot or use the
+new appliance image to update their configurations.
+
+In case the installation is not done via packages all 
+rubygems according to Gemfile need to get installed.
+
+Biggest change setup wise is the unification of API and WEBUI instance.
+This means only one rails stack is running which can be used for both,
+browsing via web browser and also as api to be used with osc.
+
+In case you do not use the obs apache configuration which comes with
+package, you need to disable your webui configuration.
+
+Users which used port 444 as api have to reconfigure their clients to
+use port 443 now.
+
+ 1) Database migration
+
+    # cd /srv/www/obs/api/
+    # RAILS_ENV="production" rake db:migrate
+    # chown -R wwwrun.www log tmp
+
+    # cd /srv/www/obs/webui/
+    # RAILS_ENV="production" rake db:migrate
+    # chown -R wwwrun.www log tmp
+
+ 2) Restart memcached after database migration to wipe possible broken
+    cache data.
+
+ 3) configuration settings moved to /configuration api route as much as 
+    possible to allow a uniq configuration through all OBS frontend and
+    backend parts. Check the release notes for details on this.
+
+ 4) api interface configuration must be configured in /srv/www/obs/api/config/options.yml
+    now. Ensure that at least the following parameters are configured there:
+
+      frontend_host: 
+      frontend_port:
+      frontend_protocol:
+
+For Updaters to OBS 2.4 from OBS 2.3
+====================================
+
+Appliance users can just do a package update and reboot or use the
+new appliance image to update their configurations.
+
+Other installations need merge manually configurations
+as described below (This is required due to the Rails 2.x
+to Rails 3.x switch).
+
+In case the installation is not done via packages all 
+rubygems according to Gemfile need to get installed.
+
+Please check the following files:
+
+ 1) database driver needs to be changed to "mysql2" in /srv/www/obs/api/config/database.yml
+    This is usally done automatically by the package.
+
+ 2) all config options with capital letters have been moved from 
+      /srv/www/obs/.../config/environments/production.rb
+    to small letter variables in
+      /srv/www/obs/.../config/options.yml
+
+    The old production.rb files will not work anymore, please transfer your
+    configuration in the new file (available as production.rb.rpmnew) and
+    the options.yml. Do not forget to rename production.rb.rpmnew to production.rb.
+
+ 3) Database migration
+
+    # cd /srv/www/obs/api/
+    # RAILS_ENV="production" rake db:migrate
+    # chown -R wwwrun.www log tmp
+
+    # cd /srv/www/obs/webui/
+    # RAILS_ENV="production" rake db:migrate
+    # chown -R wwwrun.www log tmp
+
+ 4) Restart memcached after database migration to wipe possible broken
+    cache data.
+
 For Updaters to OBS 2.3 from OBS 2.1
 ====================================
 
@@ -153,9 +236,7 @@ For Updaters from OBS 1.6
   To update api and webui informations, you need to start the following processes
 
     # insserv obsapidelayed
-    # insserv obswebuidelayed
     # rcobsapidelayed start
-    # rcobswebuidelayed start
 
   By default, you should *NOT* start the following services. These are intended
   to autoconfigure services on the OBS Appliance image based on existing LVM

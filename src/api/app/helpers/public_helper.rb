@@ -1,9 +1,11 @@
 module PublicHelper
   def download_url(path)
-     path ? File.join(DOWNLOAD_URL, path) : ""
+     url = Configuration.download_url
+     (path && url) ? File.join(url, path) : ""
   end
 
   def ymp_url(path)
-     path ? File.join(YMP_URL, path) : ""
+     url = Configuration.ymp_url
+     (path && url) ? File.join(url, path) : ""
   end
 end

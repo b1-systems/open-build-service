@@ -1,30 +1,28 @@
-maintained_apache2_package: 
-  db_package_id: "1355"
-  attrib_type_id: "58"
-  binary: 
-  db_project_id: 
-  id: "101"
-attribs_1040753498: 
-  db_package_id: 
-  attrib_type_id: "62"
-  binary: 
-  db_project_id: "2048"
-  id: "1040753498"
-attribs_995394145: 
-  db_package_id: 
-  attrib_type_id: "61"
-  binary: 
-  db_project_id: "2"
-  id: "995394145"
-attribs_UpdateProject_for_BaseDistro: 
-  db_package_id: 
-  attrib_type_id: "57"
-  binary: 
-  db_project_id: "2042"
-  id: "102"
-attribs_UpdateProject_for_BaseDistro2_0: 
-  db_package_id: 
-  attrib_type_id: "57"
-  binary: 
-  db_project_id: "2045"
-  id: "103"
+attribs_1040753498:
+  id: 1040753498
+  attrib_type_id: 62
+  project: My_Maintenance
+attribs_1040753499:
+  id: 1040753499
+  attrib_type_id: 63
+  project: My_Maintenance
+attribs_995394145:
+  id: 995394145
+  attrib_type_id: 61
+  project: kde4
+attribs_UpdateProject_for_BaseDistro:
+  id: 102
+  attrib_type_id: 57
+  project: BaseDistro
+attribs_UpdateProject_for_BaseDistro2_0:
+  id: 103
+  attrib_type_id: 57
+  project: BaseDistro2.0
+basedistro_important:
+  id: 1040753741
+  attrib_type_id: 56
+  project: BaseDistro
+maintained_apache2_package:
+  id: 101
+  attrib_type_id: 58
+  package: Apache_apache2

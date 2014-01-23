@@ -3,11 +3,19 @@
 # role. You can then check for it being assigned to a role in your application
 # code.
 #
-# The StaticPermission ActiveRecord class mixes in the 
-# "ActiveRbacMixins::StaticPermissionMixins::*" modules. These modules contain the actual 
-# implementation. It is kept there so you can easily provide your own model 
-# files without having to all lines from the engine's directory.
 class StaticPermission < ActiveRecord::Base
-  include ActiveRbacMixins::StaticPermissionMixins::Core
-  include ActiveRbacMixins::StaticPermissionMixins::Validation
+
+  has_many :roles_static_permissions
+
+  has_and_belongs_to_many :roles, -> { uniq() }
+
+  # We want to validate a static permission's title pretty thoroughly.
+  validates_uniqueness_of :title, 
+                          :message => 'is the name of an already existing static permission.'
+  validates_presence_of   :title, :message => 'must be given.'
+    
+  validates_format_of     :title, :with => %r{\A[\w\-]*\z}, 
+                          :message => 'must not contain invalid characters.'
+
+  alias_attribute :fixtures_name, :title
 end

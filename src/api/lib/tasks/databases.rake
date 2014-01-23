@@ -27,17 +27,26 @@ def redefine_task(args, &block)
 end
 
 namespace :db do
+  
   namespace :structure do
     desc "Dump the database structure to a SQL file"
     task :dump => :environment do
       structure = ''
       abcs = ActiveRecord::Base.configurations
-      case abcs[RAILS_ENV]["adapter"]
-      when "mysql"
-        ActiveRecord::Base.establish_connection(abcs[RAILS_ENV])
-        structure = ActiveRecord::Base.connection.structure_dump
+      case abcs[Rails.env]["adapter"]
+      when "mysql2"
+        ActiveRecord::Base.establish_connection(abcs[Rails.env])
+        con = ActiveRecord::Base.connection
+
+        sql = "SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'"
+ 
+        structure = con.select_all(sql, 'SCHEMA').map { |table|
+          table.delete('Table_type')
+          sql = "SHOW CREATE TABLE #{con.quote_table_name(table.to_a.first.last)}"
+          con.exec_query(sql, 'SCHEMA').first['Create Table'] + ";\n\n"
+        }.join
       else
-        raise "Task not supported by '#{abcs[RAILS_ENV]["adapter"]}'"
+        raise "Task not supported by '#{abcs[Rails.env]["adapter"]}'"
       end
 
       if ActiveRecord::Base.connection.supports_migrations?
@@ -47,8 +56,6 @@ namespace :db do
       structure.gsub!(%r{AUTO_INCREMENT=[0-9]* }, '')
       structure.gsub!('auto_increment', 'AUTO_INCREMENT')
       structure.gsub!(%r{default([, ])}, 'DEFAULT\1')
-      structure.gsub!(' COLLATE=utf8_unicode_ci', '')
-      structure.gsub!(' COLLATE utf8_unicode_ci', '')
       structure.gsub!(%r{KEY  *}, 'KEY ')
       structure += "\n"
       # sort the constraint lines always in the same order
@@ -75,41 +82,15 @@ namespace :db do
           new_structure += line
         end
       end
-      File.open("#{RAILS_ROOT}/db/#{RAILS_ENV}_structure.sql", "w+") { |f| f << new_structure }
+      File.open("#{Rails.root}/db/structure.sql", "w+") { |f| f << new_structure }
     end
      
-    task :load => :environment do
-      abcs = ActiveRecord::Base.configurations
-      case abcs[RAILS_ENV]["adapter"]
-      when "mysql"
-        ActiveRecord::Base.establish_connection(RAILS_ENV)
-        ActiveRecord::Base.connection.execute('SET foreign_key_checks = 0')
-        IO.readlines("#{RAILS_ROOT}/db/#{RAILS_ENV}_structure.sql").join.split("\n\n").each do |table|
-          ActiveRecord::Base.connection.execute(table)
-        end
-      else
-        raise "Task not supported by '#{abcs[RAILS_ENV]["adapter"]}'"
-      end
-    end
   end
 
-  desc "Migrate the database through scripts in db/migrate. Target specific version with VERSION=x. Turn off output with VERBOSE=false."
-  task :migrate => :environment do
-    ActiveRecord::Migration.verbose = ENV["VERBOSE"] ? ENV["VERBOSE"] == "true" : true
-    ActiveRecord::Migrator.migrate("db/migrate/", ENV["VERSION"] ? ENV["VERSION"].to_i : nil)
-    Rake::Task["db:structure:dump"].invoke
-  end
-
-  desc 'Create the database, load the structure, and initialize with the seed data'
-  redefine_task :setup => :environment do 
-    Rake::Task["db:create"].invoke
+ desc 'Create the database, load the structure, and initialize with the seed data'
+ redefine_task :setup => :environment do 
     Rake::Task["db:structure:load"].invoke
     Rake::Task["db:seed"].invoke
-  end
+ end
 
-  namespace :schema do
-    desc 'Do not do anything'
-    redefine_task :load => :environment do
-    end
-  end
 end

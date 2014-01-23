@@ -2,15 +2,14 @@
 
 require File.expand_path(File.dirname(__FILE__) + "/..") + "/test_helper"
 
-require 'rexml/document'
-include REXML
-
-class BuildControllerTest < ActionController::IntegrationTest 
+class BuildControllerTest < ActionDispatch::IntegrationTest 
 
   fixtures :all
 
   def setup
+    super
     prepare_request_valid_user
+    wait_for_scheduler_start
   end
 
   def test_index
@@ -40,72 +39,81 @@ class BuildControllerTest < ActionController::IntegrationTest
   end
 
   def test_upload_binaries
-    ActionController::IntegrationTest::reset_auth
+    reset_auth
     post "/build/home:Iggy/10.2/i586/TestPack", nil
     assert_response 401
 
-    prepare_request_with_user "adrian", "so_alone"
+    login_adrian
     post "/build/home:Iggy/10.2/i586/TestPack", nil
     assert_response 403
+    put "/build/home:Iggy/10.2/i586/_repository/rpm.rpm", "/dev/null"
+    assert_response 403
 
-    prepare_request_with_user "king", "sunflower"
+    login_king
     post "/build/home:Iggy/10.2/i586/TestPack", nil
     assert_response 400 # actually a success, it reached the backend
-    assert_tag :tag => "status", :attributes => { :code => "400", :origin => "backend" }
+    assert_xml_tag :tag => "status", :attributes => { :code => "400", :origin => "backend" }
+
+    put "/build/home:Iggy/10.2/i586/_repository/rpm.rpm", "/dev/null"
+    assert_response 200
 
     # check not supported methods
     post "/build/home:Iggy/10.2/i586/_repository", nil
     assert_response 404
-    assert_tag :tag => "status", :attributes => { :code => "unknown_package" }
+    assert_xml_tag :tag => "status", :attributes => { :code => "unknown_package" }
     put "/build/home:Iggy/10.2/i586/TestPack", nil
-    assert_response 400
-    assert_tag :tag => "status", :attributes => { :code => "invalid_http_method" }
+    assert_response 404 # no such route
+
     delete "/build/home:Iggy/10.2/i586/TestPack"
-    assert_response 400
-    assert_tag :tag => "status", :attributes => { :code => "invalid_http_method" }
+    assert_response 404 # no such route
   end
 
   def test_dispatchprios
-    ActionController::IntegrationTest::reset_auth
+    reset_auth
     get "/build/_dispatchprios"
     assert_response 401
 
-    prepare_request_with_user "adrian", "so_alone"
+    login_adrian
     get "/build/_dispatchprios"
     assert_response :success
     put "/build/_dispatchprios", ' <dispatchprios> <prio project="KDE:Distro:Factory" repository="openSUSE_Factory" adjust="7" /> </dispatchprios>'
     assert_response 403
 
-    prepare_request_with_user "king", "sunflower"
+    login_king
     put "/build/_dispatchprios", ' <dispatchprios> <prio project="KDE:Distro:Factory" repository="openSUSE_Factory" adjust="7" /> </dispatchprios>'
     assert_response :success
   end
 
   def test_read_from_repository
-    ActionController::IntegrationTest::reset_auth
-    prepare_request_with_user "adrian", "so_alone"
+    reset_auth
+    login_adrian
     get "/build/home:Iggy/10.2/i586/_repository/not_existing.rpm"
     assert_response 404
     get "/build/home:Iggy/10.2/i586/TestPack/package-1.0-1.i586.rpm"
     assert_response :success
+    get "/build/home:Iggy/10.2/i586/TestPack/_statistics"
+    assert_response :success
     get "/build/home:Iggy/10.2/i586/_repository"
     assert_response :success
-    assert_tag :tag => "binarylist", :child => { :tag => "binary" }
-    assert_tag :tag => "binary", :attributes => { :filename => "package.rpm" }
+    assert_xml_tag :tag => "binarylist", :child => { :tag => "binary" }
+    assert_xml_tag :tag => "binary", :attributes => { :filename => "package.rpm" }
     get "/build/home:Iggy/10.2/i586/_repository/package.rpm"
     assert_response :success
     get "/build/home:Iggy/10.2/i586/_repository?binary=rpm&binary=package&view=cpio"
     assert_response :success
     ret = IO.popen("cpio -t 2>/dev/null", "r+") { |f| f.puts @response.body; f.close_write; f.gets }
     assert_match(/package.rpm/, ret)
+    assert_no_match(/_statistics/, ret)
+    get "/build/home:Iggy/10.2/i586/_repository/_statistics"
+    assert_response 404
   end
 
   def test_delete_from_repository
-    ActionController::IntegrationTest::reset_auth
+    reset_auth
     delete "/build/home:Iggy/10.2/i586/_repository/delete_me.rpm"
     assert_response 401
 
-    prepare_request_with_user "adrian", "so_alone"
+    login_adrian
     delete "/build/home:Iggy/10.2/i586/_repository/delete_me.rpm"
     assert_response 403
     delete "/build/home:Iggy/10.2/i586/_repository/not_existing.rpm"
@@ -113,7 +121,7 @@ class BuildControllerTest < ActionController::IntegrationTest
     get "/build/home:Iggy/10.2/i586/_repository/delete_me.rpm"
     assert_response :success
 
-    prepare_request_with_user "Iggy", "asdfasdf"
+    login_Iggy
     delete "/build/home:Iggy/10.2/i586/_repository/delete_me.rpm"
     assert_response :success
     delete "/build/home:Iggy/10.2/i586/_repository/not_existing.rpm"
@@ -127,21 +135,6 @@ class BuildControllerTest < ActionController::IntegrationTest
     assert_match(/Delete operation of build results is not allowed/, @response.body)
   end
 
-  def test_read_access_hidden_project_index
-    # Test if hidden projects appear for the right users
-    # testing build_controller project_index 
-    # currently this test shows that there's an information leak.
-    get "/build"
-    assert_response :success
-    assert_no_match(/entry name="HiddenProject"/, @response.body)
-    # retry with maintainer
-    prepare_request_with_user "adrian", "so_alone"
-    get "/build"
-    assert_response :success
-    assert_match(/entry name="HiddenProject"/, @response.body)
-    prepare_request_valid_user
-  end
-
   def test_buildinfo
     # just testing routing
     get "/build/buildinfo"
@@ -151,13 +144,13 @@ class BuildControllerTest < ActionController::IntegrationTest
     # get source info to compare with
     get "/source/home:Iggy/TestPack"
     assert_response :success
-    assert_no_tag :tag => "xsrcmd5" # is no link, srcmd5 is valid
-    node = ActiveXML::XMLNode.new(@response.body)
-    srcmd5 = node.srcmd5
+    assert_no_xml_tag :tag => "xsrcmd5" # is no link, srcmd5 is valid
+    node = ActiveXML::Node.new(@response.body)
+    srcmd5 = node.value(:srcmd5)
 
     # osc local package build call
     get "/source/home:Iggy/TestPack/TestPack.spec"
-    post "/build/home:Iggy/10.2/i586/_repository/_buildinfo", @response.body
+    raw_post "/build/home:Iggy/10.2/i586/_repository/_buildinfo", @response.body
     assert_response :success
 
     # this is only testing the rep server buildinfo, not the one generated by scheduler
@@ -166,52 +159,52 @@ class BuildControllerTest < ActionController::IntegrationTest
     rev="2"
     b_cnt="2"
     ci_cnt="42"
-    assert_tag :tag => "buildinfo"
-    assert_tag :tag => "arch", :content => "i586"
-    assert_tag :tag => "srcmd5", :content => srcmd5
-    assert_tag :tag => "file", :content => "TestPack.spec"
-    assert_tag :tag => "debuginfo", :content => "0"
-    assert_tag :tag => "release", :content => "#{ci_cnt}.#{b_cnt}"
-    assert_tag :tag => "versrel", :content => "1.0-#{ci_cnt}"
-    assert_tag :tag => "rev", :content => rev
-    assert_tag :tag => "path", :attributes => { :project => "home:Iggy", :repository => "10.2" }
-    buildinfo = ActiveXML::XMLNode.new(@response.body)
+    assert_xml_tag :tag => "buildinfo"
+    assert_xml_tag :tag => "arch", :content => "i586"
+    assert_xml_tag :tag => "srcmd5", :content => srcmd5
+    assert_xml_tag :tag => "file", :content => "TestPack.spec"
+    assert_xml_tag :tag => "debuginfo", :content => "0"
+    assert_xml_tag :tag => "release", :content => "#{ci_cnt}.#{b_cnt}"
+    assert_xml_tag :tag => "versrel", :content => "1.0-#{ci_cnt}"
+    assert_xml_tag :tag => "rev", :content => rev
+    assert_xml_tag :tag => "path", :attributes => { :project => "home:Iggy", :repository => "10.2" }
+    #buildinfo = ActiveXML::Node.new(@response.body)
 
     # find scheduler job and compare it with buildinfo
-    jobfile=File.new("#{RAILS_ROOT}/tmp/backend_data/jobs/i586/home:Iggy::10.2::TestPack-#{srcmd5}")
-    schedulerjob = Document.new(jobfile).root
 # FIXME: to be implemented, compare scheduler job with rep server job
-#    schedulerjob.elements.each do |jobnode|
-#      puts "test", jobnode.inspect
-#    end
+#   jobfile=File.new("#{Rails.root}/tmp/backend_data/jobs/i586/home:Iggy::10.2::TestPack-#{srcmd5}")
+#   schedulerjob = Document.new(jobfile).root
+#   schedulerjob.elements.each do |jobnode|
+#     puts "test", jobnode.inspect
+#   end
     
   end
 
   def test_builddepinfo
     get "/build/home:Iggy/10.2/i586/_builddepinfo"
     assert_response :success
-    assert_tag :parent => { :tag => "package", :attributes => { :name => "TestPack" } }, :tag => "source", :content => "TestPack"
-    assert_tag :parent => { :tag => "package", :attributes => { :name => "TestPack" } }, :tag => "subpkg", :content => "TestPack"
+    assert_xml_tag :parent => { :tag => "package", :attributes => { :name => "TestPack" } }, :tag => "source", :content => "TestPack"
+    assert_xml_tag :parent => { :tag => "package", :attributes => { :name => "TestPack" } }, :tag => "subpkg", :content => "TestPack"
 
     get "/build/HiddenProject/nada/i586/_builddepinfo"
     assert_response 404
-    assert_tag( :tag => "status", :attributes => { :code => "unknown_project" } ) 
+    assert_xml_tag( :tag => "status", :attributes => { :code => "unknown_project" } ) 
 
-    prepare_request_with_user "adrian", "so_alone"
+    login_adrian
     get "/build/HiddenProject/nada/i586/_builddepinfo"
     assert_response :success
 
     # the webui is calling this with invalid package name to get the cycles only
     get "/build/home:Iggy/10.2/i586/_builddepinfo?package=-"
     assert_response :success
-    assert_no_tag :parent => { :tag => "package", :attributes => { :name => "TestPack" } }, :tag => "source"
-    assert_no_tag :parent => { :tag => "package", :attributes => { :name => "TestPack" } }, :tag => "subpkg"
+    assert_no_xml_tag :parent => { :tag => "package", :attributes => { :name => "TestPack" } }, :tag => "source"
+    assert_no_xml_tag :parent => { :tag => "package", :attributes => { :name => "TestPack" } }, :tag => "subpkg"
   end
 
   def test_package_index
     get "/build/home:Iggy/10.2/i586/TestPack"
     assert_response :success
-    assert_tag( :tag => "binarylist" ) 
+    assert_xml_tag( :tag => "binarylist" ) 
   end
 
   def test_read_access_hidden_package_index
@@ -219,10 +212,10 @@ class BuildControllerTest < ActionController::IntegrationTest
     assert_response 404
     assert_match(/unknown_project/, @response.body)
     # retry with maintainer
-    prepare_request_with_user "adrian", "so_alone"
+    login_adrian
     get "/build/HiddenProject/nada/i586/pack"
     assert_response :success
-    assert_tag( :tag => "binarylist" ) 
+    assert_xml_tag( :tag => "binarylist" ) 
     prepare_request_valid_user
   end
 
@@ -238,7 +231,7 @@ class BuildControllerTest < ActionController::IntegrationTest
     prepare_request_valid_user
     get "/build/SourceprotectedProject/repo/i586/pack/_log"
     assert_response 403
-    assert_tag( :tag => "status", :attributes => { :code => "source_access_no_permission" } ) 
+    assert_xml_tag( :tag => "status", :attributes => { :code => "source_access_no_permission" } ) 
     # retry with maintainer
     prepare_request_with_user "sourceaccess_homer", "homer"
     get "/build/SourceprotectedProject/repo/i586/pack/_log"
@@ -251,7 +244,7 @@ class BuildControllerTest < ActionController::IntegrationTest
     assert_response 404
     assert_match(/unknown_project/, @response.body)
     # retry with maintainer
-    prepare_request_with_user "adrian", "so_alone"
+    login_adrian
     get "/build/HiddenProject/nada/i586/pack/_log"
     assert_response :success
   end
@@ -263,7 +256,7 @@ class BuildControllerTest < ActionController::IntegrationTest
     assert_response 403
     assert_match(/download_binary_no_permission/, @response.body)
     # retry with maintainer
-    ActionController::IntegrationTest::reset_auth
+    reset_auth
     prepare_request_with_user "binary_homer", "homer"
     get "/build/BinaryprotectedProject/nada/i586/bdpack/_log"
     assert_response :success
@@ -272,17 +265,21 @@ class BuildControllerTest < ActionController::IntegrationTest
   def test_result
     get "/build/home:Iggy/_result"
     assert_response :success
-    assert_tag :tag => "resultlist", :children =>  { :count => 2 }
+    assert_xml_tag :tag => "resultlist", :children =>  { :count => 2 }
+
+    get "/build/home:Iggy/_result?lastsuccess&pathproject=kde4&package=TestPack"
+    assert_response 404
+    assert_xml_tag(:tag => "status", :attributes => { :code => 'no_repositories_found' })
   end
 
   def test_read_access_hidden_result_prj
     get "/build/HiddenProject/_result"
     assert_response 404
     # retry with maintainer
-    prepare_request_with_user "adrian", "so_alone"
+    login_adrian
     get "/build/HiddenProject/_result"
     assert_response :success
-    assert_tag :tag => "resultlist"
+    assert_xml_tag :tag => "resultlist"
     prepare_request_valid_user
   end
 
@@ -290,11 +287,11 @@ class BuildControllerTest < ActionController::IntegrationTest
     get "/build/HiddenProject/_result?package=pack"
     assert_response 404
     # retry with maintainer
-    ActionController::IntegrationTest::reset_auth
-    prepare_request_with_user "adrian", "so_alone"
+    reset_auth
+    login_adrian
     get "/build/HiddenProject/_result?package=pack"
     assert_response :success
-    assert_tag :tag => "resultlist"
+    assert_xml_tag :tag => "resultlist"
     prepare_request_valid_user
 
   end
@@ -313,13 +310,13 @@ class BuildControllerTest < ActionController::IntegrationTest
     # 404 on invalid
     get "/build/HiddenProject/nada/i586/pack/package?view=fileinfo"
     assert_response 404
-    assert_tag :tag => "status", :attributes => { :code => "unknown_project" }
+    assert_xml_tag :tag => "status", :attributes => { :code => "unknown_project" }
     get "/build/HiddenProject/nada/i586/pack/package-1.0-1.i586.rpm?view=fileinfo"
     assert_response 404
-    assert_tag :tag => "status", :attributes => { :code => "unknown_project" }
+    assert_xml_tag :tag => "status", :attributes => { :code => "unknown_project" }
     # success on valid
-    ActionController::IntegrationTest::reset_auth
-    prepare_request_with_user "adrian", "so_alone"
+    reset_auth
+    login_adrian
     get "/build/HiddenProject/nada/i586/pack/package?view=fileinfo"
     assert_response 404
     assert_match(/No such file or directory/, @response.body)
@@ -337,7 +334,7 @@ class BuildControllerTest < ActionController::IntegrationTest
     assert_response 403
     assert_match(/download_binary_no_permission/, @response.body)
     # success on valid
-    ActionController::IntegrationTest::reset_auth
+    reset_auth
     prepare_request_with_user "binary_homer", "homer"
     get "/build/BinaryprotectedProject/nada/i586/bdpack/package?view=fileinfo"
     assert_response 404
@@ -360,16 +357,16 @@ class BuildControllerTest < ActionController::IntegrationTest
   def test_read_access_hidden_file
     get "/build/HiddenProject/nada/i586/pack/"
     assert_response 404
-    assert_tag :tag => "status", :attributes => { :code => "unknown_project" }
+    assert_xml_tag :tag => "status", :attributes => { :code => "unknown_project" }
     get "/build/HiddenProject/nada/i586/pack/package-1.0-1.i586.rpm"
     assert_response 404
-    assert_tag :tag => "status", :attributes => { :code => "unknown_project" }
+    assert_xml_tag :tag => "status", :attributes => { :code => "unknown_project" }
     get "/build/HiddenProject/nada/i586/pack/NOT_EXISTING"
     assert_response 404
-    assert_tag :tag => "status", :attributes => { :code => "unknown_project" }
+    assert_xml_tag :tag => "status", :attributes => { :code => "unknown_project" }
     # success on valid
-    ActionController::IntegrationTest::reset_auth
-    prepare_request_with_user "adrian", "so_alone"
+    reset_auth
+    login_adrian
     get "/build/HiddenProject/nada/i586/pack/"
     assert_response :success
     assert_match(/binarylist/, @response.body)
@@ -383,7 +380,7 @@ class BuildControllerTest < ActionController::IntegrationTest
   def test_project_index
     get "/build/home:Iggy"
     assert_response :success
-    assert_tag :tag => "directory", :children =>  { :count => 1 }
+    assert_xml_tag :tag => "directory", :children =>  { :count => 1 }
 
     put "/build/home:Iggy", :cmd => 'say_hallo'
     assert_response 403
@@ -393,7 +390,7 @@ class BuildControllerTest < ActionController::IntegrationTest
     assert_response 400
     assert_match(/unsupported POST command/, @response.body)
 
-    prepare_request_with_user "Iggy", "asdfasdf" 
+    login_Iggy 
     post "/build/home:Iggy"
     assert_response 400
     post "/build/home:Iggy?cmd=say_hallo"
@@ -419,7 +416,7 @@ class BuildControllerTest < ActionController::IntegrationTest
     assert_response 403
     assert_match(/No permission to execute command on package/, @response.body)
 
-    prepare_request_with_user "fred", "geröllheimer" 
+    login_fred 
     post "/build/Apache?cmd=wipe"
     assert_response :success
     post "/build/Apache?cmd=wipe&package=apache2"
@@ -432,6 +429,19 @@ class BuildControllerTest < ActionController::IntegrationTest
   end
 
   def test_read_access_hidden_project_index
+    # Test if hidden projects appear for the right users
+    # testing build_controller project_index 
+    # currently this test shows that there's an information leak.
+    get "/build"
+    assert_response :success
+    assert_no_match(/entry name="HiddenProject"/, @response.body)
+    # retry with maintainer
+    login_adrian
+    get "/build"
+    assert_response :success
+    assert_match(/entry name="HiddenProject"/, @response.body)
+    prepare_request_valid_user
+
     #invalid
     get "/build/HiddenProject"
     assert_response 404
@@ -454,11 +464,11 @@ class BuildControllerTest < ActionController::IntegrationTest
     assert_match(/unknown_project/, @response.body)
 
     #valid
-    ActionController::IntegrationTest::reset_auth
-    prepare_request_with_user "adrian", "so_alone" 
+    reset_auth
+    login_adrian 
     get "/build/HiddenProject"
     assert_response :success
-    assert_tag :tag => "directory", :children =>  { :count => 1 }
+    assert_xml_tag :tag => "directory", :children =>  { :count => 1 }
 
     put "/build/HiddenProject", :cmd => 'say_hallo'
     assert_response 403
@@ -499,8 +509,8 @@ class BuildControllerTest < ActionController::IntegrationTest
     get "/build/HiddenProject/nada/i586/_jobhistory?package=pack"
     assert_response 404
     # retry with maintainer
-    ActionController::IntegrationTest::reset_auth
-    prepare_request_with_user "adrian", "so_alone"
+    reset_auth
+    login_adrian
     get "/build/HiddenProject/nada/i586/_jobhistory"
     assert_response :success
     get "/build/HiddenProject/nada/i586/_jobhistory?package=pack"

@@ -3,26 +3,6 @@
 #
 
 ## Path:        Applications/OBS
-## Description: define for which architectures the packages should get build
-## Type:        regexp((i586|x86_64|ppc|ppc64|s390|s390x|ia64|sparc|sparcv8|sparcv9|sparcv9v|sparc64|sparc64v|mips|mips64|mipsel|mips64el|armv4l|armv5el|armv6el|armv7el|armv7hl|armv8el|sh4)+)
-## Default:     "i586 x86_64"
-## Config:      OBS
-#
-# This is the space separated list of all target architectures for
-# this obs backend
-#
-# Each of them can be put inside in any combination
-#
-# Every scheduler needs memory, so many schedulers can eat the memory
-# of your obs server, e.g. a system with 4 schedulers and
-# appropriately loaded sources/binaries can eat 1-2 GB RAM
-#
-# If you also have workers on this host, each worker can also need 1
-# GB RAM in some known cases (e.g. compiling gcc)
-#
-OBS_SCHEDULER_ARCHITECTURES="i586 x86_64 armv7l"
-
-## Path:        Applications/OBS
 ## Description: The OBS backend code directory
 ## Type:        string
 ## Default:     ""
@@ -106,6 +86,20 @@ OBS_REPO_SERVERS=""
 OBS_WORKER_INSTANCES="0"
 
 ## Path:        Applications/OBS
+## Description: define names of build instances for z/VM
+## Type:        string
+## Default:     ""
+## Config:      OBS
+#
+# The names of the workers as defined in z/VM. These must have two minidisks
+# assigned, and have a secondary console configured to the local machine: 
+# 0150 is the root device
+# 0250 is the swap device
+#
+#OBS_WORKER_INSTANCE_NAMES="LINUX075 LINUX076 LINUX077"
+OBS_WORKER_INSTANCE_NAMES=""
+
+## Path:        Applications/OBS
 ## Description: The base directory, where sub directories for each worker will get created
 ## Type:        string
 ## Default:     ""
@@ -141,6 +135,17 @@ OBS_WORKER_JOBS="1"
 ## Config:      OBS
 #
 OBS_WORKER_TEST_MODE=""
+
+## Path:        Applications/OBS
+## Description: define one or more labels for the build host.
+## Type:        string
+## Default:     ""
+## Config:      OBS
+#
+# A label can be used to build specific packages only on dedicated hosts.
+# For example for benchmarking.
+#
+OBS_WORKER_HOSTLABELS=""
 
 ## Path:        Applications/OBS
 ## Description: Register in SLP server
@@ -188,7 +193,7 @@ OBS_WORKER_NICE_LEVEL=18
 
 ## Path:        Applications/OBS
 ## Description: Set used VM type by worker
-## Type:        ("auto" | "xen" | "kvm" | "lxc" | "none")
+## Type:        ("auto" | "xen" | "kvm" | "lxc" | "zvm" | "emulator:$arch" | "emulator:$arch:$script" | "none")
 ## Default:     "auto"
 ## Config:      OBS
 #
@@ -201,6 +206,7 @@ OBS_VM_TYPE="auto"
 ## Default:     "none"
 ## Config:      OBS
 #
+# For z/VM this is normally /boot/image
 #
 OBS_VM_KERNEL="none"
 
@@ -217,6 +223,9 @@ OBS_VM_KERNEL="none"
 #
 # a working initrd file which includes virtio and binfmt_misc for OBS in order to work fine
 #
+# for z/VM, the build script will create a initrd at the given location if
+# it does not yet exist.
+# 
 OBS_VM_INITRD="none"
 
 ## Path:        Applications/OBS
@@ -238,13 +247,22 @@ OBS_VM_DISK_AUTOSETUP_ROOT_FILESIZE="4096"
 OBS_VM_DISK_AUTOSETUP_SWAP_FILESIZE="1024"
 
 ## Path:        Applications/OBS
-## Description: Filesystem to use for autosetup {none,ext3}=ext3, ext4=ext4
+## Description: Filesystem to use for autosetup {none,ext4}=ext4, ext3=ext3
 ## Type:        string
 ## Default:     "ext3"
 ## Config:      OBS
 #
 #
 OBS_VM_DISK_AUTOSETUP_FILESYSTEM="ext3"
+
+## Path:        Applications/OBS
+## Description: Filesystem mount options to use for autosetup
+## Type:        string
+## Default:     ""
+## Config:      OBS
+#
+#
+OBS_VM_DISK_AUTOSETUP_MOUNT_OPTIONS=""
 
 ## Path:        Applications/OBS
 ## Description: Enable build in memory

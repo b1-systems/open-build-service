@@ -1,12 +1,8 @@
-groups_199: 
-  created_at: 2011-07-29 12:00:21
-  title: test_group_b
-  updated_at: 2011-07-29 12:00:21
-  id: "199"
-  parent_id: 
-groups_99: 
-  created_at: 2011-07-29 12:00:21
+test_group:
+  created_at: 2011-07-29 14:00:21.000000000 Z
+  updated_at: 2011-07-29 14:00:21.000000000 Z
   title: test_group
-  updated_at: 2011-07-29 12:00:21
-  id: "99"
-  parent_id: 
+test_group_b:
+  created_at: 2011-07-29 14:00:21.000000000 Z
+  updated_at: 2011-07-29 14:00:21.000000000 Z
+  title: test_group_b

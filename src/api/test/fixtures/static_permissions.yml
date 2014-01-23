@@ -1,54 +1,36 @@
-static_permissions_1: 
-  title: global_project_change
-  id: "1"
-static_permissions_10: 
-  title: create_package
-  id: "10"
-static_permissions_11: 
-  title: download_binaries
-  id: "11"
-static_permissions_12: 
-  title: source_access
-  id: "12"
-static_permissions_13: 
-  title: private_view
-  id: "13"
-static_permissions_14: 
+access:
   title: access
-  id: "14"
-static_permissions_19: 
-  title: global_change_project
-  id: "19"
-static_permissions_2: 
-  title: global_project_create
-  id: "2"
-static_permissions_20: 
-  title: global_create_project
-  id: "20"
-static_permissions_21: 
-  title: global_change_package
-  id: "21"
-static_permissions_22: 
-  title: global_create_package
-  id: "22"
-static_permissions_3: 
-  title: global_package_change
-  id: "3"
-static_permissions_4: 
-  title: global_package_create
-  id: "4"
-static_permissions_5: 
-  title: status_message_create
-  id: "5"
-static_permissions_6: 
-  title: set_download_counters
-  id: "6"
-static_permissions_7: 
-  title: change_project
-  id: "7"
-static_permissions_8: 
-  title: create_project
-  id: "8"
-static_permissions_9: 
+change_package:
   title: change_package
-  id: "9"
+change_project:
+  title: change_project
+create_package:
+  title: create_package
+create_project:
+  title: create_project
+download_binaries:
+  title: download_binaries
+global_change_package:
+  title: global_change_package
+global_change_project:
+  title: global_change_project
+global_create_package:
+  title: global_create_package
+global_create_project:
+  title: global_create_project
+global_package_change:
+  title: global_package_change
+global_package_create:
+  title: global_package_create
+global_project_change:
+  title: global_project_change
+global_project_create:
+  title: global_project_create
+private_view:
+  title: private_view
+set_download_counters:
+  title: set_download_counters
+source_access:
+  title: source_access
+status_message_create:
+  title: status_message_create

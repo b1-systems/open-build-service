@@ -1,434 +1,164 @@
-require 'status_helper'
+require_dependency 'status_helper'
 
 class StatusController < ApplicationController
-  
-  class NotInRepo < Exception; end
 
-  def messages
-    # this displays the status messages the Admin can enter for users.
-    if request.get?
+  class PermissionDeniedError < APIException
+    setup 403
+  end
 
-      @messages = StatusMessage.find :all,
-        :conditions => "ISNULL(deleted_at)",
-        :limit => params[:limit],
-        :order => 'status_messages.created_at DESC',
-        :include => :user
-      @count = StatusMessage.find( :first, :select => 'COUNT(*) AS cnt' ).cnt
+  def list_messages
+    @messages = StatusMessage.alive.limit(params[:limit]).order('created_at DESC').includes(:user)
+    @count = @messages.size
+    render xml: render_to_string(partial: 'messages')
+  end
 
-    elsif request.put?
+  def show_message
+    @messages = [StatusMessage.find(params[:id])]
+    @count = 1
+    render xml: render_to_string(partial: 'messages')
+  end
 
-      # check permissions
-      unless permissions.status_message_create
-        render_error :status => 403, :errorcode => "permission denied",
-          :message => "message(s) cannot be created, you have not sufficient permissions"
-        return
-      end
+  class CreatingMessagesError < APIException
+  end
 
-      new_messages = ActiveXML::XMLNode.new( request.raw_post )
-
-      begin
-        if new_messages.has_element? 'message'
-          # message(s) are wrapped in outer xml tag 'status_messages'
-          new_messages.each_message do |msg|
-            message = StatusMessage.new
-            message.message = msg.to_s
-            message.severity = msg.value :severity
-            message.user = @http_user
-            message.save
-          end
-        else
-          raise RuntimeError.new 'no message' if new_messages.element_name != 'message'
-          # just one message, NOT wrapped in outer xml tag 'status_messages'
-          message = StatusMessage.new
-          message.message = new_messages.to_s
-          message.severity = new_messages.value :severity
-          message.user = @http_user
-          message.save
-        end
-        render_ok
-      rescue RuntimeError
-        render_error :status => 400, :errorcode => "error creating message(s)",
-          :message => "message(s) cannot be created"
-        return
-      end
-
-    elsif request.delete?
-
-      # check permissions
-      unless permissions.status_message_create
-        render_error :status => 403, :errorcode => "permission denied",
-          :message => "message cannot be deleted, you have not sufficient permissions"
-        return
-      end
-
-      begin
-        StatusMessage.find( params[:id] ).delete
-        render_ok
-      rescue
-        render_error :status => 400, :errorcode => "error deleting message",
-          :message => "error deleting message - id not found or not given"
-      end
-
-    else
-
-      render_error :status => 400, :errorcode => "only_put_or_get_method_allowed",
-        :message => "only PUT or GET method allowed for this action"
-      return
-
+  def update_messages
+    # check permissions
+    unless permissions.status_message_create
+      raise PermissionDeniedError.new 'message(s) cannot be created, you have not sufficient permissions'
     end
+
+    new_messages = ActiveXML::Node.new(request.raw_post)
+
+    if new_messages.has_element? 'message'
+      # message(s) are wrapped in outer xml tag 'status_messages'
+      new_messages.each('message') do |msg|
+        save_new_message(msg)
+      end
+    else
+      # TODO: make use of a validator
+      raise CreatingMessagesError.new "no message #{new_messages.dump_xml}" if new_messages.element_name != 'message'
+      # just one message, NOT wrapped in outer xml tag 'status_messages'
+      save_new_message(new_messages)
+    end
+    render_ok
+  end
+
+  def save_new_message(msg)
+    message = StatusMessage.new
+    message.message = msg.to_s
+    message.severity = msg.value :severity
+    message.user = User.current
+    message.save!
+  end
+
+  def delete_message
+    # check permissions
+    unless permissions.status_message_create
+      raise PermissionDeniedError.new 'message cannot be deleted, you have not sufficient permissions'
+    end
+
+    StatusMessage.find(params[:id]).delete
+    render_ok
   end
 
   def workerstatus
-    begin
-      data = Rails.cache.read('workerstatus')
-    rescue Zlib::GzipFile::Error
-      data = nil
-    end
-    data=ActiveXML::Base.new(data || update_workerstatus_cache)
-    #accessprjs  = DbProject.find_by_sql("select p.id from db_projects p join flags f on f.db_project_id = p.id where f.flag='access'")
-    #accesspkgs  = DbPackage.find_by_sql("select p.id from db_packages p join flags f on f.db_package_id = p.id where f.flag='access'")
-    data.each_building do |b|
-      prj = DbProject.find_by_name(b.project)
-      # no prj -> we are not allowed
-      if prj.nil?
-        logger.debug "workerstatus2clean: hiding #{b.project} for user #{@http_user.login}"
-        b.set_attribute('project', "---")
-        b.set_attribute('repository', "---")
-        b.set_attribute('package', "---")
-      end
-    end
-    send_data data.dump_xml
+    send_data WorkerStatus.hidden.dump_xml
   end
 
   def history
     required_parameters :hours, :key
-    samples = begin Integer(params[:samples] || '100') rescue 0 end
-    samples = [samples, 1].max
+    samples = begin
+      Integer(params[:samples] || '100') rescue 0
+    end
+    @samples = [samples, 1].max
 
-    hours = begin Integer(params[:hours] || '24') rescue 24 end
-    logger.debug "#{Time.now.to_i} to #{hours.to_i}"
+    hours = begin
+      Integer(params[:hours] || '24') rescue 24
+    end
     starttime = Time.now.to_i - hours.to_i * 3600
-    data = Array.new
-    values = StatusHistory.find(:all, :conditions => [ "time >= ? AND \`key\` = ?", starttime, params[:key] ]).collect {|line| [line.time.to_i, line.value.to_f] }
-    builder = Builder::XmlMarkup.new( :indent => 2 )
-    xml = builder.history do
-      StatusHelper.resample(values, samples).each do |time,val|
-        builder.value( :time => time,
-		      :value => val ) # for debug, :timestring => Time.at(time)  )
-      end
-    end
-    render :text => xml, :content_type => "text/xml"
+    @values = StatusHistory.where("time >= ? AND \`key\` = ?", starttime, params[:key]).pluck(:time, :value).collect { |time, value| [time.to_i, value.to_f] }
   end
 
-  def update_workerstatus_cache
-    # do not add hiding in here - this is purely for statistics
-    ret = backend_get('/build/_workerstatus')
-    data=REXML::Document.new(ret)
+  # move to models?
+  def role_from_cache(role_id)
+    @rolecache[role_id] || (@rolecache[role_id] = Role.find(role_id).title)
+  end
 
-    mytime = Time.now.to_i
-    Rails.cache.write('workerstatus', ret)
-    data.root.each_element('blocked') do |e|
-      line = StatusHistory.new
-      line.time = mytime
-      line.key = 'blocked_%s' % [ e.attributes['arch'] ]
-      line.value = e.attributes['jobs']
-      line.save
-    end
-    data.root.each_element('waiting') do |e|
-      line = StatusHistory.new
-      line.time = mytime
-      line.key = "waiting_#{e.attributes['arch']}"
-      line.value = e.attributes['jobs']
-      line.save
-    end
-    data.root.each_element('scheduler') do |s|
-      queue = s.elements['queue']
-      next unless queue
-      arch = s.attributes['arch']
-      StatusHistory.create :time => mytime, :key => "squeue_high_#{arch}", :value => queue.attributes['high']
-      StatusHistory.create :time => mytime, :key => "squeue_next_#{arch}", :value => queue.attributes['next']
-      StatusHistory.create :time => mytime, :key => "squeue_med_#{arch}",  :value => queue.attributes['med']
-      StatusHistory.create :time => mytime, :key => "squeue_low_#{arch}",  :value => queue.attributes['low']
-    end
-    
-    allworkers = Hash.new
-    workers = Hash.new
-    %w{building idle}.each do |state|
-      data.root.each_element(state) do |e|
-        id=e.attributes['workerid']
-        if workers.has_key? id
-          logger.debug 'building+idle worker'
-          next
-        end
-        workers[id] = 1
-        key = state + '_' + e.attributes['hostarch']
-        allworkers["building_#{e.attributes['hostarch']}"] ||= 0
-        allworkers["idle_#{e.attributes['hostarch']}"] ||= 0
-        allworkers[key] = allworkers[key] + 1
+  def user_from_cache(user_id)
+    @usercache[user_id] || (@usercache[user_id] = User.find(user_id).login)
+  end
+
+  def group_from_cache(group_id)
+    @groupcache[group_id] || (@groupcache[group_id] = Group.find(group_id).title)
+  end
+
+  def find_relationships_for_packages(packages)
+    package_hash = Hash.new
+    packages.each_value do |p|
+      package_hash[p.package_id] = p
+      if p.develpack
+        package_hash[p.develpack.package_id] = p.develpack
       end
     end
-    
-    allworkers.each do |key,value|
-      line = StatusHistory.new
-      line.time = mytime
-      line.key = key
-      line.value = value
-      line.save
+    @rolecache = {}
+    @usercache = {}
+    @groupcache = {}
+    relationships = Relationship.where(package_id: package_hash.keys).pluck(:package_id, :user_id, :group_id, :role_id)
+    relationships.each do |package_id, user_id, group_id, role_id|
+      if user_id
+        package_hash[package_id].add_person(user_from_cache(user_id),
+                                            role_from_cache(role_id))
+     else
+        package_hash[package_id].add_group(group_from_cache(group_id),
+                                           role_from_cache(role_id))
+      end
     end
-    
-    ret
   end
-  # not an action, but called from delayed job
-  # private :update_workerstatus_cache
 
   def project
-    dbproj = DbProject.get_by_name(params[:id])
-    key='project_status_xml_%s' % dbproj.name
-    xml = Rails.cache.fetch(key, :expires_in => 10.minutes) do
-      @packages = dbproj.complex_status(backend)
-      render_to_string
-    end
-    render :text => xml
-  end
-
-  def bsrequest_repo_list(project, repo, arch)
-    ret = Hash.new
-    data = Rails.cache.fetch(CGI.escape("vers_repo_list_%s_%s_%s" % [project, repo, arch]), :expires_in => 5.minutes) do
-      uri = URI( "/build/#{CGI.escape(project)}/#{CGI.escape(repo)}/#{CGI.escape(arch)}/_repository?view=binaryversions&nometa")
-      backend.direct_http( uri )
-    end
-
-    repo = ActiveXML::Base.new( data )
-    repo.each_binary do |b|
-      name=b.value(:name).sub('.rpm', '')
-      ret[name] = 1
-    end
-    return ret
-  end
-  private :bsrequest_repo_list
-
-  def bsrequest_repo_file(project, repo, arch, file, version, release)
-    uri = "/build/#{CGI.escape(project)}/#{CGI.escape(repo)}/#{arch}/_repository/#{CGI.escape(file)}.rpm?view=fileinfo_ext"
-    ret = []
-    key = params[:id] + "-" + Digest::MD5.hexdigest(uri)
-    fileinfo = ActiveXML::Base.new( Rails.cache.fetch(key, :expires_in => 15.minutes) { backend.direct_http( URI( uri ) ) } )
-    if fileinfo.version.to_s != version
-      raise NotInRepo, "version #{fileinfo.version}-#{fileinfo.release} (wanted #{version}-#{release})"
-    end
-    if fileinfo.release.to_s != release
-      raise NotInRepo, "version #{fileinfo.version}-#{fileinfo.release} (wanted #{version}-#{release})"
-    end
-
-    fileinfo.each_requires_ext do |r|
-      unless r.has_element? :providedby
-        ret << "#{file}:#{r.dep}"
-      end
-    end
-    return ret
+    dbproj = Project.get_by_name(params[:project])
+    @packages = ProjectStatusCalculator.new(dbproj).calc_status
+    find_relationships_for_packages(@packages)
   end
 
   def bsrequest
     required_parameters :id
-    req = BsRequest.find :id => params[:id]
-    unless req
-      render_error :status => 403, :errorcode => "unknown request", :message => "request #{params[:id]} does not exist" and return
-    end
-    if req.action.value('type') != 'submit'
-      render :text => "<status id='#{params[:id]}' code='unknown'>Not submit</status>\n" and return
-    end
+    Suse::Backend.start_test_backend if Rails.env.test?
+    @id = params[:id]
 
-    begin
-      sproj = DbProject.get_by_name(req.action.source.project)
-      tproj = DbProject.get_by_name(req.action.target.project)
-    rescue DbProject::UnknownObjectError => e
-      render :text => "<status id='#{params[:id]}' code='error'>Can't find project #{e.message}k</status>\n" and return
-    end
-    
-    tocheck_repos = sproj.repositories_linking_project(tproj, backend)
-    if tocheck_repos.empty?
-      render :text => "<status id='#{params[:id]}' code='warning'>No repositories build against target</status>\n"
-      return
-    end
-    begin
-      dir = Directory.find(:project => req.action.source.project,
-        :package => req.action.source.package,
-        :expand => 1, :rev => req.action.source.value('rev'))
-    rescue ActiveXML::Transport::Error => e
-      message, code, api_exception = ActiveXML::Transport.extract_error_message e
-      render :text => "<status id='#{params[:id]}' code='error'>Can't list sources: #{message}</status>\n"
-      return
-    end
-    unless dir
-      render :text => '<status code="error">Source package does not exist</status>\n' and return
-    end
-    srcmd5 = dir.value('srcmd5')
+    action = bsrequest_get_action
 
-    # check current srcmd5
-    begin
-      cdir = Directory.find(:project => req.action.source.project,
-        :package => req.action.source.package,
-        :expand => 1)
-      csrcmd5 = cdir.value('srcmd5') if cdir
-    rescue ActiveXML::Transport::Error => e
-      csrcmd5 = nil
+    sproj = Project.find_by_name!(action.source_project)
+    tproj = Project.find_by_name!(action.target_project)
+    spkg = sproj.packages.find_by_name!(action.source_package)
+
+    dir = Directory.hashed(project: action.source_project,
+                           package: action.source_package,
+                           expand: 1, rev: action.source_rev)
+    @result = PackageBuildStatus.new(spkg).result(target_project: tproj, srcmd5: dir['srcmd5'])
+    render xml: render_to_string(partial: 'bsrequest')
+  end
+
+  class NotFoundError < APIException
+    setup 404
+  end
+
+  class MultipleNotSupported < APIException
+  end
+
+  class NotSubmitRequest < APIException
+  end
+
+  def bsrequest_get_action
+    rel = BsRequestAction.where(bs_request_id: params[:id])
+    if rel.count > 1
+      raise MultipleNotSupported.new
     end
+    action = rel.first
+    raise NotFoundError.new unless action
 
-    outputxml = "<status id='#{params[:id]}'>\n"
-    
-    re_filename = Regexp.new('^(.*)-([^-]*)-([^-]*)\.([^-.]*).rpm')
-    tocheck_repos.each do |srep|
-      outputxml << " <repository name='#{srep.name}'>\n"
-      trepo = []
-      archs = []
-      srep.each_path do |p|
-        if p.project != sproj.name
-          r = Repository.find_by_project_and_repo_name(p.project, p.value(:repository))
-          if r.db_project = tproj
-            r.architectures.each {|a| archs << a.name }
-          end
-          trepo << [p.project, p.value(:repository)]
-        end
-      end
-      archs.uniq!
-      unless trepo and not trepo.nil?
-        render :text => "<status id='#{params[:id]}' code='warning'>Can not find repository building against target</status>\n" and return
-      end
-      logger.debug "trepo #{trepo.inspect}"
-      archs.each do |arch|
-        everbuilt = 0
-        eversucceeded = 0
-        buildcode=nil
-        hist = Jobhistory.find(:project => sproj.name,
-          :repository => srep.name,
-          :package => req.action.source.package,
-          :arch => arch.to_s, :limit => 20 )
-        next unless hist
-        hist.each_jobhist do |jh|
-          next if jh.srcmd5 != srcmd5
-          everbuilt = 1
-          if jh.code == 'succeeded' || jh.code == 'unchanged'
-            buildcode='succeeded'
-            eversucceeded = 1
-            break
-          end
-        end
-        logger.debug "arch:#{arch} md5:#{srcmd5} successed:#{eversucceeded} built:#{everbuilt}"
-        missingdeps=[]
-        if eversucceeded == 1
-          uri = URI( "/build/#{CGI.escape(sproj.name)}/#{CGI.escape(srep.name)}/#{CGI.escape(arch.to_s)}/#{CGI.escape(req.action.source.package.to_s)}/_buildinfo")
-          begin
-            buildinfo = ActiveXML::Base.new( backend.direct_http( uri ) )
-          rescue ActiveXML::Transport::Error => e
-            # if there is an error, we ignore
-            message, code, api_exception = ActiveXML::Transport.extract_error_message e
-            render :text => "<status id='#{params[:id]}' code='error'>Can't get buildinfo: #{message}</status>\n"
-            return
-          end
-          packages = Hash.new
-          trepo.each do |p, r|
-            begin
-              packages.merge!(bsrequest_repo_list(p, r, arch.to_s))
-            rescue ActiveXML::Transport::Error => e
-              message, code, api_exception = ActiveXML::Transport.extract_error_message e
-              render :text => "<status id='#{params[:id]}' code='error'>Can't list #{p}/#{r}/#{arch.to_s}: #{message}</status>\n"
-              return
-            end
-          end
-
-          buildinfo.each_bdep do |b|
-            unless b.value(:preinstall)
-              unless packages.has_key? b.value(:name)
-                missingdeps << b.name
-              end
-            end
-          end
-          
-          uri = URI( "/build/#{CGI.escape(sproj.name)}/#{CGI.escape(srep.name)}/#{CGI.escape(arch.to_s)}/#{CGI.escape(req.action.source.package.to_s)}")
-          binaries = ActiveXML::Base.new( backend.direct_http( uri ) ) 
-          binaries.each_binary do |f|
-            # match to the repository filename
-            m = re_filename.match(f.value(:filename)) 
-            next unless m
-            filename_file = m[1]
-            filename_version = m[2]
-            filename_release = m[3]
-            filename_arch = m[4]
-            # work around as long as we build ia64 baselibs (soon to be gone)
-            next if filename_arch == "ia64"
-            md = nil
-            begin
-              md = bsrequest_repo_file(sproj.name, srep.name, filename_arch, filename_file, filename_version, filename_release)
-            rescue ActiveXML::Transport::NotFoundError
-              if filename_arch != arch
-                filename_arch = arch.to_s
-                retry
-              end
-            rescue NotInRepo => e
-              render :text => "<status id='#{params[:id]}' code='building'>Not in repo #{f.value(:filename)} - #{e}</status>"
-              return
-            end
-            if md && md.size > 0
-              missingdeps << md
-            end
-          end
-        end
-        # if the package does not appear in build history, check flags
-        if everbuilt == 0
-          spkg = DbPackage.find_by_project_and_name req.action.source.project, req.action.source.package
-          buildflag=spkg.find_flag_state("build", srep.name, arch.to_s)
-          logger.debug "find_flag_state #{srep.name} #{arch.to_s} #{buildflag}"
-          if buildflag == 'disable'
-            buildcode='disabled'
-          end
-        end
-
-        if !buildcode && srcmd5 != csrcmd5 && everbuilt == 1
-          buildcode='failed' # has to be
-        end
- 
-        unless buildcode
-          buildcode="unknown"
-          begin
-            uri = URI( "/build/#{CGI.escape(sproj.name)}/_result?package=#{CGI.escape(req.action.source.package.to_s)}&repository=#{CGI.escape(srep.name)}&arch=#{CGI.escape(arch.to_s)}" )
-            resultlist = ActiveXML::Base.new( backend.direct_http( uri ) )
-            currentcode = nil
-            resultlist.each_result do |r|
-              r.each_status { |s| currentcode = s.value(:code) }
-            end
-          rescue ActiveXML::Transport::Error
-            currentcode = nil
-          end
-          if ['unresolvable', 'failed', 'broken'].include?(currentcode)
-            buildcode='failed'
-          end
-          if ['building', 'scheduled', 'finished', 'signing', 'blocked'].include?(currentcode)
-            buildcode='building'
-          end
-          if currentcode == 'excluded'
-            buildcode='excluded'
-          end
-          # if it's currently succeeded but !everbuilt, it's different sources
-          if currentcode == 'succeeded'
-            if srcmd5 == csrcmd5
-              buildcode='building' # guesssing
-            else
-              buildcode='outdated'
-            end
-          end
-        end
-        outputxml << "  <arch arch='#{arch.to_s}' result='#{buildcode}'"
-        outputxml << " missing='#{missingdeps.join(',').to_xs}'" if (missingdeps.size > 0 && buildcode == 'succeeded')
-        outputxml << "/>\n"
-      end
-      outputxml << " </repository>\n"
-    end
-    outputxml << "</status>\n"
-
-    if outputxml.blank?
-      render :text => tocheck_repos.to_xml
-    else
-      render :text => outputxml
-    end
+    raise NotSubmitRequest.new 'Not submit' unless action.action_type == :submit
+    action
   end
 
 end

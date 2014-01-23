@@ -1,8 +1,7 @@
 require File.expand_path(File.dirname(__FILE__) + "/..") + "/test_helper"
 
-class IssueTrackersControllerTest < ActionController::IntegrationTest
+class IssueTrackersControllerTest < ActionDispatch::IntegrationTest
   def test_should_get_index
-    ActionController::IntegrationTest::reset_auth
     # Get all issue trackers
     get '/issue_trackers'
     assert_response :success
@@ -16,7 +15,7 @@ class IssueTrackersControllerTest < ActionController::IntegrationTest
       <name>test</name>
       <description>My test issue tracker</description>
       <regex>test#\d+test</regex>
-      <long-name>test#%s+test</long-name>
+      <label>test#\@\@\@+test</label>
       <kind>bugzilla</kind>
       <enable-fetch>false</enable-fetch>
       <user>obsbugbot</user>
@@ -25,28 +24,27 @@ class IssueTrackersControllerTest < ActionController::IntegrationTest
       <show-url>http://example.com/@@@</show-url>
     </issue-tracker>
     EOF
-    ActionController::IntegrationTest::reset_auth
     post '/issue_trackers', issue_tracker_xml
     assert_response 401
-    prepare_request_with_user "adrian", "so_alone"
+    login_adrian
     post '/issue_trackers', issue_tracker_xml
     assert_response 403
-    prepare_request_with_user "king", "sunflower"
+    login_king
     post '/issue_trackers', issue_tracker_xml
     assert_response :success
 
     # Show the newly created issue tracker
     get '/issue_trackers/test'
     assert_response :success
-    assert_tag :tag => "name", :content => "test"
-    assert_tag :tag => "description", :content => "My test issue tracker"
-    assert_tag :tag => "regex", :content => "test#\d+test"
-    assert_tag :tag => "long-name", :content => "test#%s+test"
-    assert_tag :tag => "enable-fetch", :content => "false"
-    assert_tag :tag => "kind", :content => "bugzilla"
-    assert_tag :tag => "url", :content => "http://example.com"
-    assert_tag :tag => "show-url", :content => "http://example.com/@@@"
-    assert_no_tag :tag => "password"
+    assert_xml_tag :tag => "name", :content => "test"
+    assert_xml_tag :tag => "description", :content => "My test issue tracker"
+    assert_xml_tag :tag => "regex", :content => "test#\d+test"
+    assert_xml_tag :tag => "label", :content => 'test#@@@+test'
+    assert_xml_tag :tag => "enable-fetch", :content => "false"
+    assert_xml_tag :tag => "kind", :content => "bugzilla"
+    assert_xml_tag :tag => "url", :content => "http://example.com"
+    assert_xml_tag :tag => "show-url", :content => 'http://example.com/@@@'
+    assert_no_xml_tag :tag => "password"
     get '/issue_trackers/test.json'
     assert_response :success
 
@@ -58,38 +56,45 @@ class IssueTrackersControllerTest < ActionController::IntegrationTest
       <name>test</name>
       <description>My even better test issue tracker</description>
       <regex>tester#\d+</regex>
-      <long-name>tester#%s+</long-name>
+      <label>tester#\@\@\@+</label>
       <enable-fetch>true</enable-fetch>
       <kind>cve</kind>
       <url>http://test.com</url>
       <show-url>http://test.com/@@@</show-url>
     </issue-tracker>
     EOF
-    prepare_request_with_user "adrian", "so_alone"
+    login_adrian
     put '/issue_trackers/test', issue_tracker_xml
     assert_response 403
-    prepare_request_with_user "king", "sunflower"
+    login_king
     put '/issue_trackers/test', issue_tracker_xml
     assert_response :success
     get '/issue_trackers/test'
     assert_response :success
-    assert_tag :tag => "name", :content => "test"
-    assert_tag :tag => "description", :content => "My even better test issue tracker"
-    assert_tag :tag => "regex", :content => "tester#\d+"
-    assert_tag :tag => "long-name", :content => "tester#%s+"
-    assert_tag :tag => "enable-fetch", :content => "true"
-    assert_tag :tag => "kind", :content => "cve"
-    assert_tag :tag => "url", :content => "http://test.com"
-    assert_tag :tag => "show-url", :content => "http://test.com/@@@"
-    assert_no_tag :tag => "password"
+    assert_xml_tag :tag => "name", :content => "test"
+    assert_xml_tag :tag => "description", :content => "My even better test issue tracker"
+    assert_xml_tag :tag => "regex", :content => "tester#\d+"
+    assert_xml_tag :tag => "label", :content => 'tester#@@@+'
+    assert_xml_tag :tag => "enable-fetch", :content => "true"
+    assert_xml_tag :tag => "kind", :content => "cve"
+    assert_xml_tag :tag => "url", :content => "http://test.com"
+    assert_xml_tag :tag => "show-url", :content => "http://test.com/@@@"
+    assert_no_xml_tag :tag => "password"
 
     # Delete that issue tracker again
-    prepare_request_with_user "adrian", "so_alone"
+    login_adrian
     delete '/issue_trackers/test'
     assert_response 403
-    prepare_request_with_user "king", "sunflower"
+    login_king
     delete '/issue_trackers/test'
     assert_response :success
   end
 
+  def test_update_job
+    IssueTracker.write_to_backend
+
+    f = IssueTracker.find_by_name!("RT")
+    f.update_issues
+    f.enforced_update_all_issues
+  end
 end

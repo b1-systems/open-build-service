@@ -1,18 +1,17 @@
 require File.expand_path(File.dirname(__FILE__) + "/..") + "/test_helper"
 
 class PackageGroupRoleRelationshipTest < ActiveSupport::TestCase
-  fixtures :package_group_role_relationships, :db_packages, :roles, :groups
 
   def test_validation
     # empty == invalid
-    pgr = PackageGroupRoleRelationship.new 
+    pgr = Relationship.new 
     assert_equal true, pgr.invalid?
     assert_equal false, pgr.save
     # only role
     pgr.role = Role.find_by_title("maintainer")
     assert_equal true, pgr.invalid?
     assert_equal false, pgr.save
-    pgr.db_package = DbPackage.find_by_name("kdelibs")
+    pgr.package = Package.find_by_name("kdelibs")
     assert_equal true, pgr.invalid?
     assert_equal false, pgr.save
     # bad group
@@ -26,7 +25,7 @@ class PackageGroupRoleRelationshipTest < ActiveSupport::TestCase
     assert_equal false, pgr.invalid?
     assert_equal true, pgr.save
 
-    pgr = pgr.clone
+    pgr = pgr.dup
     # not another time
     assert_equal false, pgr.valid?
   end

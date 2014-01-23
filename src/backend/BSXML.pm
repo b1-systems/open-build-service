@@ -58,6 +58,14 @@ our $repo = [
 	    'project',
 	    'repository',
      ]],
+     [ 'hostsystem' =>
+	    'project',
+	    'repository',
+     ],
+     [ 'base' =>		# expanded repo only!
+	    'project',
+	    'repository',
+     ],
       [ 'arch' ],
 	'status',
 ];
@@ -82,6 +90,17 @@ our @flags = (
       [ 'binarydownload' => @disableenable ],
       [ 'sourceaccess' => @disableenable ],
       [ 'access' => @disableenable ],
+);
+
+our @roles = (
+     [[ 'person' =>
+            'role',
+            'userid',
+     ]],
+     [[ 'group' =>
+            'role',
+            'groupid',
+     ]],
 );
 
 our $download = [
@@ -115,43 +134,9 @@ our $proj = [
       [ 'devel', =>
 	    'project',
       ],
-     [[ 'person' =>
-            'role',
-            'userid',
-     ]],
-     [[ 'group' =>
-            'role',
-            'groupid',
-     ]],
+	@roles,
       [ $download ],
 	$maintenance,
-      [ 'attributes' => 
-         [[ 'namespace' => 
-		'name', 
-	     [[ 'modifiable_by' =>
-		    'user',
-		    'group',
-		    'role',
-             ]],
-         ]],
-         [[ 'definition' => 
-		'name', 
-		'namespace', 
-		[],
-		'count',
-              [ 'default' =>
-		  [ 'value' ],
-              ],
-              [ 'allowed' =>
-		  [ 'value' ],
-              ],
-             [[ 'modifiable_by' =>
-		    'user',
-		    'group',
-		    'role',
-             ]],
-         ]],
-      ],
 	@flags,
       [ $repo ],
 ];
@@ -167,14 +152,7 @@ our $pack = [
 	    'project',
 	    'package',
       ],
-     [[ 'person' =>
-            'role',
-            'userid',
-     ]],
-     [[ 'group' =>
-            'role',
-            'groupid',
-     ]],
+	@roles,
 	@disableenable,
 	@flags,
 	'url',
@@ -189,8 +167,10 @@ our $packinfo = [
 	'error',
 	  [ 'dep' ],
 	  [ 'prereq' ],
-	  [ 'imagetype' ],
-	  [ 'imagearch' ],
+	  [ 'imagetype' ],	# kiwi
+	  [ 'imagearch' ],	# kiwi
+	    'nodbgpkgs',	# kiwi
+	    'nosrcpkgs',	# kiwi
 	 [[ 'path' =>
 		'project',
 		'repository',
@@ -233,20 +213,55 @@ our $patchinfo = [
             [],
 	  [ 'package' ],# optional
 	  [ 'binary' ],	# optional
+	 [[ 'releasetarget' => # optional
+		'project',
+		'repository',
+         ]],
          [[ 'issue' =>
 		'tracker',
 		'id',
+		'documented',
+                [],
 		'_content',
 	 ]],
             'category',
             'rating',
+            'name', # optional, old patchinfo name which will become part of incident string
             'summary',
             'description',
             'swampid',	# obsolete
             'packager',
+            'stopped',
             'zypp_restart_needed',
             'reboot_needed',
             'relogin_needed',
+];
+
+our $channel = [
+    'channel' =>
+      [ 'product' =>
+            'project',
+            'name',
+      ],
+     [[ 'target' =>
+	    'project',
+	    'repository',
+	    'tag',         # optional
+     ]],
+     [[ 'binaries' =>
+	    'project',
+	    'repository',
+	    'arch',
+	 [[ 'binary' =>
+		'name',
+		'binaryarch',
+		'project',
+		'repository',
+		'package',
+		'arch',
+		'supportstatus',
+	 ]],
+     ]],
 ];
 
 our $projpack = [
@@ -266,6 +281,7 @@ our $projpack = [
 	    'remoteurl',
 	    'remoteproject',
 	    @flags,
+	    @roles,
 	  [ $repo ],
           [ $download ],
 	 [[ 'package' =>
@@ -276,14 +292,17 @@ our $projpack = [
 		'verifymd5',	# tree id
 		'originproject',
 		'revtime',
+		'constraintsmd5',	# md5sum of constraints file in srcmd5
 		[ $linked ],
 		'error',
 		[ $packinfo ],
 		$aggregatelist,
 		$patchinfo,
+		$channel,
 		@flags,
 		'bcntsynctag',
 	 ]],
+	    'missingpackages',
      ]],
      [[ 'remotemap' =>
 	    'project',
@@ -291,9 +310,12 @@ our $projpack = [
 	    'remoteurl', 
 	    'remoteproject', 
 	    'remoteroot', 
+	    'partition',
 	    'proto',	# project data not included
 	     [],
 	    'config',
+	    @flags,
+	    @roles,
 	  [ $repo ],
 	    'error',
      ]],
@@ -349,6 +371,7 @@ our $dir = [
 	    'mtime',
 	    'error',
 	    'id',
+	    'originproject',	# for package listing
      ]]
 ];
 
@@ -361,6 +384,7 @@ our $fileinfo = [
 	'version',
 	'release',
 	'arch',
+	'source',
 	'summary',
 	'description',
 	'size',
@@ -414,6 +438,8 @@ our $sourceinfo = [
 	'error',
 	'originproject',
        [ $linked ],
+	'revtime',
+	'changesmd5',
 
 	'name',
 	'version',
@@ -446,6 +472,7 @@ our $buildinfo = [
 	'srcmd5',
 	'verifymd5',
 	'rev',
+	'disturl',
 	'reason',       # just for the explain string of a build reason
 	'needed',       # number of blocked
 	'revtime',	# time of last commit
@@ -456,8 +483,12 @@ our $buildinfo = [
 	'bcnt',
 	'release',
 	'debuginfo',
+	'constraintsmd5',
+      [ 'prjconfconstraint' ],
       [ 'subpack' ],
-      [ 'imagetype' ],
+      [ 'imagetype' ],	# kiwi
+	'nodbgpkgs',	# kiwi
+	'nosrcpkgs',	# kiwi
       [ 'dep' ],
      [[ 'bdep' =>
 	'name',
@@ -476,6 +507,7 @@ our $buildinfo = [
 	'project',
 	'repository',
 	'repoarch',
+	'binary',
 	'package',
 	'srcmd5',
      ]],
@@ -490,6 +522,9 @@ our $buildinfo = [
 	    'repository',
 	    'server',
      ]],
+	'expanddebug',
+	'followupfile',	# for two-stage builds
+	'masterdispatched',	# dispatched through a master dispatcher
 ];
 
 our $jobstatus = [
@@ -589,6 +624,17 @@ our $revision = [
 	'requestid',
 ];
 
+our $revision_acceptinfo = [
+    @$revision,
+      [ 'acceptinfo' =>
+	    'rev',
+	    'srcmd5',
+	    'osrcmd5',
+	    'xsrcmd5',
+	    'oxsrcmd5',
+      ],
+];
+
 our $revisionlist = [
     'revisionlist' =>
       [ $revision ]
@@ -608,7 +654,7 @@ our $buildhist = [
 our $binaryversionlist = [
     'binaryversionlist' =>
      [[ 'binary' =>
-	    'name',
+	    'name',	# should be filename instead. sigh.
 	    'sizek',
 	    'error',
 	    'hdrmd5',
@@ -620,7 +666,8 @@ our $binaryversionlist = [
 our $packagebinaryversionlist = [
     'packagebinaryversionlist' =>
      [[ 'binaryversionlist' =>
-            'package',
+	    'package',
+	    'code',
          [[ 'binary' =>
 		'name',
 		'sizek',
@@ -639,12 +686,29 @@ our $worker = [
 	'port',
 	'workerid',
       [ 'buildarch' ],
+      [ 'hostlabel' ],
+	'sandbox',
+      [ 'linux' =>
+        [],
+        'version',
+        'flavor'
+      ],
+      [ 'hardware' =>
+        [ 'cpu' =>
+          [ 'flag' ],
+        ],
+        'processors',
 	'memory',	# in MBytes
+	'swap',		# in MBytes
 	'disk',		# in MBytes
+      ],
+	'owner',
 	'tellnojob',
 
 	'job',		# set when worker is busy
 	'arch',		# set when worker is busy
+	'jobid',	# set when worker is busy
+	'reposerver',	# set when worker is busy and job was masterdispatched
 ];
 
 our $packstatuslist = [
@@ -687,6 +751,7 @@ our $link = [
 	'project',
 	'package',
 	'rev',
+	'vrev',
 	'cicount',
 	'baserev',
 	'missingok',
@@ -725,22 +790,27 @@ our $workerstatus = [
             'arch',
 	    'buildavg',
      ]],
-     [[ 'scheduler' =>
-	    'arch',
-	    'state',
-	    'starttime',
-	  [ 'queue' =>
-		'high',
-		'med',
-		'low',
-		'next',
-	  ],
+     [[ 'partition' =>
+	    'name',
+         [[ 'daemon' =>
+		'type',        # scheduler/dispatcher/signer/publisher/warden
+                'arch',        # scheduler only
+                'state',
+                'starttime',
+              [ 'queue' =>     # scheduler only 
+                    'high',
+                    'med',
+                    'low',
+                    'next',
+              ],
+         ]],
      ]],
 ];
 
 our $workerstate = [
     'workerstate' =>
 	'state',
+	'nextstate',	# for exit/restart
 	'jobid',
 ];
 
@@ -758,6 +828,7 @@ our $jobhistlay = [
 	'workerid',
 	'hostarch',
 	'reason',
+	'verifymd5',
 ];
 
 our $jobhist = [
@@ -817,6 +888,7 @@ our $serverstatus = [
 	    'pid',
 	    'peer',
 	    'request',
+	    'group',
      ]],
 ];
 
@@ -840,6 +912,14 @@ our $summary = [
      ]],
 ];
 
+our $schedulerstats = [
+    'stats' =>
+	'lastchecked',
+	'checktime',
+	'lastfinished',
+	'lastpublished',
+];
+
 our $result = [
     'result' =>
 	'project',
@@ -852,6 +932,7 @@ our $result = [
       [ $buildstatus ],
       [ $binarylist ],
         $summary,
+	$schedulerstats,
 ];
 
 our $resultlist = [
@@ -1022,7 +1103,8 @@ our $request = [
 	  [ 'target' =>
 		'project',
 		'package',
-	        'repository', # for merge request
+		'releaseproject', # for incident request
+	        'repository', # for release and delete request
 	  ],
 	  [ 'person' =>
 		'name',
@@ -1084,6 +1166,7 @@ our $request = [
 	    [],
 	    'comment',
      ]],
+	'accept_at',
 	'title',
 	'description',
 ];
@@ -1146,6 +1229,7 @@ our $person = [
 	'login',
 	'email',
 	'realname',
+	'state',
 	[ 'globalrole' ],
 	[ 'watchlist' =>
 		[[ 'project' =>
@@ -1189,11 +1273,13 @@ our $dispatchprios = [
 # list of used services for a package or project
 our $services = [
     'services' =>
-    [[ 'service' =>
-       'name',
-       'mode', # "localonly" is skipping this service on server side, "trylocal" is trying to merge changes directly in local files, "disabled" is just skipping it
-       [],
-       [[ 'param' => 'name', '_content' ]],
+     [[ 'service' =>
+            'name',
+            'mode', # "localonly" is skipping this service on server side, "trylocal" is trying to merge changes directly in local files, "disabled" is just skipping it
+         [[ 'param' =>
+	        'name',
+                '_content'
+         ]],
     ]],
 ];
 
@@ -1205,18 +1291,19 @@ our $servicetype = [
         [],
         'summary',
         'description',
-        [[ 'parameter' =>
-                     'name',
-                     [],
-                     'description',
-                     'required', # don't run without this parameter
-                     'allowmultiple', # This parameter can be used multiple times
-                     [[ 'allowedvalue' => '_content' ]], # list of possible values
-        ]],
+     [[ 'parameter' =>
+	    'name',
+	    [],
+	    'description',
+	    'required',		# don't run without this parameter
+	    'allowmultiple',	# This parameter can be used multiple times
+          [ 'allowedvalue' ],	# list of possible values
+     ]],
 ];
+
 our $servicelist = [
     'servicelist' =>
-        [ $servicetype ],
+      [ $servicetype ],
 ];
 
 our $updateinfoitem = [
@@ -1274,6 +1361,7 @@ our $updateinfoitem = [
 
 our $updateinfo = [
     'updates' =>
+      'xmlns',
       [ $updateinfoitem ],
 ];
 
@@ -1350,11 +1438,40 @@ our $sourcediff = [
       [ 'issues' =>
 	 [[ 'issue' =>
 		'state',
-		'issue-tracker',
+		'tracker',
 		'name',
-		'long-name',
-		'show-url',
+		'label',
+		'url',
 	 ]]
+      ],
+];
+
+our $configuration = [
+    'configuration' =>
+	[],
+	'title',        #webui only
+	'description',  #webui only
+	'name',         #obsname
+	'anonymous',
+	'registration',
+	'default_access_disabled',
+	'allow_user_to_create_home_project',
+	'multiaction_notify_support',
+	'disallow_group_creation',
+	'change_password',
+	'hide_private_options',
+	'gravatar',
+	'enforce_project_keys',
+	'download_on_demand',
+	'download_url',
+	'ymp_url',
+	'errbit_url',
+	'bugzilla_url',
+	'http_proxy',
+	'no_proxy',
+	'theme',
+      [ 'schedulers' =>
+	  [ 'arch' ],
       ],
 ];
 
@@ -1365,7 +1482,7 @@ our $issue_trackers = [
 	    'name',
 	    'description',
 	    'kind',
-            'long-name',
+            'label',
             'enable-fetch',
 	    'regex',
 	    'user',
@@ -1373,6 +1490,176 @@ our $issue_trackers = [
 	    'show-url',
 	    'url',
             'issues-updated',
+     ]],
+];
+
+our $appdataitem = [ 
+    'application' =>
+      [ 'id' => 
+	    'type', 
+	    '_content'
+      ],
+	'pkgname',
+	'name',
+	'summary',
+      [ 'icon' => 
+	    'type', 
+	    [],
+	    'name',
+	 [[ 'filecontent' =>
+		'file',
+		'_content'
+         ]],
+      ],
+      [ 'appcategories' => 
+          [ 'appcategory' ] 
+      ],
+      [ 'mimetypes' =>
+          [ 'mimetype' ]
+      ],
+      [ 'keywords' => 
+          [ 'keyword' ]
+      ],
+      [ 'url' => 
+	    'type', 
+	    '_content' 
+      ]
+];
+    
+our $appdata = [
+    'applications' =>
+	'version',
+      [ $appdataitem ]
+];
+
+our $attribute = [
+    'attribute' => 
+	'namespace', 
+        'name', 
+        'binary', 
+      [ 'value' ],
+     [[ 'issue' =>
+	    'name',
+	    'tracker'
+     ]],
+];
+
+our $attributes = [
+    'attributes' => 
+      [ $attribute ],
+];
+
+our $size = [
+    'size' => 
+        'unit',
+        [],
+        '_content',
+];
+
+our $time = [
+    'time' => 
+        'unit',
+        [],
+        '_content',
+];
+
+# define constraints for build jobs in packages or projects.
+our @constraint = (
+     [[ 'hostlabel' =>
+        'exclude',   # true or false. default is false.
+        [],
+        '_content' # workers might get labels defined by admin, for example for benchmarking.
+     ]],
+      [ 'sandbox' =>
+	    'exclude',   # true or false. default is false.
+	    [],
+	    '_content' # xen/kvm/zvm/lxc/emulator/chroot/secure
+      ],
+      [ 'linux' =>
+	  [ 'version' =>
+		[],
+		'max' ,
+		'min' ,
+	  ],
+	'flavor',
+      ],
+      [ 'hardware' =>
+	  [ 'cpu' =>
+	      [ 'flag' ],
+	  ],
+	    'processors',
+	  [ 'disk' => $size ],
+	  [ 'memory' => $size ],
+	  [ 'physicalmemory' => $size ],
+      ]
+);
+our $constraints = [
+    'constraints' => 
+        @constraint,
+        [[ 'overwrite' =>
+             [ 'conditions' =>
+               [ 'arch' ],
+               [ 'package' ],
+             ],
+             @constraint,
+        ]]
+];
+
+our $buildstatistics = [
+    'buildstatistics' =>
+      [ 'disk' =>
+	  [ 'usage' => 
+	      [ 'size' =>
+		    'unit',
+		    [],
+		    '_content',
+	      ],
+	    'io_requests',
+	    'io_sectors',
+	  ],
+      ],
+      [ 'memory' =>
+	  [ 'usage' => $size ],
+      ],
+      [ 'times' =>
+	  [ 'total' => $time ],
+	  [ 'preinstall' => $time ],
+	  [ 'install' => $time ],
+	  [ 'main' => $time ],
+	  [ 'download' => $time ],
+      ],
+      [ 'download' =>
+	    [],
+	    $size,
+	    'binaries',
+	    'cachehits',
+	    'preinstallimage',
+      ],
+];
+
+our $notifications = [
+    'notifications' =>
+	'next',
+	'sync',
+     [[ 'notification' =>
+	    'type',
+	    'time',
+	 [[ 'data' =>
+		'key',
+		'_content',
+	 ]],
+     ]],
+];
+
+our $frozenlinks = [
+    'frozenlinks' =>
+     [[ 'frozenlink' =>
+	    'project',
+	 [[ 'package' =>
+		'name',
+		'srcmd5',
+		'vrev',
+	 ]],
      ]],
 ];
 

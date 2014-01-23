@@ -1,30 +1,28 @@
-path_elements_406836732: 
-  position: "1"
-  id: "406836732"
-  parent_id: "83"
-  repository_id: "82"
-path_elements_545748787: 
-  position: "1"
-  id: "545748787"
-  parent_id: "86"
-  repository_id: "92"
-path_elements_913785938: 
-  position: "1"
-  id: "913785938"
-  parent_id: "144"
-  repository_id: "94"
-path_elements_913785939: 
-  position: "1"
-  id: "913785939"
-  parent_id: "141"
-  repository_id: "93"
-path_elements_913785940: 
-  position: "2"
-  id: "913785940"
-  parent_id: "141"
-  repository_id: "82"
-path_elements_913785941: 
-  position: "1"
-  id: "913785941"
-  parent_id: "142"
-  repository_id: "93"
+record_0:
+  parent_id: 141
+  repository_id: 93
+  position: 1
+record_1:
+  parent_id: 144
+  repository_id: 94
+  position: 1
+record_2:
+  parent_id: 85
+  repository_id: 91
+  position: 1
+record_3:
+  parent_id: 141
+  repository_id: 82
+  position: 2
+record_4:
+  parent_id: 142
+  repository_id: 93
+  position: 1
+record_5:
+  parent_id: 86
+  repository_id: 92
+  position: 1
+record_6:
+  parent_id: 83
+  repository_id: 82
+  position: 1

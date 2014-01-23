@@ -62,6 +62,9 @@ $servicedir="/usr/lib/obs/service" unless $servicedir;
 my $rootservicedir = $servicedir;
 $rootservicedir = $BSConfig::serviceroot."/".$servicedir if $BSConfig::serviceroot;
 
+my $noproxy = $BSConfig::noproxy;
+my $maxchild = $BSConfig::service_maxchild;
+
 sub usage {
   my ($ret) = @_;
 
@@ -131,6 +134,7 @@ sub run_source_update {
   # set environment
   $::ENV{'OBS_SERVICE_PROJECT'} = $projid;
   $::ENV{'OBS_SERVICE_PACKAGE'} = $packid;
+  $::ENV{'no_proxy'} = $noproxy;
 
   # run all services
   mkdir_p($myworkdir."/.tmp");
@@ -265,7 +269,7 @@ my $conf = {
   'port' => $port,
   'dispatches' => $dispatches,
   'setkeepalive' => 1,
-#  'maxchild' => 20,
+  'maxchild' => $maxchild,
 };
 
 BSStdServer::server('bs_service', \@ARGV, $conf);

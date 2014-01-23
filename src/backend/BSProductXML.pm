@@ -69,9 +69,12 @@ our $group = [
           ],
           [[ 'packagelist' =>
              'relationship',
+             'supportstatus',
              'id',
              [],
-             [[ 'package' => 'name',
+             [[ 'package' =>
+                'name',
+                'supportstatus',
                 [[ 'conditional' => 'name' ]],
              ]],
           ]],
@@ -91,6 +94,7 @@ our $product = [
            'migrationtarget',
            'release',
            'arch',
+           'cpeid',         # generated, not for input
            'productline',
            [ 'register' => 
               [],
@@ -146,6 +150,7 @@ our $product = [
               [],
              'producttheme',
              'betaversion',
+             'mainproduct',
              [ 'linguas' =>
                [],
                [[ 'language' => '_content' ]],
@@ -166,6 +171,15 @@ our $product = [
               [],
               'allowresolving',
            ],
+           [[ 'productdependency' =>
+              'relationship',
+              'name',
+              'baseversion',
+              'patchlevel',
+              'release',
+              'flavor',
+              'flag',
+           ]],
 ];
 
 # Complete product definition. Defines how a media is setup
@@ -217,6 +231,7 @@ our $productdesc = [
             'flavor',
             'repo_only',
             'mediastyle',
+            'firmware',
             'registration',
             'create_repomd',
             'sourcemedia',
@@ -254,6 +269,7 @@ our $productdesc = [
                [[ 'package' => 'name', 'medium', 'relationship', 'arch', 'addarch' ]],
                [[ 'include' => 'group', 'relationship' ]],
             ]],
+            # product dependency got moved to product definition
             [[ 'productdependency' =>
                'relationship',
                'name',
@@ -272,8 +288,14 @@ our $productdesc = [
       [ $group ],
 ];
 
+# list of product definitions
+our $products = [
+   'productlist' =>
+      [ $productdesc ],
+];
+
 sub mergexmlfiles {
-  my ($absfile, $seen, $debug) = @_;
+  my ($absfile, $seen, $debug, $files) = @_;
 
   if ($seen->{$absfile}) {
     print "ERROR: cyclic file include ($absfile)!\n";
@@ -309,6 +331,10 @@ sub mergexmlfiles {
          return undef;
        }
        my $file = "$dir$ref";
+       if (defined($files)) {
+         # running via the source server, find the file in source archive
+         $file = "$dir/$files->{$ref}-$ref"
+       };
        $seen->{$absfile} = 1;
        my $replace = mergexmlfiles( $file, $seen, $debug );
        delete $seen->{$absfile};
@@ -330,10 +356,10 @@ sub mergexmlfiles {
   return $str;
 }
 
-sub readproductxml( $$$ ) {
-  my ($file, $nonfatal, $debug) = @_;
+sub readproductxml {
+  my ($file, $nonfatal, $debug, $files) = @_;
 
-  my $str = mergexmlfiles( $file, {}, $debug );
+  my $str = mergexmlfiles( $file, {}, $debug, $files );
   return undef if ( ! $str );
 
   return XMLin($productdesc, $str) unless $nonfatal;

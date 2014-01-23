@@ -1,7 +1,6 @@
-require File.expand_path(File.dirname(__FILE__) + '/..') + '/test_helper'
+require_relative '../test_helper'
 
 class RoleTest < ActiveSupport::TestCase
-  fixtures :roles
 
   def test_something
     norole = Role.create :title => 'norole'
@@ -10,4 +9,8 @@ class RoleTest < ActiveSupport::TestCase
     norole.destroy
   end
   
+  def test_role
+    r = Role.create :title => "maintainer"
+    assert !r.valid?
+  end
 end

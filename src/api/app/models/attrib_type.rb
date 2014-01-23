@@ -3,21 +3,14 @@
 
 class AttribType < ActiveRecord::Base
   belongs_to :attrib_namespace
+  delegate :name, to: :attrib_namespace, prefix: true
 
-  has_many :attribs, :dependent => :destroy
-  has_many :default_values, :class_name => 'AttribDefaultValue', :dependent => :destroy
-  has_many :allowed_values, :class_name => 'AttribAllowedValue', :dependent => :destroy
-  has_many :attrib_type_modifiable_bies, :class_name => 'AttribTypeModifiableBy', :dependent => :destroy
+  has_many :attribs, dependent: :destroy
+  has_many :default_values, :class_name => 'AttribDefaultValue', dependent: :delete_all
+  has_many :allowed_values, :class_name => 'AttribAllowedValue', dependent: :delete_all
+  has_many :attrib_type_modifiable_bies, :class_name => 'AttribTypeModifiableBy', dependent: :delete_all
 
   class << self
-    def list_all(namespace=nil)
-      if namespace
-        find :all, :joins => "JOIN attrib_namespaces an ON attrib_types.attrib_namespace_id = an.id", :conditions => ["an.name = BINARY ?", namespace]
-      else
-        find :all
-      end
-    end
-
     def find_by_name(name)
       name_parts = name.split(/:/)
       if name_parts.length != 2
@@ -30,7 +23,7 @@ class AttribType < ActiveRecord::Base
       unless namespace and name
         raise ArgumentError, "Need namespace and name as parameters"
       end
-      find :first, :joins => "JOIN attrib_namespaces an ON attrib_types.attrib_namespace_id = an.id", :conditions => ["attrib_types.name = BINARY ? and an.name = BINARY ?", name, namespace]
+      joins(:attrib_namespace).where("attrib_namespaces.name = ? and attrib_types.name = ?", namespace, name).first
     end
   end
 
@@ -42,99 +35,88 @@ class AttribType < ActiveRecord::Base
     write_attribute :attrib_namespace, val
   end
 
-  def render_axml
-     builder = Nokogiri::XML::Builder.new do |node|
-      p = {}
-      p[:name]      = self.name
-      p[:namespace] = attrib_namespace.name
-      node.definition(p) do |attr|
-
-       if default_values.length > 0
-         attr.default do |default|
-           default_values.each do |def_val|
-             default.value def_val.value
-           end
-         end
-       end
-
-       if allowed_values.length > 0
-         attr.allowed do |allowed|
-           allowed_values.each do |all_val|
-             allowed.value all_val.value
-           end
-         end
-       end
-
-       if self.value_count
-         attr.count self.value_count
-       end
-
-       if attrib_type_modifiable_bies.length > 0
-         attrib_type_modifiable_bies.each do |mod_rule|
-           p={}
-           p[:user] = mod_rule.user.login if mod_rule.user 
-           p[:group] = mod_rule.group.title if mod_rule.group 
-           p[:role] = mod_rule.role.title if mod_rule.role 
-           attr.modifiable_by(p)
-         end
-       end
-      end
-     end
-     builder.to_xml
+  def create_one_rule(m)
+    if m["user"].blank? and m["group"].blank? and m["role"].blank?
+      raise RuntimeError, "attribute type '#{node.name}' modifiable_by element has no valid rules set"
+    end
+    p={}
+    if m["user"]
+      p[:user] = User.find_by_login!(m["user"])
+    end
+    if m["group"]
+      p[:group] = Group.find_by_title!(m["group"])
+    end
+    if m["role"]
+      p[:role] = Role.find_by_title!(m["role"])
+    end
+    self.attrib_type_modifiable_bies << AttribTypeModifiableBy.new(p)
   end
 
-  def update_from_xml(node)
+  def update_default_values(default_elements)
+    self.default_values.delete_all
+    position = 1
+    default_elements.each do |d|
+      d.elements("value") do |v|
+        self.default_values << AttribDefaultValue.new(value: v, position: position)
+        position += 1
+      end
+    end
+  end
+
+  def update_from_xml(xmlhash)
     self.transaction do
       #
       # defined permissions
       #
       self.attrib_type_modifiable_bies.delete_all
+
       # store permission setting
-      node.elements.each("modifiable_by") do |m|
-          if not m.attributes["user"] and not m.attributes["group"] and not m.attributes["role"]
-            raise RuntimeError, "attribute type '#{node.name}' modifiable_by element has no valid rules set"
-          end
-          p={}
-          if m.attributes["user"]
-            p[:user] = User.get_by_login(m.attributes["user"])
-          end
-          if m.attributes["group"]
-            p[:group] = Group.get_by_title(m.attributes["group"])
-          end
-          if m.attributes["role"]
-            p[:role] = Role.get_by_title(m.attributes["role"])
-          end
-          self.attrib_type_modifiable_bies << AttribTypeModifiableBy.new(p)
-      end
+      xmlhash.elements("modifiable_by") { |m| create_one_rule(m) }
 
       #
       # attribute type definition
       #
       # set value counter (this number of values must exist, not more, not less)
       self.value_count = nil
-      node.elements.each("count") do |c|
-        self.value_count = c.text
+      xmlhash.elements("count") do |c|
+        self.value_count = c
       end
 
+      # allow issues?
+      logger.debug "XML #{xmlhash.inspect}"
+      self.issue_list = !xmlhash["issue_list"].nil?
+      logger.debug "IL #{self.issue_list}"
+
       # default values of a attribute stored
-      self.default_values.delete_all
-      position = 1
-      node.elements.each("default") do |d|
-        d.elements.each("value") do |v|
-          self.default_values << AttribDefaultValue.new(:value => v.text, :position => position)
-          position += 1
-        end
-      end
+      self.update_default_values(xmlhash.elements("default"))
 
       # list of allowed values
       self.allowed_values.delete_all
-      node.elements.each("allowed") do |a|
-        a.elements.each("value") do |v|
-          self.allowed_values << AttribAllowedValue.new(:value => v.text)
+      xmlhash.elements("allowed") do |a|
+        a.elements("value") do |v|
+          self.allowed_values << AttribAllowedValue.new(:value => v)
         end
       end
 
       self.save
+    end
+  end
+
+  # FIXME: we REALLY should use active_model_serializers
+  def as_json(options = nil)
+    if options
+      if options.key?(:methods)
+        if options[:methods].kind_of? Array
+          options[:methods] << :attrib_namespace_name unless options[:methods].include?(:attrib_namespace_name)
+        elsif options[:methods] != :attrib_namespace_name
+          options[:methods] = [options[:methods]] + [:attrib_namespace_name]
+        end
+      else
+        options[:methods] = [:attrib_namespace_name]
+      end
+      super(options)
+    else
+      super(methods: [:attrib_namespace_name])
     end
   end
 end

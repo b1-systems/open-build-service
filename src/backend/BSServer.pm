@@ -44,6 +44,8 @@ use BSUtil;
 
 use strict;
 
+my $MS2;	# secondary server port
+
 # FIXME: store in request and make request available
 our $request;
 our $peer;
@@ -76,22 +78,31 @@ sub serveropen {
   my ($port, $user, $group) = @_;
   # check if $user and $group exist on this system
   my $tcpproto = getprotobyname('tcp');
-  if (!ref($port) && $port =~ /^&/) {
-    open(MS, "<$port") || die("socket open: $!\n");
+  my @ports;
+  if (ref($port)) {
+    @ports = ( $port );
   } else {
-    socket(MS , PF_INET, SOCK_STREAM, $tcpproto) || die "socket: $!\n";
-    setsockopt(MS, SOL_SOCKET, SO_REUSEADDR, pack("l",1));
-    if (ref($port)) {
-      bind(MS, sockaddr_in(0, INADDR_ANY)) || die "bind: $!\n";
-      ($$port) = sockaddr_in(getsockname(MS));
+    @ports = split(',', $port, 2);
+  }
+  my $s = \*MS;
+  for $port (@ports) {
+    if (!ref($port) && $port =~ /^&/) {
+      open($s, "<$port") || die("socket open: $!\n");
     } else {
-      bind(MS, sockaddr_in($port, INADDR_ANY)) || die "bind: $!\n";
+      socket($s , PF_INET, SOCK_STREAM, $tcpproto) || die "socket: $!\n";
+      setsockopt($s, SOL_SOCKET, SO_REUSEADDR, pack("l",1));
+      if (ref($port)) {
+        bind($s, sockaddr_in(0, INADDR_ANY)) || die "bind: $!\n";
+        ($$port) = sockaddr_in(getsockname($s));
+      } else {
+        bind($s, sockaddr_in($port, INADDR_ANY)) || die "bind: $!\n";
+      }
     }
+    listen($s , 512) || die "listen: $!\n";
+    $s = \*MS2 if @ports > 1;
+    $MS2 = \*MS2 if @ports > 1;
   }
   BSUtil::drop_privs_to($user, $group);
-  if (ref($port) || $port !~ /^&/) {
-    listen(MS , 512) || die "listen: $!\n";
-  }
 }
 
 sub serveropen_unix {
@@ -122,6 +133,10 @@ sub getserversocket {
   return *MS;
 }
 
+sub getserversocket2 {
+  return $MS2;
+}
+
 sub setserversocket {
   if (defined($_[0])) {
     (*MS) = @_;
@@ -132,6 +147,8 @@ sub setserversocket {
 
 sub serverclose {
   close MS;
+  close $MS2 if $MS2;
+  undef $MS2;
 }
 
 sub getsocket {
@@ -162,9 +179,9 @@ sub setstatus {
   my ($state, $data) = @_;
   my $slot = $BSServer::slot;
   return unless defined $slot;
-  # +8 to skip time and pid
-  return unless defined(sysseek(STA, $slot * 256 + 8, Fcntl::SEEK_SET));
-  $data = pack("NZ244", $state, $data);
+  # +10 to skip time, pid, group, and extra
+  return unless defined(sysseek(STA, $slot * 256 + 10, Fcntl::SEEK_SET));
+  $data = pack("nZ244", $state, $data);
   syswrite(STA, $data, length($data));
 }
 
@@ -175,8 +192,9 @@ sub serverstatus {
   my $sta;
   my $slot = 0;
   while ((sysread(STA, $sta, 256) || 0) == 256) {
-    my ($ti, $pid, $state, $data) = unpack("NNNZ244", $sta);
+    my ($ti, $pid, $group, $extra, $state, $data) = unpack("NNCCnZ244", $sta);
     push @res, { 'slot' => $slot, 'starttime' => $ti, 'pid' => $pid, 'state' => $state, 'data' => $data };
+    $res[-1]->{'group'} = $group if $group;
     $slot++;
   }
   return @res;
@@ -187,9 +205,12 @@ sub server {
 
   $conf ||= {};
   my $maxchild = $conf->{'maxchild'};
+  my $maxchild2 = $conf->{'maxchild2'};
   my $timeout = $conf->{'timeout'};
   my %chld;
+  my %chld2;
   my $peeraddr;
+  my $group = 0;
   my $periodic_next = 0;
   my @idle;
   my $idle_next = 0;
@@ -212,7 +233,12 @@ sub server {
     }
     # listen on MS until there is an incoming connection
     my $rin = '';
-    vec($rin, fileno(MS), 1) = 1;
+    if ($MS2) {
+      vec($rin, fileno(MS), 1) = 1 if !defined($maxchild) || keys(%chld) < $maxchild;
+      vec($rin, fileno($MS2), 1) = 1 if !defined($maxchild2) || keys(%chld2) < $maxchild;
+    } else {
+      vec($rin, fileno(MS), 1) = 1;
+    }
     my $r = select($rin, undef, undef, $tout);
     if (!defined($r) || $r == -1) {
       next if $! == POSIX::EINTR;
@@ -221,7 +247,15 @@ sub server {
     # now we know there is a connection on MS waiting to be accepted
     my $pid;
     if ($r) {
-      $peeraddr = accept(CLNT, MS);
+      my $chldp = \%chld;
+      if ($MS2 && !vec($rin, fileno(MS), 1)) {
+        $chldp = \%chld2;
+        $peeraddr = accept(CLNT, $MS2);
+	$group = 1;
+      } else {
+        $peeraddr = accept(CLNT, MS);
+	$group = 0;
+      }
       next unless $peeraddr;
       my $slot = @idle ? shift(@idle) : $idle_next++;
       $pid = fork();
@@ -231,14 +265,20 @@ sub server {
 	  $BSServer::slot = $slot if $conf->{'serverstatus'};
 	  last;
 	}
-        $chld{$pid} = $slot;
+        $chldp->{$pid} = $slot;
       }
       close CLNT;
     }
     # if there are already $maxchild connected, make blocking waitpid
     # otherwise make non-blocking waitpid
-    while (($pid = waitpid(-1, defined($maxchild) && keys(%chld) > $maxchild ? 0 : POSIX::WNOHANG)) > 0) {
-      my $slot = $chld{$pid};
+    while (1) {
+      my $hang = 0;
+      $hang = POSIX::WNOHANG if !defined($maxchild) || keys(%chld) < $maxchild;
+      $hang = POSIX::WNOHANG if $MS2 && (!defined($maxchild2) || keys(%chld) < $maxchild2);
+      $pid = waitpid(-1, $hang);
+      last unless $pid > 0;
+      my $slot = delete $chld{$pid};
+      $slot = delete $chld2{$pid} unless defined $slot;
       if (defined($slot)) {
         if ($conf->{'serverstatus'} && defined(sysseek(STA, $slot * 256, Fcntl::SEEK_SET))) {
 	  syswrite(STA, "\0" x 256, 256);
@@ -249,19 +289,22 @@ sub server {
 	  push @idle, $slot;
 	}
       }
-      delete $chld{$pid};
     }
     # timeout was set in the $conf and select timeouted on this value. There was no new connection -> exit.
     return 0 if !$r && defined $timeout;
   }
   # from now on, this is only the child process
   close MS;
+  if ($MS2) {
+    close $MS2;
+    undef $MS2;
+  }
   if ($conf->{'serverstatus'}) {
     close(STA);
     if (open(STA, '+<', $conf->{'serverstatus'})) {
       fcntl(STA, F_SETFD, FD_CLOEXEC);
       if (defined(sysseek(STA, $BSServer::slot * 256, Fcntl::SEEK_SET))) {
-        syswrite(STA, pack("NNNZ244", time(), $$, 1, 'forked'), 256);
+        syswrite(STA, pack("NNCCnZ244", time(), $$, $group, 0, 1, 'forked'), 256);
       }
     } else {
       undef $BSServer::slot;
@@ -283,7 +326,13 @@ sub server {
   }
   if ($conf->{'dispatch'}) {
     eval {
-      my $req = readrequest();
+      my $req;
+      do {
+        local $SIG{'ALRM'} = sub {POSIX::_exit(0);};
+        alarm(60);	# should be enough to read the request
+        $req = readrequest();
+        alarm(0);
+      };
       $conf->{'dispatch'}->($conf, $req);
     };
     reply_error($conf, $@) if $@;
@@ -575,6 +624,10 @@ sub header {
   return $post_hdrs->{$_[0]};
 }
 
+sub have_content {
+  return $post_hdrs ? 1 : 0;
+}
+
 ###########################################################################
 
 sub read_file {
@@ -663,7 +716,7 @@ sub reply_receiver {
   $replying = 2 if $chunked;
   while(1) {
     my $data = BSHTTP::read_data($hdr, 8192);
-    last unless $data;
+    last unless defined($data) && $data ne '';
     $data = sprintf("%X\r\n", length($data)).$data."\r\n" if $chunked;
     swrite($data);
   }
@@ -733,8 +786,10 @@ sub compile_dispatches {
       }
     }
     $p[0] .= ".*" if @p == 1 && $p[0] =~ /^[A-Z]*\\:$/;
-    $p[0] = '.*' if $p[0] eq '\\:.*';
+    $p[0] = '[^:]*:.*' if $p[0] eq '\\:.*';
     $p[0] = "(?:GET|HEAD|POST):$p[0]" if $p[0] !~ /:/;
+    $p[-1] = '.*' if $p[-1] eq '\.\.\.';
+    $p[-1] = '(.*)' if $p[-1] eq "([^\\/]*)" && $args[-1] eq '...';
     my $multis = '';
     my $singles = '';
     my $hasstar;

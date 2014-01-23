@@ -146,7 +146,8 @@ sub rpc_error {
   delete $rpcs{$uri};
   close $ev->{'fd'} if $ev->{'fd'};
   delete $ev->{'fd'};
-  for my $jev (@{$ev->{'joblist'} || []}) {
+  my @jobs = @{$ev->{'joblist'} || []};
+  for my $jev (@jobs) {
     $jev->{'rpcdone'} = $jev->{'rpcoriguri'} || $uri;
     $jev->{'rpcerror'} = $err;
     redo_request($jev);
@@ -164,7 +165,8 @@ sub rpc_result {
   delete $rpcs{$uri};
   close $ev->{'fd'} if $ev->{'fd'};
   delete $ev->{'fd'};
-  for my $jev (@{$ev->{'joblist'} || []}) {
+  my @jobs = @{$ev->{'joblist'} || []};
+  for my $jev (@jobs) {
     $jev->{'rpcdone'} = $jev->{'rpcoriguri'} || $uri;
     $jev->{'rpcresult'} = $res;
     redo_request($jev);
@@ -193,7 +195,8 @@ sub rpc_redirect {
   close $ev->{'fd'} if $ev->{'fd'};
   delete $ev->{'fd'};
   #print "redirecting to: $location\n";
-  for my $jev (@{$ev->{'joblist'} || []}) {
+  my @jobs = @{$ev->{'joblist'} || []};
+  for my $jev (@jobs) {
     $jev->{'rpcoriguri'} ||= $ev->{'rpcuri'};
     local $BSServerEvents::gev = $jev;
     rpc({%$param, 'uri' => $location, 'maxredirects' => $param->{'maxredirects'} - 1});
@@ -215,7 +218,8 @@ sub filewatcher_handler {
     next if ($s eq $filewatchers_s{$file});
     print "file $file changed!\n";
     $filewatchers_s{$file} = $s;
-    for my $jev (@{$filewatchers{$file}}) {
+    my @jobs = @{$filewatchers{$file}};
+    for my $jev (@jobs) {
       redo_request($jev);
     }
   }
@@ -314,7 +318,7 @@ nextchunk:
   }
   my $cl = hex($1);
   # print "rpc_recv_stream_handler: chunk len $cl\n";
-  if ($cl < 0 || $cl >= 16000) {
+  if ($cl < 0 || $cl >= 1000000) {
     print "rpc_recv_stream_handler: illegal chunk size: $cl\n";
     BSServerEvents::stream_close($rev, $ev);
     return;
@@ -338,21 +342,27 @@ nextchunk:
     BSServerEvents::stream_close($rev, $ev);
     return;
   }
+  # split the chunk into 8192 sized subchunks if too big
+  my $lcl = $cl > 8192 ? 8192 : $cl;
   $ev->{'replbuf'} =~ /^(.*?\r?\n)/s;
-  if (length($1) + $cl > length($ev->{'replbuf'})) {
+  if (length($1) + $lcl > length($ev->{'replbuf'})) {
     return unless $rev->{'eof'};
     print "rpc_recv_stream_handler: premature EOF\n";
     BSServerEvents::stream_close($rev, $ev);
     return;
   }
 
-  my $data = substr($ev->{'replbuf'}, length($1), $cl);
-  my $nextoff = length($1) + $cl;
+  my $data = substr($ev->{'replbuf'}, length($1), $lcl);
+  my $nextoff = length($1) + $lcl;
 
   # handler returns false: cannot consume now, try later
   return unless $ev->{'datahandler'}->($ev, $rev, $data);
 
   $ev->{'replbuf'} = substr($ev->{'replbuf'}, $nextoff);
+  if ($lcl < $cl) {
+    # had to split the chunk
+    $ev->{'replbuf'} = sprintf("%X\r\n", $cl - $lcl) . $ev->{'replbuf'};
+  }
 
   goto nextchunk if length($ev->{'replbuf'});
 
@@ -370,17 +380,19 @@ sub rpc_recv_unchunked_stream_handler {
   my $cl = $rev->{'contentlength'};
   $ev->{'paused'} = 1;	# always need more bytes!
   my $data = $ev->{'replbuf'};
-  if (length($data) && $cl) {
-    $data = substr($data, 0, $cl) if $cl < length($data);
-    $cl -= length($data);
+  if (length($data) && (!defined($cl) || $cl)) {
     my $oldeof = $rev->{'eof'};
-    $rev->{'eof'} = 1 if !$cl;
+    if (defined($cl)) {
+      $data = substr($data, 0, $cl) if $cl < length($data);
+      $cl -= length($data);
+      $rev->{'eof'} = 1 if !$cl;
+    }
     return unless $ev->{'datahandler'}->($ev, $rev, $data);
     delete $rev->{'eof'} unless $oldeof;
     $rev->{'contentlength'} = $cl;
     $ev->{'replbuf'} = '';
   }
-  if ($rev->{'eof'} || !$cl) {
+  if ($rev->{'eof'} || (defined($cl) && !$cl)) {
     #print "rpc_recv_unchunked_stream_handler: EOF\n";
     $ev->{'chunktrailer'} = '';
     BSServerEvents::stream_close($rev, $ev);
@@ -407,8 +419,8 @@ sub rpc_recv_forward_close_handler {
   my ($ev) = @_;
   #print "rpc_recv_forward_close_handler\n";
   my $rev = $ev->{'readev'};
-  my @jobs = @{$rev->{'joblist'} || []};
   my $trailer = $ev->{'chunktrailer'} || '';
+  my @jobs = @{$rev->{'joblist'} || []};
   for my $jev (@jobs) {
     $jev->{'replbuf'} .= "0\r\n$trailer\r\n";
     if ($jev->{'paused'}) {
@@ -425,10 +437,10 @@ sub rpc_recv_forward_close_handler {
 sub rpc_recv_forward_data_handler {
   my ($ev, $rev, $data) = @_;
 
-  my @jobs = @{$rev->{'joblist'} || []};
   my @stay;
   my @leave;
 
+  my @jobs = @{$rev->{'joblist'} || []};
   for my $jev (@jobs) {
     if (length($jev->{'replbuf'}) >= 16384) {
       push @stay, $jev;
@@ -574,7 +586,8 @@ sub rpc_recv_forward {
   #
   # setup output streams for all jobs
   #
-  for my $jev (@{$ev->{'joblist'} || []}) {
+  my @jobs = @{$ev->{'joblist'} || []};
+  for my $jev (@jobs) {
     rpc_recv_forward_setup($jev, $ev, @args);
   }
 
@@ -771,10 +784,16 @@ sub rpc_recv_handler {
   my $chunked = $headers{'transfer-encoding'} && lc($headers{'transfer-encoding'}) eq 'chunked' ? 1 : 0;
 
   if ($param->{'receiver'}) {
-    rpc_error($ev, "answer is neither chunked nor does it contain a content length\n") unless $chunked || defined($cl);
-    $ev->{'contentlength'} = $cl if !$chunked && defined($cl);
+    #rpc_error($ev, "answer is neither chunked nor does it contain a content length\n") unless $chunked || defined($cl);
+    $ev->{'contentlength'} = $cl if !$chunked;
     if ($param->{'receiver'} == \&BSHTTP::file_receiver) {
       rpc_recv_file($ev, $chunked, $ans, $param->{'filename'}, $param->{'withmd5'});
+    } elsif ($param->{'receiver'} == \&BSHTTP::cpio_receiver) {
+      if (defined $param->{'tmpcpiofile'}) {
+        rpc_recv_file($ev, $chunked, $ans, $param->{'tmpcpiofile'});
+      } else {
+        rpc_error($ev, "need tmpcpiofile for cpio_receiver\n");
+      }
     } elsif ($param->{'receiver'} == \&BSServer::reply_receiver) {
       my $ct = $headers{'content-type'} || 'application/octet-stream';
       my @args;
@@ -787,7 +806,10 @@ sub rpc_recv_handler {
     return;
   }
 
-  rpc_error($ev, "chunked decoder not implemented yet for non-receiver requests\n") if $chunked;
+  if ($chunked) {
+    rpc_error($ev, "chunked decoder not implemented yet for non-receiver requests\n");
+    return;
+  }
   if ($ev->{'rpceof'} && $cl && length($ans) < $cl) {
     rpc_error($ev, "EOF from $ev->{'rpcdest'}");
     return;
@@ -901,6 +923,13 @@ sub rpc {
     if ($xmlargs) {
       die("answer is not xml\n") if $ans !~ /<.*?>/s;
       return XMLin($xmlargs, $ans);
+    }
+    if ($param->{'receiver'} == \&BSHTTP::cpio_receiver && defined($param->{'tmpcpiofile'})) {
+      local *CPIOFILE;
+      open(CPIOFILE, '<', $param->{'tmpcpiofile'}) || die("open tmpcpiofile: $!\n");
+      unlink($param->{'tmpcpiofile'});
+      $ans = BSHTTP::cpio_receiver(BSHTTP::fd2hdr(\*CPIOFILE), $param);
+      close CPIOFILE;
     }
     return $ans;
   }

@@ -116,6 +116,18 @@ sub readxml {
   return $@ ? undef : $d;
 }
 
+sub fromxml {
+  my ($d, $dtd, $nonfatal) = @_;
+  return XMLin($dtd, $d) unless $nonfatal;
+  eval { $d = XMLin($dtd, $d); };
+  return $@ ? undef : $d;
+}
+
+sub toxml {
+  my ($d, $dtd) = @_;
+  return XMLout($dtd, $d);
+}
+
 sub touch($) {
   my ($file) = @_;
   if (-e $file) {
@@ -528,10 +540,12 @@ sub retrieve {
   my ($fn, $nonfatal) = @_;
   my $dd;
   if (!$nonfatal) {
-    $dd = Storable::retrieve($fn);
+    $dd = ref($fn) ? Storable::fd_retrieve($fn) : Storable::retrieve($fn);
     die("retrieve $fn: $!\n") unless $dd;
   } else {
-    eval { $dd = Storable::retrieve($fn); };
+    eval {
+      $dd = ref($fn) ? Storable::fd_retrieve($fn) : Storable::retrieve($fn);
+    };
     if (!$dd && $nonfatal == 2) {
       if ($@) {
         warn($@);

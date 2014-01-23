@@ -3,7 +3,7 @@ require File.expand_path(File.dirname(__FILE__) + "/..") + "/test_helper"
 class AttributeTest < ActiveSupport::TestCase
   fixtures :all
 
-  def setup
+  setup do
     @attrib_ns = AttribNamespace.find_by_name( "OBS" )
   end
 
@@ -17,8 +17,8 @@ class AttributeTest < ActiveSupport::TestCase
                <modifiable_by user='fred' group='test_group' />
             </namespace>"
 
-    xml = REXML::Document.new( axml )
-    assert_equal true, AttribNamespace.create(:name => "NewNamespace").update_from_xml(xml.root)
+    xml = Xmlhash.parse( axml )
+    assert_equal true, AttribNamespace.create(:name => "NewNamespace").update_from_xml(xml)
     @ans = AttribNamespace.find_by_name( "NewNamespace" )
 
     #check results
@@ -26,7 +26,7 @@ class AttributeTest < ActiveSupport::TestCase
     assert_equal "NewNamespace", @ans.name
 
     # Update a namespace with same content
-    assert_equal true, @ans.update_from_xml(xml.root)
+    assert_equal true, @ans.update_from_xml(xml)
     @newans = AttribNamespace.find_by_name( "NewNamespace" )
     assert_equal @newans, @ans
 
@@ -36,9 +36,9 @@ class AttributeTest < ActiveSupport::TestCase
                <modifiable_by user='fredlibs' group='test_group' />
             </namespace>"
 
-    xml = REXML::Document.new( axml )
+    xml = Xmlhash.parse( axml )
 
-    assert @ans.update_from_xml(xml.root)
+    assert @ans.update_from_xml(xml)
     @newans = AttribNamespace.find_by_name( "NewNamespace" )
     assert_equal "NewNamespace", @newans.name
   end
@@ -52,10 +52,10 @@ class AttributeTest < ActiveSupport::TestCase
                <modifiable_by user='fred' group='test_group' role='maintainer' />
             </attribute>"
 
-    xml = REXML::Document.new( axml )
-    assert AttribType.create(:name => "NewAttribute", :attrib_namespace => @attrib_ns).update_from_xml(xml.root)
+    xml = Xmlhash.parse( axml )
+    assert AttribType.create(:name => "NewAttribute", :attrib_namespace => @attrib_ns).update_from_xml(xml)
 
-    @atro = AttribType.find( :first, :joins => @attrib_ns, :conditions=>{:name=>"NewAttribute"} )
+    @atro = @attrib_ns.attrib_types.where(:name=>"NewAttribute").first
     assert_not_nil @atro
     @at = AttribType.find_by_id( @atro.id ) # make readwritable
 
@@ -79,9 +79,9 @@ class AttributeTest < ActiveSupport::TestCase
                </allowed>
             </attribute>"
 
-    xml = REXML::Document.new( axml )
+    xml = Xmlhash.parse( axml )
 
-    assert @at.update_from_xml(xml.root)
+    assert @at.update_from_xml(xml)
     assert_equal "NewAttribute", @at.name
     assert_equal "OBS", @at.attrib_namespace.name
     assert_equal 67, @at.value_count
@@ -100,8 +100,8 @@ class AttributeTest < ActiveSupport::TestCase
                </allowed>
             </attribute>"
 
-    xml = REXML::Document.new( axml )
-    assert @at.update_from_xml(xml.root)
+    xml = Xmlhash.parse( axml )
+    assert @at.update_from_xml(xml)
     assert_equal "NewAttribute", @at.name
     assert_equal "OBS", @at.attrib_namespace.name
     assert_nil @at.value_count
@@ -110,8 +110,8 @@ class AttributeTest < ActiveSupport::TestCase
     assert_equal 1, @at.attrib_type_modifiable_bies.length
     # with empty content
     axml = "<attribute namespace='OBS' name='NewAttribute' />"
-    xml = REXML::Document.new( axml )
-    assert @at.update_from_xml(xml.root)
+    xml = Xmlhash.parse( axml )
+    assert @at.update_from_xml(xml)
     assert_equal "NewAttribute", @at.name
     assert_equal "OBS", @at.attrib_namespace.name
     assert_nil @at.value_count
@@ -132,15 +132,15 @@ class AttributeTest < ActiveSupport::TestCase
     assert_equal "OBS", @at.attrib_namespace.name
 
     axml = " <attribute namespace='OBS' name='Maintained' /> "
-    xml = BsRequest.new( axml )
+    xml = ActiveXML::Node.new( axml )
 
     # store in a project
-    @project = DbProject.find_by_name( "kde4" )
+    @project = Project.find_by_name( "kde4" )
     assert_not_nil @project
     @project.store_attribute_axml(xml)
     @project.store
 
-    @p = DbProject.find_by_name( "kde4" )
+    @p = Project.find_by_name( "kde4" )
     assert_not_nil @p
     @a = @p.find_attribute( "OBS", "Maintained" )
     assert_not_nil @a
@@ -148,12 +148,12 @@ class AttributeTest < ActiveSupport::TestCase
 
 
     # store in a package
-    @package = DbPackage.find_by_project_and_name( "kde4", "kdebase" )
+    @package = Package.find_by_project_and_name( "kde4", "kdebase" )
     assert_not_nil @package
     @package.store_attribute_axml(xml)
     @package.store
 
-    @p = DbPackage.find_by_project_and_name( "kde4", "kdebase" )
+    @p = Package.find_by_project_and_name( "kde4", "kdebase" )
     assert_not_nil @p
     @a = @p.find_attribute( "OBS", "Maintained" )
     assert_not_nil @a
@@ -164,19 +164,20 @@ class AttributeTest < ActiveSupport::TestCase
     axml = "<attribute namespace='OBS' name='Maintained' >
               <value>blah</value>
             </attribute> "
-    xml = BsRequest.new( axml )
+    xml = ActiveXML::Node.new( axml )
 
     # store in a project
-    @project = DbProject.find_by_name( "kde4" )
+    @project = Project.find_by_name( "kde4" )
     assert_not_nil @project
-    assert_raise DbProject::SaveError do 
+    assert_raise HasAttributes::AttributeSaveError do
       @project.store_attribute_axml(xml)
     end
     # store in a package
-    @package = DbPackage.find_by_project_and_name( "kde4", "kdebase" )
+    @package = Package.find_by_project_and_name( "kde4", "kdebase" )
     assert_not_nil @package
-    assert_raise DbPackage::SaveError do 
+    assert_raise HasAttributes::AttributeSaveError do
       @package.store_attribute_axml(xml)
     end
   end
+
 end

@@ -1,328 +1,663 @@
-ActionController::Routing::Routes.draw do |map|
-  # Add your own custom routes here.
-  # The priority is based upon order of creation: first created -> highest priority.
+# we take everything here that is not XML - the default mimetype is xml though
+class WebuiMatcher
 
-  # Here's a sample route:
-  # map.connect 'products/:id', :controller => 'catalog', :action => 'view'
-  # Keep in mind you can assign values other than :controller and :action
-
-  # You can have the root of your site routed by hooking up ''
-  # -- just remember to delete public/index.html.
-  # map.connect '', :controller => "welcome"
-
-  # Allow downloading Web Service WSDL as a file with an extension
-  # instead of a file named 'wsdl'
-  # map.connect ':controller/service.wsdl', :action => 'wsdl'
-
-  map.connect '/', :controller => 'main'
-
-  map.resource :configuration, :only => [:show, :update]
-
-  ### /person
-  map.connect 'person', :controller => 'person', :action => 'index'
-  # FIXME: this is no clean namespace, a person "register" or "changepasswd" could exist ...
-  #        suggested solution is POST person/:login?cmd=register
-  #        fix this for OBS 3.0
-  map.connect 'person/register', :controller => 'person', :action => 'register'
-  map.connect 'person/changepasswd', :controller => 'person', :action => 'change_my_password'
-  # bad api, to be removed for OBS 3. Use /group?person=:login instead
-  map.connect 'person/:login/group', :controller => 'person', :action => 'grouplist', :login => /[^\/]*/
-
-  map.connect 'person/:login', :controller => 'person', :action => 'userinfo', :login => /[^\/]*/
-
-  ### /group
-  map.connect 'group', :controller => 'group', :action => 'index'
-  map.connect 'group/:title', :controller => 'group', :action => 'show', :title => /[^\/]*/
-
-  ### /service
-  map.connect 'service/:service', :controller => "service",
-    :action => 'index_service', :service => /\w[^\/]*/
-
-  ### /source
-
-  # project level
-  map.connect 'source/:project', :controller => "source",
-    :action => 'index_project', :project => /\w[^\/]*/
-  map.connect 'source/:project/_meta', :controller => 'source',
-    :action => 'project_meta', :project => /[^\/]*/
-  map.connect 'source/:project/_webui_flags', :controller => 'source',
-    :action => 'project_flags', :project => /[^\/]*/
-  map.connect 'source/:project/_attribute', :controller => 'source',
-    :action => 'attribute_meta', :project => /[^\/]*/
-  map.connect 'source/:project/_attribute/:attribute', :controller => 'source',
-    :action => 'attribute_meta', :project => /[^\/]*/
-  map.connect 'source/:project/_config', :controller => 'source',
-    :action => 'project_config', :project => /[^\/]*/
-  map.connect 'source/:project/_tags', :controller => 'tag',
-    :action => 'project_tags', :project => /[^\/]*/
-  map.connect 'source/:project/_pubkey', :controller => 'source',
-    :action => 'project_pubkey', :project => /[^\/]*/
-
-  # package level
-  map.connect 'source/:project/:package/_meta', :controller => 'source',
-    :action => 'package_meta', :project => /[^\/]*/, :package => /[^\/]*/
-  map.connect 'source/:project/:package/_webui_flags', :controller => 'source',
-    :action => 'package_flags', :project => /[^\/]*/, :package => /[^\/]*/
-  map.connect 'source/:project/:package/_attribute', :controller => 'source',
-    :action => 'attribute_meta', :project => /[^\/]*/, :package => /[^\/]*/
-  map.connect 'source/:project/:package/_attribute/:attribute', :controller => 'source',
-    :action => 'attribute_meta', :project => /[^\/]*/, :package => /[^\/]*/
-  map.connect 'source/:project/:package/:binary/_attribute', :controller => 'source',
-    :action => 'attribute_meta', :project => /[^\/]*/, :package => /[^\/]*/, :binary => /[^\/]*/
-  map.connect 'source/:project/:package/:binary/_attribute/:attribute', :controller => 'source',
-    :action => 'attribute_meta', :project => /[^\/]*/, :package => /[^\/]*/, :binary => /[^\/]*/
-  map.connect 'source/:project/:package/_tags', :controller => 'tag',
-    :action => 'package_tags', :project => /[^\/]*/, :package => /[^\/]*/
-  map.connect 'source/:project/:package/_wizard', :controller => 'wizard',
-    :action => 'package_wizard', :project => /[^\/]*/, :package => /[^\/]*/
-  map.connect 'source/:project/:package/:file', :controller => "source",
-    :action => 'file', :project => /[^\/]*/, :package => /[^\/]*/, :file => /[^\/]*/
-  map.connect 'source/:project/:package', :controller => "source",
-    :action => 'index_package', :project => /\w[^\/]*/, :package => /\w[^\/]*/
-
-
-  ### /attribute
-  map.connect 'attribute', :controller => 'attribute',
-    :action => 'index'
-  map.connect 'attribute/:namespace', :controller => 'attribute',
-    :action => 'index'
-  map.connect 'attribute/:namespace/_meta', :controller => 'attribute',
-    :action => 'namespace_definition'
-  map.connect 'attribute/:namespace/:name/_meta', :controller => 'attribute',
-    :action => 'attribute_definition'
-
-  ### /architecture
-  map.resources :architectures, :only => [:index, :show, :update] # create,delete currently disabled
-
-  ### /issue_trackers
-  map.connect 'issue_trackers/issues_in', :controller => 'issue_trackers', :action => 'issues_in'
-  map.resources :issue_trackers, :only => [:index, :show, :create, :update, :destroy] do |issue_trackers|
-    issue_trackers.resources :issues, :only => [:show] # Nested route
+  class InvalidRequestFormat < APIException
   end
 
-  ### /tag
+  def self.matches?(request)
+    begin
+      request.format.to_sym != :xml
+    rescue ArgumentError => e
+      raise InvalidRequestFormat.new e.to_s
+    end
+  end
+end
 
-  #routes for tagging support
-  #
-  # map.connect 'tag/_all', :controller => 'tag',
-  #  :action => 'list_xml'
-  #Get/put tags by object
-  ### moved to source section
+# here we take everything that is XML, JSON or osc ;)
+class APIMatcher
+  def self.matches?(request)
+    format = request.format.to_sym || :xml
+    #Rails.logger.debug "MATCHES #{format}"
+    format == :xml || format == :json
+  end
+end
 
-  #Get objects by tag.
-  map.connect 'tag/:tag/_projects', :controller => 'tag',
-    :action => 'get_projects_by_tag'
-  map.connect 'tag/:tag/_packages', :controller => 'tag',
-    :action => 'get_packages_by_tag'
-  map.connect 'tag/:tag/_all', :controller => 'tag',
-    :action => 'get_objects_by_tag'
+OBSApi::Application.routes.draw do
 
-  #Get a tagcloud including all tags.
-  map.connect 'tag/_tagcloud', :controller => 'tag',
-    :action => 'tagcloud'
+  constraints(WebuiMatcher) do
 
+    cons = {project: %r{[^\/]*}, package: %r{[^\/]*}, binary: %r{[^\/]*},
+            user: %r{[^\/]*}, login: %r{[^\/]*}, title: %r{[^\/]*}, service: %r{\w[^\/]*},
+            repository: %r{[^\/]*}, filename: %r{[^\/]*}, arch: %r{[^\/]*},
+            id: %r{\d*}}
 
-  ### /user
+    root 'webui/main#index'
 
-  #Get objects tagged by user. (objects with tags)
-  map.connect 'user/:user/tags/_projects', :controller => 'tag',
-    :action => 'get_tagged_projects_by_user', :user => /[^\/]*/
-  map.connect 'user/:user/tags/_packages', :controller => 'tag',
-    :action => 'get_tagged_packages_by_user', :user => /[^\/]*/
+    controller 'webui/main' do
+      get 'main/systemstatus' => :systemstatus
+      get 'main/add_news_dialog' => :add_news_dialog
+      post 'main/add_news' => :add_news
+      get 'main/delete_message_dialog' => :delete_message_dialog
+      post 'main/delete_message' => :delete_message
+    end
 
-  #Get tags by user.
-  map.connect 'user/:user/tags/_tagcloud', :controller => 'tag',
-    :action =>  'tagcloud', :user => /[^\/]*/
-  #map.connect 'user/:user/tags', :controller => 'tag',
-  #  :action => 'tagcloud', :distribution => 'raw'
+    controller 'webui/feeds' do
+      get 'main/news' => :news, as: :news_feed
+      get 'main/latest_updates' => :latest_updates, as: :latest_updates_feed
+      get 'project/latest_commits/:project' => :commits, defaults: { format: 'atom' }, constraints: cons, as: 'commits_feed'
+    end
 
-  #Get tags for a certain object by user.
-  map.connect 'user/:user/tags/:project', :controller => 'tag',
-    :action => 'tags_by_user_and_object', :project => /[^\/]*/, :user => /[^\/]*/
-  map.connect 'user/:user/tags/:project/:package', :controller => 'tag',
-    :action => 'tags_by_user_and_object', :project => /[^\/]*/, :package => /[^\/]*/, :user => /[^\/]*/
+    controller 'webui/attribute' do
+      get 'attribute/edit' => :edit
+      post 'attribute/save' => :save
+      match 'attribute/delete' => :delete, via: [:post, :delete]
+    end
 
+    controller 'webui/configuration' do
+      get 'configuration/' => :index
+      get 'configuration/users' => :users
+      get 'configuration/groups' => :groups
+      get 'configuration/connect_instance' => :connect_instance
+      post 'configuration/save_instance' => :save_instance
+      post 'configuration/update_configuration' => :update_configuration
+      post 'configuration/update_architectures' => :update_architectures
 
-  ### /statistics
+      get 'configuration/notifications' => :notifications
+      post 'configuration/notifications' => :update_notifications
+    end
 
-  # Routes for statistics
-  # ---------------------
+    controller 'webui/driver_update' do
+      get 'driver_update/create' => :create
+      get 'driver_update/edit' => :edit
+      post 'driver_update/save' => :save
+      get 'driver_update/binaries' => :binaries
+    end
 
-  # Download statistics
-  #
-  map.connect 'statistics/download_counter',
-    :controller => 'statistics', :action => 'download_counter'
+    controller 'webui/monitor' do
+      get 'monitor/' => :index
+      get 'monitor/old' => :old
+      get 'monitor/update_building' => :update_building
+      get 'monitor/events' => :events
+    end
 
-  # Timestamps
-  #
-  map.connect 'statistics/added_timestamp/:project',
-    :controller => 'statistics', :action => 'added_timestamp', :project => /[^\/]*/
-  map.connect 'statistics/added_timestamp/:project/:package',
-    :controller => 'statistics', :action => 'added_timestamp', :project => /[^\/]*/, :package => /[^\/]*/
-  map.connect 'statistics/updated_timestamp/:project',
-    :controller => 'statistics', :action => 'updated_timestamp', :project => /[^\/]*/
-  map.connect 'statistics/updated_timestamp/:project/:package',
-    :controller => 'statistics', :action => 'updated_timestamp', :project => /[^\/]*/, :package => /[^\/]*/
+    controller 'webui/package' do
+      get 'package/show/(:project/(:package))' => :show, as: 'package_show', constraints: cons
+      get 'package/linking_packages/:project/:package' => :linking_packages, constraints: cons
+      get 'package/dependency/:project/:package' => :dependency, constraints: cons
+      get 'package/binary/:project/:package' => :binary, constraints: cons, as: 'package_binary'
+      get 'package/binaries/:project/:package' => :binaries, constraints: cons, as: 'package_binaries'
+      get 'package/users/:project/:package' => :users, as: 'package_users', constraints: cons
+      get 'package/requests/:project/:package' => :requests, as: 'package_requests', constraints: cons
+      get 'package/statistics/:project/:package' => :statistics, as: 'package_statistics', constraints: cons
+      get 'package/commit/:project/:package' => :commit, as: 'package_commit', constraints: cons
+      get 'package/revisions/:project/:package' => :revisions, constraints: cons
+      get 'package/submit_request_dialog/:project/:package' => :submit_request_dialog, constraints: cons
+      post 'package/submit_request/:project/:package' => :submit_request, constraints: cons
+      get 'package/add_person/:project/:package' => :add_person, constraints: cons
+      get 'package/add_group/:project/:package' => :add_group, constraints: cons
+      get 'package/rdiff/(:project/(:package))' => :rdiff, constraints: cons
+      get 'package/wizard_new/:project' => :wizard_new, constraints: cons
+      get 'package/wizard/:project/:package' => :wizard, constraints: cons
+      post 'package/save_new/:project' => :save_new, constraints: cons
+      get 'package/branch_dialog/:project/:package' => :branch_dialog, constraints: cons
+      post 'package/branch/:project/:package' => :branch, constraints: cons
+      post 'package/save_new_link/:project' => :save_new_link, constraints: cons
+      post 'package/save/:project/:package' => :save, constraints: cons
+      get 'package/delete_dialog/:project/:package' => :delete_dialog, constraints: cons
+      post 'package/remove/:project/:package' => :remove, constraints: cons
+      get 'package/add_file/:project/:package' => :add_file, constraints: cons
+      post 'package/save_file/:project/:package' => :save_file, constraints: cons
+      post 'package/remove_file/:project/:package' => :remove_file, constraints: cons
+      post 'package/save_person/:project/:package' => :save_person, constraints: cons
+      post 'package/save_group/:project/:package' => :save_group, constraints: cons
+      post 'package/remove_role/:project/:package' => :remove_role, constraints: cons
+      get 'package/view_file/(:project/(:package/(:filename)))' => :view_file, constraints: cons, as: 'package_view_file'
+      post 'package/save_modified_file/:project/:package' => :save_modified_file, constraints: cons
+      get 'package/live_build_log/(:project/(:package/(:repository/(:arch))))' => :live_build_log, constraints: cons
+      get 'package/update_build_log/:project/:package' => :update_build_log, constraints: cons
+      get 'package/abort_build/:project/:package' => :abort_build, constraints: cons
+      delete 'package/trigger_rebuild/:project/:package' => :trigger_rebuild, constraints: cons
+      delete 'package/wipe_binaries/:project/:package' => :wipe_binaries, constraints: cons
+      get 'package/devel_project/:project/:package' => :devel_project, constraints: cons
+      get 'package/buildresult' => :buildresult, constraints: cons
+      get 'package/rpmlint_result' => :rpmlint_result, constraints: cons
+      get 'package/rpmlint_log' => :rpmlint_log, constraints: cons
+      get 'package/meta/:project/:package' => :meta, constraints: cons, as: 'package_meta'
+      post 'package/save_meta/:project/:package' => :save_meta, constraints: cons
+      get 'package/attributes/:project/:package' => :attributes, constraints: cons, as: 'package_attributes'
+      get 'package/edit/:project/:package' => :edit, constraints: cons
+      get 'package/repositories/:project/:package' => :repositories, constraints: cons
+      post 'package/change_flag/:project/:package' => :change_flag, constraints: cons
+      get 'package/import_spec/:project/:package' => :import_spec, constraints: cons
+      # compat route
+      get 'package/files/:project/:package' => :show, constraints: cons
+      post 'package/comments/:project/:package' => :save_comment, constraints: cons
+    end
 
-  # Ratings
-  #
-  map.connect 'statistics/rating/:project',
-    :controller => 'statistics', :action => 'rating', :project => /[^\/]*/
-  map.connect 'statistics/rating/:project/:package',
-    :controller => 'statistics', :action => 'rating', :project => /[^\/]*/, :package => /[^\/]*/
+    controller 'webui/patchinfo' do
+      post 'patchinfo/new_patchinfo' => :new_patchinfo
+      post 'patchinfo/updatepatchinfo' => :updatepatchinfo
+      get 'patchinfo/edit_patchinfo' => :edit_patchinfo
+      get 'patchinfo/show/:project/:package' => :show, as: 'patchinfo_show'
+      get 'patchinfo/read_patchinfo' => :read_patchinfo
+      post 'patchinfo/save' => :save
+      post 'patchinfo/remove' => :remove
+      get 'patchinfo/new_tracker' => :new_tracker
+      get 'patchinfo/get_issue_sum' => :get_issue_sum
+      get 'patchinfo/delete_dialog' => :delete_dialog
+    end
 
-  # Activity
-  #
-  map.connect 'statistics/activity/:project',
-    :controller => 'statistics', :action => 'activity', :project => /[^\/]*/
-  map.connect 'statistics/activity/:project/:package',
-    :controller => 'statistics', :action => 'activity', :project => /[^\/]*/, :package => /[^\/]*/
+    controller 'webui/project' do
+      get 'project/' => :index
+      get 'project/list_public' => :list_public
+      get 'project/list_all' => :list_all
+      get 'project/list' => :list
+      get 'project/list_simple' => :list_simple
+      get 'project/autocomplete_projects' => :autocomplete_projects
+      get 'project/autocomplete_incidents' => :autocomplete_incidents
+      get 'project/autocomplete_packages' => :autocomplete_packages
+      get 'project/autocomplete_repositories' => :autocomplete_repositories
+      get 'project/users/:project' => :users, constraints: cons, as: 'project_users'
+      get 'project/subprojects/:project' => :subprojects, constraints: cons, as: 'project_subprojects'
+      get 'project/attributes/:project' => :attributes, constraints: cons, as: 'project_attributes'
+      get 'project/new' => :new
+      post 'project/new_incident' => :new_incident
+      get 'project/new_package/:project' => :new_package, constraints: cons
+      get 'project/new_package_branch/:project' => :new_package_branch, constraints: cons
+      get 'project/incident_request_dialog' => :incident_request_dialog
+      post 'project/new_incident_request' => :new_incident_request
+      get 'project/release_request_dialog' => :release_request_dialog
+      post 'project/new_release_request/(:project)' => :new_release_request
+      get 'project/show/(:project)' => :show, constraints: cons, as: 'project_show'
+      get 'project/linking_projects/:project' => :linking_projects, constraints: cons
+      get 'project/add_repository_from_default_list/:project' => :add_repository_from_default_list, constraints: cons
+      get 'project/add_repository/:project' => :add_repository, constraints: cons
+      get 'project/add_person/:project' => :add_person, constraints: cons
+      get 'project/add_group/:project' => :add_group, constraints: cons
+      get 'project/buildresult' => :buildresult, constraints: cons
+      get 'project/delete_dialog' => :delete_dialog
+      post 'project/delete' => :delete
+      get 'project/edit_repository/:project' => :edit_repository
+      post 'project/update_target/:project' => :update_target
+      get 'project/repositories/:project' => :repositories, constraints: cons, as: 'project_repositories'
+      get 'project/repository_state/:project/:repository' => :repository_state, constraints: cons, as: 'project_repository_state'
+      get 'project/rebuild_time/:project' => :rebuild_time, constraints: cons
+      get 'project/rebuild_time_png/:project' => :rebuild_time_png, constraints: cons
+      get 'project/packages/:project' => :packages, constraints: cons
+      get 'project/requests/:project' => :requests, constraints: cons
+      post 'project/save_new' => :save_new, constraints: cons
+      post 'project/save' => :save, constraints: cons
+      post 'project/save_targets' => :save_targets
+      get 'project/remove_target_request_dialog' => :remove_target_request_dialog
+      post 'project/remove_target_request' => :remove_target_request
+      post 'project/remove_target' => :remove_target
+      post 'project/remove_path_from_target' => :remove_path_from_target
+      post 'project/release_repository/:project/:repository' => :release_repository, constraints: cons
+      get 'project/release_repository_dialog/:project/:repository' => :release_repository_dialog, constraints: cons
+      get 'project/move_path_up' => :move_path_up
+      get 'project/move_path_down' => :move_path_down
+      post 'project/save_person/:project' => :save_person, constraints: cons
+      post 'project/save_group/:project' => :save_group, constraints: cons
+      post 'project/remove_role/:project' => :remove_role, constraints: cons
+      post 'project/remove_person/:project' => :remove_person, constraints: cons
+      post 'project/remove_group/:project' => :remove_group, constraints: cons
+      get 'project/monitor/(:project)' => :monitor, constraints: cons
+      get 'project/package_buildresult/:project' => :package_buildresult, constraints: cons
+      # TODO: this should be POST (and the link AJAX)
+      get 'project/toggle_watch/:project' => :toggle_watch, constraints: cons
+      get 'project/meta/:project' => :meta, constraints: cons, as: 'project_meta'
+      post 'project/save_meta/:project' => :save_meta, constraints: cons
+      get 'project/prjconf/:project' => :prjconf, constraints: cons
+      post 'project/save_prjconf/:project' => :save_prjconf, constraints: cons
+      post 'project/change_flag/:project' => :change_flag, constraints: cons
+      get 'project/clear_failed_comment/:project' => :clear_failed_comment, constraints: cons
+      get 'project/edit/:project' => :edit, constraints: cons
+      get 'project/edit_comment_form/:project' => :edit_comment_form, constraints: cons
+      post 'project/edit_comment/:project' => :edit_comment, constraints: cons
+      get 'project/status/(:project)' => :status, constraints: cons, as: 'project_status'
+      get 'project/maintained_projects/:project' => :maintained_projects, constraints: cons
+      get 'project/add_maintained_project_dialog' => :add_maintained_project_dialog, constraints: cons
+      post 'project/add_maintained_project' => :add_maintained_project, constraints: cons
+      post 'project/remove_maintained_project/:project' => :remove_maintained_project, constraints: cons
+      get 'project/maintenance_incidents/:project' => :maintenance_incidents, constraints: cons
+      get 'project/list_incidents/:project' => :list_incidents, constraints: cons
+      get 'project/unlock_dialog' => :unlock_dialog
+      post 'project/unlock' => :unlock
+      post 'project/comments/:project' => :save_comment, constraints: cons, as: 'save_project_comment'
+    end
 
-  # Newest stats
-  #
-  map.connect 'statistics/newest_stats',
-    :controller => 'statistics', :action => 'newest_stats'
+    controller 'webui/request' do
+      get 'request/add_reviewer_dialog' => :add_reviewer_dialog
+      post 'request/add_reviewer' => :add_reviewer
+      post 'request/modify_review' => :modify_review
+      get 'request/show/:id' => :show, as: 'request_show', constraints: cons
+      post 'request/sourcediff' => :sourcediff
+      post 'request/changerequest' => :changerequest
+      get 'request/diff/:id' => :diff
+      get 'request/list' => :list
+      get 'request/list_small' => :list_small
+      get 'request/delete_request_dialog' => :delete_request_dialog
+      post 'request/delete_request' => :delete_request
+      get 'request/add_role_request_dialog' => :add_role_request_dialog
+      post 'request/add_role_request' => :add_role_request
+      get 'request/set_bugowner_request_dialog' => :set_bugowner_request_dialog
+      post 'request/set_bugowner_request' => :set_bugowner_request
+      get 'request/change_devel_request_dialog' => :change_devel_request_dialog
+      post 'request/change_devel_request' => :change_devel_request
+      get 'request/set_incident_dialog' => :set_incident_dialog
+      post 'request/set_incident' => :set_incident
+      post 'request/comments/:id' => :save_comment
+    end
 
-  ### /status_message
+    controller 'webui/search' do
+      match 'search' => :index, via: [:get, :post]
+      get 'search/owner' => :owner
+    end
 
-  # Routes for status_messages
-  # --------------------------
-  map.connect 'status_message',
-    :controller => 'status', :action => 'messages'
+    controller 'webui/user' do
 
+      post 'user/register' => :register
+      get 'user/register_user' => :register_user
 
-  ### /message
+      get 'user/login' => :login
+      post 'user/logout' => :logout
+      get 'user/logout' => :logout
 
-  # Routes for messages
-  # --------------------------
-  map.connect 'message/:id',
-    :controller => 'message', :action => 'index'
+      post 'user/save' => :save
+      get 'user/save_dialog' => :save_dialog
 
+      post 'user/change_password' => :change_password
+      get 'user/password_dialog' => :password_dialog
 
-  ### /search
+      post 'user/confirm' => :confirm
+      post 'user/lock' => :lock
+      post 'user/admin' => :admin
+      delete 'user/delete' => :delete
 
-  # ACL(/search/published/binary/id) TODO: direct passed call to  "pass_to_backend"
-  map.connect 'search/published/binary/id' , :controller => "search", :action => "pass_to_backend"
-  # ACL(/search/published/pattern/id) TODO: direct passed call to  "pass_to_backend"
-  map.connect 'search/published/pattern/id' , :controller => "search", :action => "pass_to_backend"
-  map.connect 'search/project/id', :controller => "search", :action => "project_id"
-  map.connect 'search/package/id', :controller => "search", :action => "package_id"
-  map.connect 'search/project', :controller => "search", :action => "project"
-  map.connect 'search/package', :controller => "search", :action => "package"
-  map.connect 'search/attribute', :controller => "search", :action => "attribute"
-  map.connect 'search', :controller => "search", :action => "pass_to_backend"
+      get 'user/autocomplete' => :autocomplete
+      get 'user/tokens' => :tokens
+
+      post 'user/do_login' => :do_login
+      get 'configuration/users/:user' => :edit, as: 'configuration_user'
+
+      post 'user/notifications' => :update_notifications
+      get 'user/notifications' => :notifications
+
+      get 'user/show/:user' => :show, as: 'user_show'
+      get 'user/icon/:user' => :icon, as: 'user_icon'
+      get 'user/requests/:user' => :requests, as: 'user_requests'
+      # Only here to make old /home url's work
+      get 'home/' => :home, as: 'home'
+      get 'home/my_work' => :home
+      get 'home/list_my' => :home
+      get 'home/requests' => :requests
+      get 'home/home_project' => :home_project
+      get 'user/:user/icon' => :icon, constraints: cons
+    end
+
+    controller 'webui/group' do
+      get 'group/show/:id' => :show, constraints: {:id => /[^\/]*/}, as: 'group_show'
+      get 'group/add' => :add
+      post 'group/save' => :save
+      get 'group/autocomplete' => :autocomplete
+      get 'group/tokens' => :tokens
+      get 'group/edit' => :edit
+    end
+
+    namespace :webui do
+      resource :comment, only: [:destroy]
+    end
+
+    ### /apidocs
+    get 'apidocs' => 'webui/apidocs#index'
+    get 'apidocs/index' => 'webui/apidocs#index'
+
+  end
+
+  # first the routes where the mime type does not matter
+  cons = {project: %r{[^\/]*}, package: %r{[^\/]*},
+          binary: %r{[^\/]*}, user: %r{[^\/]*}, login: %r{[^\/]*},
+          title: %r{[^\/]*}, service: %r{\w[^\/]*},
+          repository: %r{[^\/]*}, filename: %r{[^\/]*},
+          arch: %r{[^\/]*}, id: %r{\d*}}
 
   ### /build
-
-  map.connect 'build/:project/:repository/:arch/:package/_status',
-    :controller => "build", :action => "index", :project => /[^\/]*/, :repository => /[^\/]*/, :package => /[^\/]*/
-  map.connect 'build/:project/:repository/:arch/:package/_log',
-    :controller => "build", :action => "logfile", :project => /[^\/]*/, :repository => /[^\/]*/, :package => /[^\/]*/
-  map.connect 'build/:project/:repository/:arch/:package/_buildinfo',
-    :controller => "build", :action => "buildinfo", :project => /[^\/]*/, :repository => /[^\/]*/, :package => /[^\/]*/
-  map.connect 'build/:project/:repository/:arch/:package/_history',
-    :controller => "build", :action => "index", :project => /[^\/]*/, :repository => /[^\/]*/, :package => /[^\/]*/
-  map.connect 'build/:project/:repository/:arch/:package/:filename',
-    :controller => "build", :action => "file", :project => /[^\/]*/, :repository => /[^\/]*/, :package => /[^\/]*/, :filename => /[^\/]*/
-  map.connect 'build/:project/:repository/:arch/_builddepinfo',
-    :controller => "build", :action => "builddepinfo", :project => /[^\/]*/, :repository => /[^\/]*/, :arch => /[^\/]*/
-  map.connect 'build/:project/:repository/:arch/:package',
-    :controller => "build", :action => "index", :project => /[^\/]*/, :repository => /[^\/]*/, :package => /[^\/]*/
-  map.connect 'build/:project/:repository/_buildconfig',
-    :controller => "build", :action => "index", :project => /[^\/]*/, :repository => /[^\/]*/
-  map.connect 'build/:project/:repository/:arch',
-    :controller => "build", :action => "index", :project => /[^\/]*/, :repository => /[^\/]*/
-  map.connect 'build/:project/_result',
-    :controller => "build", :action => "result", :project => /[^\/]*/
-  map.connect 'build/:project/:repository',
-    :controller => "build", :action => "index", :project => /[^\/]*/, :repository => /[^\/]*/
+  match 'build/:project/:repository/:arch/:package/_status' => 'build#index', constraints: cons, via: [:get, :post]
+  get 'build/:project/:repository/:arch/:package/_log' => 'build#logfile', constraints: cons
+  match 'build/:project/:repository/:arch/:package/_buildinfo' => 'build#buildinfo', constraints: cons, via: [:get, :post]
+  match 'build/:project/:repository/:arch/:package/_history' => 'build#index', constraints: cons, via: [:get, :post]
+  match 'build/:project/:repository/:arch/:package/:filename' => 'build#file', via: [:get, :put, :delete], constraints: cons
+  get 'build/:project/:repository/:arch/_builddepinfo' => 'build#builddepinfo', constraints: cons
+  match 'build/:project/:repository/:arch/:package' => 'build#index', constraints: cons, via: [:get, :post]
+  match 'build/:project/:repository/_buildconfig' => 'build#index', constraints: cons, via: [:get, :post]
+  match 'build/:project/:repository/:arch' => 'build#index', constraints: cons, via: [:get, :post]
+  get 'build/:project/_result' => 'build#result', constraints: cons
+  match 'build/:project/:repository' => 'build#index', constraints: cons, via: [:get, :post]
   # the web client does no longer use that route, but we keep it for backward compat
-  map.connect 'build/_workerstatus',
-    :controller => "status", :action => "workerstatus"
-  map.connect 'build/:project',
-    :controller => "build", :action => "project_index", :project => /[^\/]*/
-  map.connect 'build',
-    :controller => "source", :action => "index"
+  get 'build/_workerstatus' => 'status#workerstatus'
+  match 'build/:project' => 'build#project_index', constraints: cons, via: [:get, :post, :put]
+  get 'build' => 'source#index'
 
   ### /published
 
-  map.connect 'published/:project/:repository/:arch/:binary',
-    :controller => "published", :action => "index", :project => /[^\/]*/, :repository => /[^\/]*/, :binary => /[^\/]*/
-  map.connect 'published/:project/:repository/:arch', # :arch can be also a ymp for a pattern :/
-    :controller => "published", :action => "index", :project => /[^\/]*/, :repository => /[^\/]*/, :arch => /[^\/]*/
-  map.connect 'published/:project/:repository/',
-    :controller => "published", :action => "index", :project => /[^\/]*/, :repository => /[^\/]*/
-  map.connect 'published/:project',
-    :controller => "published", :action => "index", :project => /[^\/]*/
-  map.connect 'published/',
-    :controller => "published", :action => "index"
-
-  ### /request
-  
-  map.resources :request, :only => [:index, :show, :update, :create]
-  
-  map.connect 'request/:id', :controller => 'request',
-    :action => 'command'
-  # ACL(/search/request) TODO: direct passed call to  "pass_to_backend"
-  map.connect 'search/request', :controller => 'request', 
-    :action => 'pass_to_backend'
-
-  ### /lastevents
-
-  map.connect "/lastevents", :controller => 'public',
-    :action => 'lastevents'
+  get 'published/:project/:repository/:arch/:binary' => 'published#index', constraints: cons
+  # :arch can be also a ymp for a pattern :/
+  get 'published/:project/:repository/:arch' => 'published#index', constraints: cons
+  get 'published/:project/:repository/' => 'published#index', constraints: cons
+  get 'published/:project' => 'published#index', constraints: cons
+  get 'published/' => 'source#index', via: :get
 
 
-  ### /apidocs
+  constraints(APIMatcher) do
 
-  map.connect 'apidocs/:action', :action => /[^\/]*/, :controller => "apidocs"
+    get '/' => 'main#index'
 
-  map.connect '/active_rbac/registration/confirm/:user/:token',
-    :controller => 'active_rbac/registration', :action => 'confirm'
+    resource :configuration, only: [:show, :update, :schedulers]
+
+    ### /person
+    post 'person' => 'person#command'
+    get 'person' => 'person#show'
+    post 'person/:login/login' => 'person#login' # temporary hack for webui, do not use, to be removed
+    get 'person/:login/token' => 'person#tokenlist'
+    post 'person/:login/token' => 'person#command_token'
+    delete 'person/:login/token/:id' => 'person#delete_token'
+
+    # FIXME3.0: this is no clean namespace, a person "register" or "changepasswd" could exist ...
+    #           remove these for OBS 3.0
+    match 'person/register' => 'person#register', via: [:post, :put] # use /person?cmd=register POST instead
+    match 'person/changepasswd' => 'person#change_my_password', via: [:post, :put] # use /person/:login?cmd=changepassword POST instead
+    get 'person/:login/group' => 'person#grouplist', constraints: cons # Use /group?person=:login GET instead
+    # /FIXME3.0
+    match 'person/:login' => 'person#get_userinfo', constraints: cons, via: [:get]
+    match 'person/:login' => 'person#put_userinfo', constraints: cons, via: [:put]
+    match 'person/:login' => 'person#post_userinfo', constraints: cons, via: [:post]
+
+    ### /group
+    controller :group do
+      get 'group' => :index
+      get 'group/:title' => :show, constraints: cons
+      delete 'group/:title' => :delete, constraints: cons
+      put 'group/:title' => :update, constraints: cons
+      post 'group/:title' => :command, constraints: cons
+    end
+
+    ### /service
+    get 'service' => 'service#index'
+    get 'service/:service' => 'service#index_service', constraints: cons
+
+    ### /source
+
+    get 'source/:project/:package/_wizard' => 'wizard#package_wizard', constraints: cons
+    get 'source/:project/:package/_tags' => 'tag#package_tags', constraints: cons
+    get 'source/:project/_tags' => 'tag#project_tags', constraints: cons
+
+    get 'about' => 'about#index'
+
+    controller :test do
+      post 'test/killme' => :killme
+      post 'test/startme' => :startme
+      post 'test/test_start' => :test_start
+    end
+
+    ### /attribute is before source as it needs more specific routes for projects
+    controller :attribute do
+      get 'attribute' => :index
+      get 'attribute/:namespace' => :index
+      match 'attribute/:namespace/_meta' => :namespace_definition, via: [:get, :delete, :post]
+      match 'attribute/:namespace/:name/_meta' => :attribute_definition, via: [:get, :delete, :post]
+
+      get 'source/:project(/:package(/:binary))/_attribute(/:attribute)' => :show_attribute, constraints: cons
+      post 'source/:project(/:package(/:binary))/_attribute(/:attribute)' => :cmd_attribute, constraints: cons
+      delete 'source/:project(/:package(/:binary))/_attribute(/:attribute)' => :delete_attribute, constraints: cons
+    end
+
+    ### /architecture
+    resources :architectures, only: [:index, :show, :update] # create,delete currently disabled
+
+    ### /trigger
+    post 'trigger/runservice' => 'trigger#runservice'
+
+    ### /issue_trackers
+    get 'issue_trackers/issues_in' => 'issue_trackers#issues_in'
+    resources :issue_trackers, only: [:index, :show, :create, :update, :destroy] do
+      resources :issues, only: [:show] # Nested route
+    end
+
+    ### /tag
+
+    #routes for tagging support
+    #
+    # get 'tag/_all' => 'tag',
+    #  action: 'list_xml'
+    #Get/put tags by object
+    ### moved to source section
+
+    #Get objects by tag.
+    controller :tag do
+      get 'tag/:tag/_projects' => :get_projects_by_tag
+      get 'tag/:tag/_packages' => :get_packages_by_tag
+      get 'tag/:tag/_all' => :get_objects_by_tag
+
+      #Get a tagcloud including all tags.
+      match 'tag/tagcloud' => :tagcloud, via: [:get, :post]
+
+      get 'tag/get_tagged_projects_by_user' => :get_tagged_projects_by_user
+      get 'tag/get_tagged_packages_by_user' => :get_tagged_packages_by_user
+      get 'tag/get_tags_by_user' => :get_tags_by_user
+      get 'tag/tags_by_user_and_object' => :tags_by_user_and_object
+      get 'tag/get_tags_by_user_and_project' => :get_tags_by_user_and_project
+      get 'tag/get_tags_by_user_and_package' => :get_tags_by_user_and_package
+      get 'tag/most_popular_tags' => :most_popular_tags
+      get 'tag/most_recent_tags' => :most_recent_tags
+      get 'tag/get_taglist' => :get_taglist
+      get 'tag/project_tags' => :project_tags
+      get 'tag/package_tags' => :package_tags
+
+    end
 
 
-  ### /distributions
+    ### /user
 
-  map.connect '/distributions', :controller => "distribution"
+    #Get objects tagged by user. (objects with tags)
+    get 'user/:user/tags/_projects' => 'tag#get_tagged_projects_by_user', constraints: cons
+    get 'user/:user/tags/_packages' => 'tag#get_tagged_packages_by_user', constraints: cons
 
-  ### /public
-    
-  map.connect '/public/build/:prj',
-    :controller => 'public', :action => 'build', :prj => /[^\/]*/
-  map.connect '/public/build/:prj/:repo',
-    :controller => 'public', :action => 'build', :prj => /[^\/]*/, :repo => /[^\/]*/
-  map.connect '/public/build/:prj/:repo/:arch/:pkg',
-    :controller => 'public', :action => 'build', :prj => /[^\/]*/, :repo => /[^\/]*/, :pkg => /[^\/]*/
-  map.connect '/public/source/:prj',
-    :controller => 'public', :action => 'project_index', :prj => /[^\/]*/
-  map.connect '/public/source/:prj/_meta',
-    :controller => 'public', :action => 'project_meta', :prj => /[^\/]*/
-  map.connect '/public/source/:prj/_config',
-    :controller => 'public', :action => 'project_file', :prj => /[^\/]*/
-  map.connect '/public/source/:prj/_pubkey',
-    :controller => 'public', :action => 'project_file', :prj => /[^\/]*/
-  map.connect '/public/source/:prj/:pkg',
-    :controller => 'public', :action => 'package_index', :prj => /[^\/]*/, :pkg => /[^\/]*/
-  map.connect '/public/source/:prj/:pkg/_meta',
-    :controller => 'public', :action => 'package_meta', :prj => /[^\/]*/, :pkg => /[^\/]*/
-  map.connect '/public/source/:prj/:pkg/:file',
-    :controller => 'public', :action => 'source_file', :prj => /[^\/]*/, :pkg => /[^\/]*/, :file => /[^\/]*/
-  map.connect '/public/lastevents',
-    :controller => 'public', :action => 'lastevents'
-  map.connect '/public/distributions',
-    :controller => 'public', :action => 'distributions'
-  map.connect '/public/binary_packages/:prj/:pkg',
-    :controller => 'public', :action => 'binary_packages', :prj => /[^\/]*/, :pkg => /[^\/]*/
-  map.connect 'public/status/:action',
-    :controller => 'status'
+    #Get tags by user.
+    get 'user/:user/tags/_tagcloud' => 'tag#tagcloud', constraints: cons
+
+    #Get tags for a certain object by user.
+    match 'user/:user/tags/:project' => 'tag#tags_by_user_and_object', constraints: cons, via: [:get, :post, :put, :delete]
+    match 'user/:user/tags/:project/:package' => 'tag#tags_by_user_and_object', constraints: cons, via: [:get, :post, :put, :delete]
+
+    ### /statistics
+    # Routes for statistics
+    # ---------------------
+    controller :statistics do
+
+      # Download statistics
+      #
+      get 'statistics/download_counter' => :download_counter
+
+      # Timestamps
+      #
+      get 'statistics/added_timestamp/:project' => :added_timestamp, constraints: cons
+      get 'statistics/added_timestamp/:project/:package' => :added_timestamp, constraints: cons
+      get 'statistics/updated_timestamp/:project' => :updated_timestamp, constraints: cons
+      get 'statistics/updated_timestamp/:project/:package' => :updated_timestamp, constraints: cons
+
+      # Ratings
+      #
+      get 'statistics/rating/:project' => :rating, constraints: cons
+      get 'statistics/rating/:project/:package' => :rating, constraints: cons
+
+      # Activity
+      #
+      get 'statistics/activity/:project' => :activity, constraints: cons
+      get 'statistics/activity/:project/:package' => :activity, constraints: cons
+
+      # Newest stats
+      #
+      get 'statistics/newest_stats' => :newest_stats
+
+      get 'statistics' => :index
+      get 'statistics/highest_rated' => :highest_rated
+      get 'statistics/download_counter' => :download_counter
+      get 'statistics/newest_stats' => :newest_stats
+      get 'statistics/most_active_projects' => :most_active_projects
+      get 'statistics/most_active_packages' => :most_active_packages
+      get 'statistics/latest_added' => :latest_added
+      get 'statistics/latest_updated' => :latest_updated
+      get 'statistics/global_counters' => :global_counters
+      get 'statistics/latest_built' => :latest_built
+
+      get 'statistics/active_request_creators/:project' => :active_request_creators
+    end
+
+    ### /status_message
+
+    controller :status do
+
+      # Routes for status_messages
+      # --------------------------
+      get 'status_message' => 'status#messages'
+
+      get 'status/messages' => :list_messages
+      put 'status/messages' => :update_messages
+      get 'status/messages/:id' => :show_message, constraints: cons
+      delete 'status/messages/:id' => :delete_message, constraints: cons
+      get 'status/workerstatus' => :workerstatus
+      get 'status/history' => :history
+      get 'status/project/:project' => :project, constraints: cons
+      get 'status/bsrequest' => :bsrequest
+
+    end
+
+    ### /message
+
+    # Routes for messages
+    # --------------------------
+    controller :message do
+      put 'message' => :update
+      get 'message' => :list
+      get 'message/:id' => :show
+      delete 'message/:id' => :delete
+    end
 
 
-  ### /status
-   
-  # action request somehow does not work
-  map.connect 'status/request/:id', :controller => 'status', :action => 'request'
+    ### /search
 
-  # Install the default route as the lowest priority.
-  map.connect ':controller/:action/:id', :id => /[^\/]*/
-  map.connect ':controller/:action'
+    controller :search do
+
+      # ACL(/search/published/binary/id) TODO: direct passed call to  "pass_to_backend'
+      match 'search/published/binary/id' => :pass_to_backend, via: [:get, :post]
+      # ACL(/search/published/pattern/id) TODO: direct passed call to  'pass_to_backend'
+      match 'search/published/pattern/id' => :pass_to_backend, via: [:get, :post]
+      match 'search/project/id' => :project_id, via: [:get, :post]
+      match 'search/package/id' => :package_id, via: [:get, :post]
+      match 'search/project_id' => :project_id, via: [:get, :post] #FIXME3.0: to be removed
+      match 'search/package_id' => :package_id, via: [:get, :post] #FIXME3.0: to be removed
+      match 'search/project' => :project, via: [:get, :post]
+      match 'search/package' => :package, via: [:get, :post]
+      match 'search/person' => :person, via: [:get, :post]
+      match 'search/attribute' => :attribute, via: [:get, :post]
+      match 'search/owner' => :owner, via: [:get, :post]
+      match 'search/missing_owner' => :missing_owner, via: [:get, :post]
+      match 'search/request' => :bs_request, via: [:get, :post]
+      match 'search/request/id' => :bs_request_id, via: [:get, :post]
+      match 'search' => :pass_to_backend, via: [:get, :post]
+
+      match 'search/repository/id' => :repository_id, via: [:get, :post]
+      match 'search/issue' => :issue, via: [:get, :post]
+      match 'search/attribute' => :attribute, via: [:get, :post]
+
+    end
+
+    ### /request
+
+    resources :request, only: [:index, :show, :update, :destroy]
+
+    post 'request' => 'request#global_command'
+    post 'request/:id' => 'request#request_command', constraints: cons
+
+    ### /lastevents
+
+    get '/lastevents' => 'source#lastevents_public'
+    match 'public/lastevents' => 'source#lastevents_public', via: [:get, :post]
+    post '/lastevents' => 'source#lastevents'
+
+    ### /distributions
+
+    put '/distributions' => 'distributions#upload'
+    # as long as the distribution IDs are integers, there is no clash
+    get '/distributions/include_remotes' => 'distributions#include_remotes'
+    # update is missing here
+    resources :distributions, only: [:index, :show, :create, :destroy]
+
+    ### /public
+
+    controller :public do
+      get 'public' => :index
+      get 'public/build/:project' => :build, constraints: cons
+      get 'public/build/:project/:repository' => :build, constraints: cons
+      get 'public/build/:project/:repository/:arch' => :build, constraints: cons
+      get 'public/build/:project/:repository/:arch/:package' => :build, constraints: cons
+      get 'public/source/:project' => :project_index, constraints: cons
+      get 'public/source/:project/_meta' => :project_meta, constraints: cons
+      get 'public/source/:project/_config' => :project_file, constraints: cons
+      get 'public/source/:project/_pubkey' => :project_file, constraints: cons
+      get 'public/source/:project/:package' => :package_index, constraints: cons
+      get 'public/source/:project/:package/_meta' => :package_meta, constraints: cons
+      get 'public/source/:project/:package/:filename' => :source_file, constraints: cons
+      get 'public/distributions' => :distributions
+      get 'public/binary_packages/:project/:package' => :binary_packages, constraints: cons
+    end
+
+    get 'public/configuration' => 'configurations#show'
+    get 'public/configuration.xml' => 'configurations#show'
+    get 'public/status/:action' => 'status#index'
+
+    get '/404' => 'main#notfound'
+
+  end
+
+  controller :source do
+
+    get 'source' => :index
+    post 'source' => :global_command
+
+    # project level
+    get 'source/:project' => :show_project, constraints: cons
+    delete 'source/:project' => :delete_project, constraints: cons
+    post 'source/:project' => :project_command, constraints: cons
+    get 'source/:project/_meta' => :show_project_meta, constraints: cons
+    put 'source/:project/_meta' => :update_project_meta, constraints: cons
+
+    get 'source/:project/_config' => :show_project_config, constraints: cons
+    put 'source/:project/_config' => :update_project_config, constraints: cons
+    get 'source/:project/_pubkey' => :show_project_pubkey, constraints: cons
+    delete 'source/:project/_pubkey' => :delete_project_pubkey, constraints: cons
+
+    # package level
+    get '/source/:project/:package/_meta' => :show_package_meta, constraints: cons
+    put '/source/:project/:package/_meta' => :update_package_meta, constraints: cons
+
+    get 'source/:project/:package/:filename' => :get_file, constraints: cons
+    delete 'source/:project/:package/:filename' => :delete_file, constraints: cons
+    put 'source/:project/:package/:filename' => :update_file, constraints: cons
+
+    get 'source/:project/:package' => :show_package, constraints: cons
+    post 'source/:project/:package' => :package_command, constraints: cons
+    delete 'source/:project/:package' => :delete_package, constraints: cons
+  end
+
+  # this can be requested by non browsers (like HA proxies :)
+  get 'apidocs/:filename' => 'webui/apidocs#file', constraints: {filename: %r{[^\/]*}}, as: 'apidocs_file'
+
+  # TODO: move to api
+  # spiders request this, not browsers
+  get 'main/sitemap' => 'webui/main#sitemap'
+  get 'main/sitemap_projects' => 'webui/main#sitemap_projects'
+  get 'main/sitemap_projects_packages' => 'webui/main#sitemap_projects_packages'
+  get 'main/sitemap_packages/:listaction' => 'webui/main#sitemap_packages'
+
 end

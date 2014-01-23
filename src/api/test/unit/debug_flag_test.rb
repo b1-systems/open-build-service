@@ -4,11 +4,11 @@ class DebuginfoFlagTest < ActiveSupport::TestCase
   fixtures :all
   
   def setup
-    @project = DbProject.find(502)
-    assert_kind_of DbProject, @project
-    @package = DbPackage.find(10095)
-    assert_kind_of DbPackage, @package
-    @arch = Architecture.find(1)
+    @project = projects(:home_Iggy)
+    assert_kind_of Project, @project
+    @package = packages(:home_Iggy_TestPack)
+    assert_kind_of Package, @package
+    @arch = architectures(:i586)
     assert_kind_of Architecture, @arch    
   end
   
@@ -36,8 +36,8 @@ class DebuginfoFlagTest < ActiveSupport::TestCase
     assert_equal '10.1', f.repo
     assert_equal @arch.id, f.architecture_id
     assert_equal 'enable', f.status
-    assert_equal @project.id, f.db_project_id
-    assert_nil f.db_package_id
+    assert_equal @project.id, f.project_id
+    assert_nil f.package_id
     assert_equal 3, f.position
     
     f = @project.type_flags('debuginfo')[3]
@@ -46,8 +46,8 @@ class DebuginfoFlagTest < ActiveSupport::TestCase
     assert_equal '10.2', f.repo
     assert_equal @arch.id, f.architecture_id
     assert_equal 'enable', f.status
-    assert_equal @project.id, f.db_project_id
-    assert_nil f.db_package_id
+    assert_equal @project.id, f.project_id
+    assert_nil f.package_id
     assert_equal 4, f.position
       
   end
@@ -76,8 +76,8 @@ class DebuginfoFlagTest < ActiveSupport::TestCase
     assert_equal '10.1', f.repo
     assert_equal @arch.id, f.architecture_id
     assert_equal 'disable', f.status
-    assert_equal @package.id, f.db_package_id
-    assert_nil f.db_project_id
+    assert_equal @package.id, f.package_id
+    assert_nil f.project_id
     assert_equal 2, f.position
     
     f = @package.type_flags('debuginfo')[2]
@@ -86,8 +86,8 @@ class DebuginfoFlagTest < ActiveSupport::TestCase
     assert_equal '10.2', f.repo
     assert_equal @arch.id, f.architecture_id
     assert_equal 'disable', f.status
-    assert_equal @package.id, f.db_package_id
-    assert_nil f.db_project_id
+    assert_equal @package.id, f.package_id
+    assert_nil f.project_id
     assert_equal 3, f.position
     
   end
@@ -98,20 +98,20 @@ class DebuginfoFlagTest < ActiveSupport::TestCase
     #checking precondition
     assert_equal 2, @project.type_flags('debuginfo').size
     #checking total number of flags stored in the database
-    count = Flag.find(:all).size
+    count = Flag.all.size
     
     #destroy flags
     @project.type_flags('debuginfo')[1].destroy    
     #reload required!
     @project.reload
     assert_equal 1, @project.type_flags('debuginfo').size
-    assert_equal 1, count - Flag.find(:all).size
+    assert_equal 1, count - Flag.all.size
     
     @project.type_flags('debuginfo')[0].destroy
     #reload required
     @project.reload    
     assert_equal 0, @project.type_flags('debuginfo').size    
-    assert_equal 2, count - Flag.find(:all).size
+    assert_equal 2, count - Flag.all.size
   end
   
   
@@ -120,30 +120,30 @@ class DebuginfoFlagTest < ActiveSupport::TestCase
     #checking precondition
     assert_equal 1, @package.type_flags('debuginfo').size
     #checking total number of flags stored in the database
-    count = Flag.find(:all).size    
+    count = Flag.all.size    
     
     #destroy flags
     @package.type_flags('debuginfo')[0].destroy    
     #reload required!
     @package.reload
     assert_equal 0, @package.type_flags('debuginfo').size
-    assert_equal 1, count - Flag.find(:all).size
+    assert_equal 1, count - Flag.all.size
         
   end
   
   def test_position
-    # Because of each flag belongs_to architecture AND db_project|db_package for the 
+    # Because of each flag belongs_to architecture AND project|package for the 
     # position calculation it is important in which order the assignments
-    # flag -> architecture and flag -> db_project|db_package are done.
+    # flag -> architecture and flag -> project|package are done.
     # If flag -> architecture is be done first, no flag position (in the list of
     # flags assigned to a object) can be calculated. This is because of no reference
-    # (db_project_id or db_package_id) is set, which is needed for position calculation. 
+    # (project_id or package_id) is set, which is needed for position calculation. 
     # The models should take this circumstances into consideration.
     
     #checking precondition
     assert_equal 2, @project.type_flags('debuginfo').size
     #checking total number of flags stored in the database
-    count = Flag.find(:all).size    
+    count = Flag.all.size    
     
     #create new flag and save it.
     f = Flag.new(:repo => "10.3", :status => "enable", :position => 3, :flag => 'debuginfo')    
@@ -152,7 +152,7 @@ class DebuginfoFlagTest < ActiveSupport::TestCase
     
     @project.reload
     assert_equal 3, @project.type_flags('debuginfo').size
-    assert_equal 1, Flag.find(:all).size - count
+    assert_equal 1, Flag.all.size - count
     
     f.reload
     assert_equal 3, f.position
@@ -173,7 +173,7 @@ class DebuginfoFlagTest < ActiveSupport::TestCase
     
     @project.reload
     assert_equal 4, @project.type_flags('debuginfo').size
-    assert_equal 2, Flag.find(:all).size - count
+    assert_equal 2, Flag.all.size - count
     
     f.reload
     assert_equal 4, f.position

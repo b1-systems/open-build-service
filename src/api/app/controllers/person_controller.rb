@@ -1,195 +1,158 @@
-#require "rexml/document"
+require 'xmlhash'
 
 class PersonController < ApplicationController
 
   validate_action :userinfo => {:method => :get, :response => :user}
   validate_action :userinfo => {:method => :put, :request => :user, :response => :status}
-  validate_action :grouplist => {:method => :get, :response => :group}
+  validate_action :grouplist => {:method => :get, :response => :directory}
   validate_action :register => {:method => :put, :response => :status}
   validate_action :register => {:method => :post, :response => :status}
 
-  # Returns a list of all users (that optionally start with a prefix)
-  def index
-    valid_http_methods :get
+  skip_before_action :extract_user, only: [:command, :register]
 
-    if !@http_user
-      logger.debug "No user logged in, permission to index denied"
-      @errorcode = 401
-      @summary = "No user logged in, permission to index denied"
-      render :template => 'error', :status => @errorcode
-      return
-    end
-
+  def show
     if params[:prefix]
-      list = User.find(:all, :conditions => ["login LIKE ?", params[:prefix] + '%'])
+        @list = User.where("login LIKE ?", params[:prefix] + '%')
     else
-      list = User.all()
+        @list = User.all
     end
-
-    builder = Builder::XmlMarkup.new(:indent => 2)
-    xml = builder.directory(:count => list.length) do |dir|
-      list.each {|user| dir.entry(:name => user.login)}
-    end
-    render :text => xml, :content_type => "text/xml"
   end
 
-  def userinfo
-    valid_http_methods :get, :put
+  def login
+    render_ok # just a dummy check for the webui to call (for now)
+  end
 
-    if !@http_user
-      logger.debug "No user logged in, permission to userinfo denied"
-      @errorcode = 401
-      @summary = "No user logged in, permission to userinfo denied"
-      render :template => 'error', :status => @errorcode and return
+  # Returns a list of all users (that optionally start with a prefix)
+  def command
+    if params[:cmd] == "register"
+      internal_register 
+      return
     end
+    raise UnknownCommandError.new "Allowed commands are 'change_password'"
+  end
 
-    login = URI.unescape(params[:login]) if params[:login]
+  def get_userinfo
+    user = User.find_by_login!(params[:login])
+
+    if user.login != @http_user.login
+      logger.debug "Generating for user from parameter #{user.login}"
+      render :text => user.render_axml(false), :content_type => "text/xml"
+    else
+      logger.debug "Generating user info for logged in user #{@http_user.login}"
+      render :text => @http_user.render_axml(true), :content_type => "text/xml"
+    end
+  end
+
+  def post_userinfo
+    login = params[:login]
+    # just for permission checking
+    User.find_by_login!(login)
+
+    if params[:cmd] == "change_password"
+      login ||= @http_user.login
+      password = request.raw_post.to_s.chomp
+      if login != @http_user.login and not @http_user.is_admin?
+        render_error :status => 403, :errorcode => "change_password_no_permission",
+                     :message => "No permission to change password for user #{login}"
+        return
+      end
+      if password.blank?
+        render_error :status => 404, :errorcode => "password_empty",
+                     :message => "No new password given in first line of the body"
+        return
+      end
+      change_password(login, password)
+      render_ok
+      return
+    end
+    raise UnknownCommandError.new "Allowed commands are 'change_password'"
+  end
+
+  def put_userinfo
+    login = params[:login]
     user = User.find_by_login(login) if login
 
-    if request.get?
-      if not user
-        logger.debug "Requested non-existing user"
-        @errorcode = 404
-        @summary = "Requested non-existing user"
-        render :template => 'error', :status => @errorcode and return
-      end
-      if user.login != @http_user.login
-        logger.debug "Generating for user from parameter #{user.login}"
-        render :text => user.render_axml(false), :content_type => "text/xml"
-      else
-        logger.debug "Generating user info for logged in user #{@http_user.login}"
-        render :text => @http_user.render_axml(true), :content_type => "text/xml"
-      end
-    elsif request.put?
-      if user and user.login != @http_user.login and !@http_user.is_admin?
+    if user 
+      unless user.login == User.current.login or User.current.is_admin?
         logger.debug "User has no permission to change userinfo"
         render_error :status => 403, :errorcode => 'change_userinfo_no_permission',
           :message => "no permission to change userinfo for user #{user.login}" and return
       end
-      if !user
-        if @http_user.is_admin?
-          user = User.create(:login => login, :password => "notset", :password_confirmation => "notset", :email => "TEMP")
-          user.state = User.states["locked"]
-        else
-          logger.debug "Tried to create non-existing user without admin rights"
-          @errorcode = 404
-          @summary = "Requested non-existing user"
-          render :template => 'error', :status => @errorcode and return
-        end
+    else
+      if User.current.is_admin?
+        user = User.create(:login => login, :password => "notset", :password_confirmation => "notset", :email => "TEMP")
+        user.state = User.states["locked"]
+      else
+        logger.debug "Tried to create non-existing user without admin rights"
+        @errorcode = 404
+        @summary = "Requested non-existing user"
+        render_error status: @errorcode and return
       end
-
-      xml = REXML::Document.new(request.raw_post)
-      logger.debug("XML: #{request.raw_post}")
-      user.email = xml.elements["/person/email"].text
-      user.realname = xml.elements["/person/realname"].text
-      update_watchlist(user, xml)
-      user.save!
-      render_ok
     end
+
+    xml = Xmlhash.parse(request.raw_post)
+    logger.debug("XML: #{request.raw_post}")
+    user.email = xml.value('email') || ''
+    user.realname = xml.value('realname') || ''
+    if User.current.is_admin?
+      # only admin is allowed to change these, ignore for others
+      user.state = User.states[xml.value('state')]
+      update_globalroles(user, xml)
+    end
+    update_watchlist(user, xml)
+    user.save!
+    render_ok
+  end
+
+  class NoPermissionToGroupList < APIException
+    setup 401, "No user logged in, permission to grouplist denied"
   end
 
   def grouplist
-    valid_http_methods :get
+    raise NoPermissionToGroupList.new unless User.current
 
-    if !@http_user
-      logger.debug "No user logged in, permission to grouplist denied"
-      @summary = "No user logged in, permission to grouplist denied"
-      render :template => 'error', :status => 401
-      return
-    end
-    unless params[:login]
-      logger.debug "Missing account parameter for grouplist"
-      @summary = "Missing account parameter for grouplist"
-      render :template => 'error', :status => 404
-      return
-    end
-
-    render :text => Group.render_group_list(params[:login]), :content_type => "text/xml"
+    user = User.find_by_login! params[:login]
+    @list = User.lookup_strategy.groups(user)
   end
 
   def register
-    valid_http_methods :post, :put
+    # FIXME 3.0, to be removed
+    internal_register
+  end
 
-    if defined?(LDAP_MODE) && LDAP_MODE == :on
-      render_error :message => "LDAP mode enabled, users can only be registered via LDAP", :errorcode => "err_register_save", :status => 400
-      return
-    end
-    if (defined?(PROXY_AUTH_MODE) and PROXY_AUTH_MODE == :on) or (defined?(ICHAIN_MODE) and ICHAIN_MODE == :on)
-      render_error :message => "Proxy authentification mode, manual registration is disabled", :errorcode => "err_register_save", :status => 400
-      return
-    end
+  class ErrRegisterSave < APIException
+  end
 
+  class NoPermission < APIException
+  end
+
+  def internal_register
     xml = REXML::Document.new( request.raw_post )
     
     logger.debug( "register XML: #{request.raw_post}" )
 
     login = xml.elements["/unregisteredperson/login"].text
-    logger.debug("Found login #{login}")
     realname = xml.elements["/unregisteredperson/realname"].text
     email = xml.elements["/unregisteredperson/email"].text
     password = xml.elements["/unregisteredperson/password"].text
-    note = xml.elements["/unregisteredperson/note"].text
-    status = "confirmed"
-
-    unless @http_user and @http_user.is_admin?
-      note = ""
-    end
-
-    if CONFIG['new_user_registration'] == "deny"
-      unless @http_user and @http_user.is_admin?
-        render_error :message => "User registration is disabled",
-                     :errorcode => "err_register_save", :status => 400
-        return
-      end
-    elsif CONFIG['new_user_registration'] == "confirmation"
-      status = "unconfirmed"
-    elsif CONFIG['new_user_registration'] and not CONFIG['new_user_registration'] == "allow"
-      render_error :message => "Admin configured an unknown config option for new_user_registration",
-                   :errorcode => "server_setup_error", :status => 500
-      return
-    end
-    status = xml.elements["/unregisteredperson/state"].text if @http_user and @http_user.is_admin?
+    note = xml.elements["/unregisteredperson/note"].text if xml.elements["/unregisteredperson/note"]
+    status = xml.elements["/unregisteredperson/state"].text
 
     if auth_method == :proxy
       if request.env['HTTP_X_USERNAME'].blank?
-        render_error :message => "Missing iChain header", :errorcode => "err_register_save", :status => 400
-        return
+        raise ErrRegisterSave.new "Missing iChain header"
       end
       login = request.env['HTTP_X_USERNAME']
       email = request.env['HTTP_X_EMAIL'] unless request.env['HTTP_X_EMAIL'].blank?
       realname = request.env['HTTP_X_FIRSTNAME'] + " " + request.env['HTTP_X_LASTNAME'] unless request.env['HTTP_X_LASTNAME'].blank?
     end
 
-    newuser = User.create( 
-              :login => login,
-              :password => password,
-              :password_confirmation => password,
-              :email => email )
+    User.register(login: login, realname: realname, email:
+        email, password: password, note: note, status: status)
 
-    newuser.realname = realname
-    newuser.state = User.states[status]
-    newuser.adminnote = note
-    logger.debug("Saving...")
-    newuser.save
-    
-    if !newuser.errors.empty?
-      details = newuser.errors.map{ |key, msg| "#{key}: #{msg}" }.join(", ")
-      
-      render_error :message => "Could not save the registration",
-                   :errorcode => "err_register_save",
-                   :details => details, :status => 400
-    else
-      # create subscription for submit requests
-      if Object.const_defined? :Hermes
-        h = Hermes.new
-        h.add_user(login, email)
-        h.add_request_subscription(login)
-      end
-
-# This may fail when no notification is configured. Not important, so no exception handling for now
-#      IchainNotifier.deliver_approval(newuser)
-      render_ok
-    end
+    # This may fail when no notification is configured. Not important, so no exception handling for now
+    # IchainNotifier.deliver_approval(newuser)
+    render_ok
   rescue Exception => e
     # Strip passwords from request environment and re-raise exception
     request.env["RAW_POST_DATA"] = request.env["RAW_POST_DATA"].sub(/<password>(.*)<\/password>/, "<password>STRIPPED<password>")
@@ -200,30 +163,41 @@ class PersonController < ApplicationController
     new_watchlist = []
     old_watchlist = []
 
-    xml.elements.each("/person/watchlist/project") do |e|
-      new_watchlist << e.attributes['name']
+    xml.get('watchlist').elements("project") do |e|
+      new_watchlist << e['name']
     end
 
     user.watched_projects.each do |wp|
-      old_watchlist << wp.name
+      old_watchlist << wp.project.name
     end
     add_to_watchlist = new_watchlist.collect {|i| old_watchlist.include?(i) ? nil : i}.compact
     remove_from_watchlist = old_watchlist.collect {|i| new_watchlist.include?(i) ? nil : i}.compact
 
     remove_from_watchlist.each do |name|
-      WatchedProject.find_by_name( name, :conditions => [ 'bs_user_id = ?', user.id ] ).destroy
+      user.watched_projects.where(project_id: Project.find_by_name(name).id).delete_all
     end
 
     add_to_watchlist.each do |name|
-      user.watched_projects << WatchedProject.new( :name => name )
+      user.watched_projects.new(project_id: Project.find_by_name(name).id)
     end
-    true
+
+    return true
   end
   private :update_watchlist
 
+  def update_globalroles( user, xml )
+    new_globalroles = []
+    xml.elements("globalrole") do |e|
+      new_globalroles << e.to_s
+    end
+ 
+    user.update_globalroles( new_globalroles )
+  end
+
+  private :update_globalroles
+
   def change_my_password
-    valid_http_methods :post, :put
-    
+    #FIXME3.0: remove this function
     xml = REXML::Document.new( request.raw_post )
 
     logger.debug( "changepasswd XML: #{request.raw_post}" )
@@ -232,53 +206,85 @@ class PersonController < ApplicationController
     password = xml.elements["/userchangepasswd/password"].text
     login = URI.unescape(login)
 
-    if !@http_user
+    change_password(login, URI.unescape(password))
+    render_ok
+  end
+
+  def change_password(login, password)
+    if !User.current
       logger.debug "No user logged in, permission to changing password denied"
       @errorcode = 401
       @summary = "No user logged in, permission to changing password denied"
       render :template => 'error', :status => 401
     end
 
-    if not login or not password
+    if login.blank? or password.blank?
       render_error :status => 404, :errorcode => 'failed to change password',
             :message => "Failed to change password: missing parameter"
       return
     end
-    unless @http_user.is_admin? or login == @http_user.login
-      render_error :status => 403, :errorcode => 'failed to change password',
-            :message => "No sufficiend permissions to change password for others"
-      return
-    end
-
-    newpassword = Base64.decode64(URI.unescape(password))
+    user = User.get_by_login(login)
     
     #change password to LDAP if LDAP is enabled    
-    if defined?( LDAP_MODE ) && LDAP_MODE == :on
-      if defined?( LDAP_SSL ) && LDAP_SSL == :on
+    if CONFIG['ldap_mode'] == :on
+      ldap_password = Base64.decode64(password)
+      if CONFIG['ldap_ssl'] == :on
         require 'base64'
         begin
           logger.debug( "Using LDAP to change password for #{login}" )
-          result = User.change_password_ldap(login, newpassword)
+          result = User.change_password_ldap(login, ldap_password)
         rescue Exception
-          logger.debug "LDAP_MODE selected but 'ruby-ldap' module not installed."
+          logger.debug "CONFIG['ldap_mode'] selected but 'ruby-ldap' module not installed."
         end
         if result
           render_error :status => 404, :errorcode => 'change_passwd_failure', :message => "Failed to change password to ldap: #{result}"
           return
         end
       else
-        render_error :status => 404, :errorcode => 'change_passwd_no_security', :message => "LDAP mode enabled, the user password can only be changed with LDAP_SSL enabling."
+        render_error :status => 404, :errorcode => 'change_passwd_no_security', :message => "LDAP mode enabled, the user password can only be changed with CONFIG['ldap_ssl'] enabling."
         return
       end
     end
 
     #update password in users db
-    @user = User.get_by_login(login)
-    logger.debug("find the user")
-    @user.password = newpassword
-    @user.password_confirmation = newpassword
-    @user.state = User.states['confirmed']
-    @user.save!
+    user.update_password( password )
+    user.save!
+  end
+  private :change_password
+
+  # GET /person/<login>/token
+  def tokenlist
+    user = User.get_by_login(params[:login])
+    @list = user.tokens
+  end
+
+  # POST /person/<login>/token
+  def command_token
+    user = User.get_by_login(params[:login])
+
+    unless params[:cmd] == "create"
+      raise UnknownCommandError.new "Allowed commands are 'create'"
+      return
+    end
+    pkg = nil
+    if params[:project] or params[:package]
+      pkg = Package.get_by_project_and_name( params[:project], params[:package] )
+    end
+    @token = Token.create( user: user, package: pkg )
+  end
+
+  class TokenNotFound < APIException
+    setup 404
+  end
+
+  # DELETE /person/<login>/token/<id>
+  def delete_token
+    user = User.get_by_login(params[:login])
+
+    token = Token.where( user_id: user.id, id: params[:id] ).first
+    raise TokenNotFound.new "Specified token \"#{params[:id]}\" got not found" unless token
+    token.destroy
     render_ok
   end
+
 end

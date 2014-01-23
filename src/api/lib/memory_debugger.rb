@@ -32,7 +32,7 @@ class MemoryDebugger
     @app=app
   end
   def call(env)
-    logger = RAILS_DEFAULT_LOGGER
+    logger = Rails.logger
     GC.start
     before=`ps -orss= -p#{$$}`.to_i
     file = File.new("/tmp/memprof-#{$$}.log", "w")
@@ -82,7 +82,7 @@ class MemoryDebugger
 	  d.add(ids[value])
 	end if d.line["ivars"]
       end
-      ['n1', 'n2', 'n3', 'block', 'scope', 'shared'].each do |key|
+      %w(n1 n2 n3 block scope shared).each do |key|
 	if d.line.has_key?(key)
 	  d.add(ids[d.line[key]])
 	end

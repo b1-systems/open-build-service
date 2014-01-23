@@ -1,0 +1,172 @@
+record_0:
+  user: adrian
+  role: reviewer
+  project: kde4
+record_1:
+  user: fred
+  role: maintainer
+  project: Apache
+record_2:
+  user: fredlibs
+  role: maintainer
+  package: kde4_kdelibs
+record_3:
+  user: fred
+  role: maintainer
+  project: home_fred
+record_4:
+  user: fred
+  role: maintainer
+  package: home_Iggy_TestPack
+record_5:
+  role: maintainer
+  group: test_group
+  project: kde4
+record_6:
+  user: fredlibs
+  role: maintainer
+  project: Apache
+record_7:
+  user: fred
+  role: maintainer
+  project: kde4
+record_8:
+  user: Iggy
+  role: bugowner
+  package: home_Iggy_TestPack
+record_9:
+  user: tom
+  role: maintainer
+  project: home_coolo
+record_10:
+  user: hidden_homer
+  role: maintainer
+  project: home_Iggy
+record_11:
+  user: tom
+  role: maintainer
+  project: home_coolo_test
+record_12:
+  user: Iggy
+  role: bugowner
+  project: BaseDistro3
+record_13:
+  user: tom
+  role: maintainer
+  project: CopyTest
+record_14:
+  user: tom
+  role: maintainer
+  project: LocalProject
+record_15:
+  role: reviewer
+  group: test_group
+  package: BaseDistro2.0_pack2
+record_16:
+  user: sourceaccess_homer
+  role: maintainer
+  project: CopyTest
+record_17:
+  role: maintainer
+  group: test_group
+  project: HiddenProject
+record_18:
+  user: hidden_homer
+  role: maintainer
+  project: CopyTest
+record_19:
+  user: Iggy
+  role: maintainer
+  package: home_Iggy_TestPack
+record_20:
+  user: adrian_reader
+  role: reader
+  project: HiddenProject
+record_21:
+  user: sourceaccess_homer
+  role: maintainer
+  project: SourceprotectedProject
+record_22:
+  user: fred
+  role: maintainer
+  package: home_Iggy_ToBeDeletedTestPack
+record_23:
+  user: dmayr
+  role: maintainer
+  project: home_dmayr
+record_24:
+  user: adrian
+  role: maintainer
+  package: HiddenProject_target
+record_25:
+  user: adrian
+  role: maintainer
+  project: home_adrian
+record_26:
+  user: hidden_homer
+  role: maintainer
+  project: HiddenRemoteInstance
+record_27:
+  role: reviewer
+  group: test_group
+  project: kde4
+record_28:
+  user: binary_homer
+  role: maintainer
+  project: BinaryprotectedProject
+record_29:
+  user: fred
+  role: maintainer
+  project: home_fred_DeleteProject
+record_30:
+  role: maintainer
+  group: test_group
+  package: kde4_kdelibs
+record_31:
+  user: fred
+  role: reviewer
+  package: BaseDistro3_pack2
+record_32:
+  user: adrian_downloader
+  role: downloader
+  project: HiddenProject
+record_33:
+  user: fredlibs
+  role: maintainer
+  project: kde4
+record_34:
+  user: adrian
+  role: maintainer
+  project: HiddenProject
+record_35:
+  user: adrian
+  role: reviewer
+  package: kde4_kdelibs
+record_36:
+  user: maintenance_coord
+  role: maintainer
+  project: My_Maintenance
+record_37:
+  user: hidden_homer
+  role: maintainer
+  project: HiddenProject
+record_38:
+  role: maintainer
+  group: test_group_b
+  package: home_Iggy_TestPack
+record_39:
+  user: king
+  role: maintainer
+  project: kde4
+record_40:
+  user: adrian_reader
+  role: reader
+  project: BinaryprotectedProject
+record_41:
+  user: tom
+  role: maintainer
+  project: home_tom
+record_42:
+  user: Iggy
+  role: maintainer
+  project: home_Iggy

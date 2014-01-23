@@ -1,35 +1,21 @@
-Admin: 
+Admin:
   title: Admin
-  id: "1"
-  global: "1"
-  parent_id: 
-User: 
+  global: 1
+User:
   title: User
-  id: "2"
-  global: "1"
-  parent_id: 
-bugowner: 
+  global: 1
+bugowner:
   title: bugowner
-  id: "4"
-  global: "0"
-  parent_id: 
-downloader: 
+  global: 0
+downloader:
   title: downloader
-  id: "5"
-  global: "0"
-  parent_id: 
-maintainer: 
+  global: 0
+maintainer:
   title: maintainer
-  id: "3"
-  global: "0"
-  parent_id: 
-reader: 
+  global: 0
+reader:
   title: reader
-  id: "7"
-  global: "0"
-  parent_id: 
-reviewer: 
+  global: 0
+reviewer:
   title: reviewer
-  id: "6"
-  global: "0"
-  parent_id: 
+  global: 0

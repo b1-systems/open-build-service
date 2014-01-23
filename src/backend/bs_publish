@@ -30,13 +30,14 @@ BEGIN {
 
 use Digest;
 use Digest::MD5 ();
+use Digest::SHA ();
 use XML::Structured ':bytes';
 use POSIX;
 use Fcntl qw(:DEFAULT :flock);
 use Data::Dumper;
 use Storable ();
 
-use BSConfig;
+use BSConfiguration;
 use BSRPC;
 use BSUtil;
 use BSDBIndex;
@@ -44,6 +45,7 @@ use Build;
 use BSDB;
 use BSXML;
 use BSNotify;
+use BSVerify;
 
 use strict;
 
@@ -61,6 +63,32 @@ my $rundir = $BSConfig::rundir || "$BSConfig::bsdir/run";
 my $extrepodb = "$BSConfig::bsdir/db/published";
 
 my $myeventdir = "$eventdir/publish";
+
+my @binsufs = qw{rpm deb pkg.tar.gz pkg.tar.xz};
+my $binsufsre = join('|', map {"\Q$_\E"} @binsufs);
+my @binsufsrsync = map {"--include=*.$_"} @binsufs;
+
+sub notify {
+  my ($type, $p) = @_;
+  # strip
+  $p = { map {$_ => $p->{$_}} grep {defined($p->{$_}) && !ref($p->{$_})} sort keys %{$p || {}} };
+  if (0) {
+    BSNotify::notify($type, $p);
+  } else {
+    # always route over to the src server
+    my $param = {
+      'uri' => "$BSConfig::srcserver/notify/$type",
+      'request' => 'POST',
+      'headers' => [ 'Content-Type: application/x-www-form-urlencoded' ],
+      'timeout' => 60,
+    };
+    my @args = map {"$_=$p->{$_}"} sort keys %$p;
+    eval {
+      BSRPC::rpc($param, undef, @args);
+    };
+    warn($@) if $@;
+  }
+}
 
 sub qsystem {
   my @args = @_;
@@ -181,15 +209,21 @@ sub db_sync {
   db_open('') unless $db_oldsync_read;
   return unless @db_sync;
   my $data = Storable::nfreeze(\@db_sync);
+  my $ops = @db_sync;
+  for (@db_sync) {
+    $ops += @$_ if $_ && ref($_) eq 'ARRAY';
+  }
+  my $timeout = $ops / 30;
+  $timeout = 60 if $timeout < 60;
   my $param = {
     'uri' => "$BSConfig::srcserver/search/published",
     'request' => 'POST',
     'maxredirects' => 3,
-    'timeout' => 60,
+    'timeout' => $timeout,
     'headers' => [ 'Content-Type: application/octet-stream' ],
     'data' => $data,
   };
-  print "    syncing database\n";
+  print "    syncing database ($ops ops)\n";
   eval {
     BSRPC::rpc($param, undef, 'cmd=updatedb');
   };
@@ -218,6 +252,8 @@ sub updatebinaryindex {
       $n = $1;
     } elsif ($key =~ /(?:^|\/)([^\/]+)_([^\/]*)_[^\/]*\.deb$/) {
       $n = $1;
+    } elsif ($key =~ /(?:^|\/)([^\/]+)-[^-]+-[^-]+-[a-zA-Z][^\/\.\-]*\.pkg\.tar\..z$/) {
+      $n = $1;
     } else {
       next;
     }
@@ -229,6 +265,8 @@ sub updatebinaryindex {
     if ($key =~ /(?:^|\/)([^\/]+)-[^-]+-[^-]+\.[a-zA-Z][^\/\.\-]*\.rpm$/) {
       $n = $1;
     } elsif ($key =~ /(?:^|\/)([^\/]+)_([^\/]*)_[^\/]*\.deb$/) {
+      $n = $1;
+    } elsif ($key =~ /(?:^|\/)([^\/]+)-[^-]+-[^-]+-[a-zA-Z][^\/\.\-]*\.pkg\.tar\..z$/) {
       $n = $1;
     } else {
       next;
@@ -294,7 +332,7 @@ sub addsizechecksum {
 }
 
 sub createrepo_rpmmd {
-  my ($extrep, $projid, $repoid, $signargs, $pubkey, $repoinfo, $options, $updateinfos, $deltainfos) = @_;
+  my ($extrep, $projid, $repoid, $signargs, $pubkey, $repoinfo, $options, $updateinfos, $deltainfos, $appdatas, $supportstatus) = @_;
 
   my %options = map {$_ => 1} @{$options || []};
   my $obsname = $BSConfig::obsname || 'build.opensuse.org';
@@ -318,24 +356,43 @@ sub createrepo_rpmmd {
   push @createrepoargs, '--changelog-limit', '20';
   push @createrepoargs, '--repo', $repotag;
   my @legacyargs;
-  push @legacyargs, '--simple-md-filenames', '--checksum=sha' if $options{'legacy'};
+  if ($options{'legacy'}) {
+    push @legacyargs, '--simple-md-filenames', '--checksum=sha';
+  } else {
+    # the default in newer createrepos
+    push @legacyargs, '--unique-md-filenames', '--checksum=sha256';
+  }
   my @updateargs;
+  # createrepo 0.9.9 defaults to usually not used sqlite database.
+  # We do disable it since it is time and space consuming.
+  # doing this via @updateargs for the case that an old createrepo is installed which does not support
+  # this switch.
+  push @updateargs, '--no-database';
   if (-f "$extrep/repodata/repomd.xml") {
     push @updateargs, '--update';
   }
   if (qsystem('createrepo', '-q', '-c', "$extrep/repocache", @updateargs, @createrepoargs, @legacyargs, $extrep)) {
-    print("    createrepo failed: $?\n");
     if (@updateargs) {
+      print("    createrepo failed: $?\n");
       print "    re-running without extra options\n";
-      qsystem('createrepo', '-q', '-c', "$extrep/repocache", @createrepoargs, @legacyargs, $extrep) && print("    createrepo failed again: $?\n");
+      qsystem('createrepo', '-q', '-c', "$extrep/repocache", @createrepoargs, @legacyargs, $extrep) && die("    createrepo failed again: $?\n");
+    } else {
+      die("    createrepo failed: $?\n");
     }
   }
   unlink("$extrep/repodata/$_") for grep {/updateinfo\.xml/} @oldrepodata;
   if ($updateinfos && @$updateinfos) {
     print "    adding updateinfo.xml to repodata\n";
     writexml("$extrep/repodata/updateinfo.xml", undef, {'update' => $updateinfos}, $BSXML::updateinfo);
-    qsystem('modifyrepo', "$extrep/repodata/updateinfo.xml", "$extrep/repodata") && print("    modifyrepo failed: $?\n");
+    qsystem('modifyrepo', "$extrep/repodata/updateinfo.xml", "$extrep/repodata") && die("    modifyrepo failed: $?\n");
     unlink("$extrep/repodata/updateinfo.xml");
+  }
+  unlink("$extrep/repodata/$_") for grep {/appdata\.xml/} @oldrepodata;
+  if ($appdatas) {
+    print "    adding appdata.xml to repodata\n";
+    writexml("$extrep/repodata/appdata.xml", undef, $appdatas, $BSXML::appdata);
+    qsystem('modifyrepo', "$extrep/repodata/appdata.xml", "$extrep/repodata") && die("    modifyrepo failed: $?\n");
+    unlink("$extrep/repodata/appdata.xml");
   }
   unlink("$extrep/repodata/$_") for grep {/(?:deltainfo|prestodelta)\.xml/} @oldrepodata;
   if ($deltainfos && %$deltainfos && ($options{'deltainfo'} || $options{'prestodelta'})) {
@@ -356,12 +413,12 @@ sub createrepo_rpmmd {
     my @mergeddeltas = map {$mergeddeltas{$_}} sort keys %mergeddeltas;
     if ($options{'deltainfo'}) {
       writexml("$extrep/repodata/deltainfo.xml", undef, {'newpackage' => \@mergeddeltas}, $BSXML::deltainfo);
-      qsystem('modifyrepo', "$extrep/repodata/deltainfo.xml", "$extrep/repodata") && print("    modifyrepo failed: $?\n");
+      qsystem('modifyrepo', "$extrep/repodata/deltainfo.xml", "$extrep/repodata") && die("    modifyrepo failed: $?\n");
       unlink("$extrep/repodata/deltainfo.xml");
     }
     if ($options{'prestodelta'}) {
       writexml("$extrep/repodata/prestodelta.xml", undef, {'newpackage' => \@mergeddeltas}, $BSXML::prestodelta);
-      qsystem('modifyrepo', "$extrep/repodata/prestodelta.xml", "$extrep/repodata") && print("    modifyrepo failed: $?\n");
+      qsystem('modifyrepo', "$extrep/repodata/prestodelta.xml", "$extrep/repodata") && die("    modifyrepo failed: $?\n");
       unlink("$extrep/repodata/prestodelta.xml");
     }
   }
@@ -382,13 +439,18 @@ sub createrepo_rpmmd {
     }
   }
   if ($BSConfig::createrepo_rpmmd_hook) {
-    $BSConfig::createrepo_rpmmd_hook->($projid, $repoid, $extrep, \%options);
+    my %data;
+    $data{'updateinfos'} = $updateinfos if $updateinfos;
+    $data{'deltainfos'} = $deltainfos if $deltainfos;
+    $data{'appdata'} = $appdatas if $appdatas;
+    $data{'supportstatus'} = $supportstatus if $supportstatus;
+    $BSConfig::createrepo_rpmmd_hook->($projid, $repoid, $extrep, \%options, \%data);
   }
   if ($BSConfig::sign && -e "$extrep/repodata/repomd.xml") {
     my @signargs;
     push @signargs, '--project', $projid if $BSConfig::sign_project;
     push @signargs, @$signargs;
-    qsystem($BSConfig::sign, @signargs, '-d', "$extrep/repodata/repomd.xml") && print("    sign failed: $?\n");
+    qsystem($BSConfig::sign, @signargs, '-d', "$extrep/repodata/repomd.xml") && die("    sign failed: $?\n");
     writestr("$extrep/repodata/repomd.xml.key", undef, $pubkey) if $pubkey;
   }
   if ($BSConfig::repodownload) {
@@ -431,7 +493,7 @@ sub createrepo_hdlist2 {
     next if $arch =~ /^\./;
     my $r = "$extrep/$arch";
     next unless -d $r;
-    if (qsystem('genhdlist2', $r)) {
+    if (qsystem('genhdlist2', '--allow-empty-media', $r)) {
       print("    genhdlist2 failed: $?\n");
     }
   }
@@ -467,12 +529,16 @@ VERSION 1.0-0
 LABEL $repoinfo->{'title'}
 VENDOR Open Build Service
 ARCH.x86_64 x86_64 i686 i586 i486 i386 noarch
+ARCH.ppc64p7 ppc64p7 noarch
 ARCH.ppc64 ppc64 ppc noarch
+ARCH.ppc64le ppc64le noarch
 ARCH.ppc ppc noarch
 ARCH.sh4 sh4 noarch
+ARCH.m68k m68k noarch
+ARCH.aarch64 aarch64 noarch
 ARCH.armv4l arm       armv4l noarch
 ARCH.armv5l arm armel armv4l armv5l armv5tel noarch
-ARCH.armv6l arm armel armv4l armv5l armv5tel armv6l armv6vl noarch
+ARCH.armv6l arm armel armv4l armv5l armv5tel armv6l armv6vl armv6hl noarch
 ARCH.armv7l arm armel armv4l armv5l armv5tel armv6l armv6vl armv7l armv7hl noarch
 ARCH.i686 i686 i586 i486 i386 noarch
 ARCH.i586 i586 i486 i386 noarch
@@ -504,46 +570,85 @@ sub createrepo_debian {
 
   unlink("$extrep/Packages");
   unlink("$extrep/Packages.gz");
+  unlink("$extrep/Sources");
+  unlink("$extrep/Sources.gz");
   unlink("$extrep/Release");
   unlink("$extrep/Release.gpg");
   unlink("$extrep/Release.key");
 
-
   print "    running dpkg-scanpackages\n";
-  qsystem('chdir', $extrep, 'stdout', 'Packages.new', 'dpkg-scanpackages', '-m', '.', '/dev/null') && print "    apt-ftparchive failed: $?\n";
+  if (qsystem('chdir', $extrep, 'stdout', 'Packages.new', 'dpkg-scanpackages', '-m', '.', '/dev/null')) {
+      die("    dpkg-scanpackages failed: $?\n");
+  }
   if (-f "$extrep/Packages.new") {
     link("$extrep/Packages.new", "$extrep/Packages");
     qsystem('gzip', '-9', '-f', "$extrep/Packages") && print "    gzip Packages failed: $?\n";
     unlink("$extrep/Packages");
     rename("$extrep/Packages.new", "$extrep/Packages");
-  }    
+  }
 
+  print "    running dpkg-scansources\n";
+  if (qsystem('chdir', $extrep, 'stdout', 'Sources.new', 'dpkg-scansources', '.', '/dev/null')) {
+      die("    dpkg-scansources failed: $?\n");
+  }
+  if (-f "$extrep/Sources.new") {
+    link("$extrep/Sources.new", "$extrep/Sources");
+    qsystem('gzip', '-9', '-f', "$extrep/Sources") && print "    gzip Sources failed: $?\n";
+    unlink("$extrep/Sources");
+    rename("$extrep/Sources.new", "$extrep/Sources");
+  }
+
+  my $obsname = $BSConfig::obsname || 'build.opensuse.org';
   my $date = POSIX::ctime(time());
   $date =~ s/\n//m;
+  my @debarchs = @{$repoinfo->{'arch'} || []};
+  for (@debarchs) {
+     s/x86_64/amd64/g;
+     s/i.86/i386/g;
+  };
+  my $archs = join(' ', @debarchs);
+
+  # The Release file enables users to use Pinning. See also:
+  #  http://www.debian.org/doc/manuals/repository-howto/repository-howto#release
+  #  apt_preferences(5)
+  #
+  # Note:
+  # There is no Version because this is not part of a Debian release (yet).
+  # The Component line is missing to not accidently associate the packages with
+  # a Debian licensing component.
   my $str = <<"EOL";
-Origin: Open Build Service $projid $repoid
-Label: $repoinfo->{'title'}
-Version: 0.00
+Archive: $repoid
+Codename: $repoid
+Origin: obs://$obsname/$projid/$repoid
+Label: $projid
+Architectures: $archs
 Date: $date
-Description: Open Build Service $projid $repoid
+Description: $repoinfo->{'title'}
 MD5Sum:
 EOL
 
-  open(OUT,">$extrep/Release") || die("$extrep/Release: $!\n");
+  open(OUT, '>', "$extrep/Release") || die("$extrep/Release: $!\n");
   print OUT $str;
   close(OUT) || die("close: $!\n");
 
-  open(OUT,">>$extrep/Release") || die("$extrep/Release: $!\n");
-  foreach my $f ( "Release", "Packages", "Packages.gz" ) {
-  
-    open(FILE,"<$extrep/$f") || die;
-    my @all = <FILE>;
-    close(FILE);
-    my $md5  = Digest::MD5::md5_hex(join("",@all));
-    my $size = (stat("$extrep/$f"))[7];
+  # append checksums
+  my $sha1sums = "SHA1:\n";
+  my $sha256sums = "SHA256:\n";
+  open(OUT, '>>', "$extrep/Release") || die("$extrep/Release: $!\n");
+  for my $f ( "Packages", "Packages.gz", "Sources", "Sources.gz" ) {
+    my @s = stat("$extrep/$f");
+    next unless @s;
+    my $data = readstr("$extrep/$f");
+    my $md5  = Digest::MD5::md5_hex($data);
+    my $size = $s[7];
     print OUT " $md5 $size $f\n";
-  
+    my $sha1  = Digest::SHA::sha1_hex($data);
+    $sha1sums .= " $sha1 $size $f\n";
+    my $sha256  = Digest::SHA::sha256_hex($data);
+    $sha256sums .= " $sha256 $size $f\n";
   }
+  print OUT $sha1sums;
+  print OUT $sha256sums;
   close(OUT) || die("close: $!\n");
 
   # re-sign changed Release file
@@ -551,7 +656,7 @@ EOL
     my @signargs;
     push @signargs, '--project', $projid if $BSConfig::sign_project;
     push @signargs, @$signargs;
-    qsystem($BSConfig::sign, @signargs, '-d', "$extrep/Release") && print("    sign failed: $?\n");
+    qsystem($BSConfig::sign, @signargs, '-d', "$extrep/Release") && die("    sign failed: $?\n");
     rename("$extrep/Release.asc","$extrep/Release.gpg");
   }
   if ($BSConfig::sign) {
@@ -564,11 +669,102 @@ sub deleterepo_debian {
 
   unlink("$extrep/Packages");
   unlink("$extrep/Packages.gz");
+  unlink("$extrep/Sources");
+  unlink("$extrep/Sources.gz");
   unlink("$extrep/Release");
   unlink("$extrep/Release.gpg");
   unlink("$extrep/Release.key");
 }
 
+
+##########################################################################
+
+sub createrepo_arch {
+  my ($extrep, $projid, $repoid, $signargs, $pubkey, $repoinfo) = @_;
+
+  deleterepo_arch($extrep);
+  my $rname = $projid;
+  $rname .= "_$repoid" if $repoid ne 'standard';
+  $rname =~ s/:/_/g;
+  for my $arch (ls($extrep)) {
+    next unless -d "$extrep/$arch";
+    print "    running bs_mkarchrepo $arch\n";
+    qsystem("$INC[0]/bs_mkarchrepo", $rname, "$extrep/$arch") && die("    repo creation failed: $?\n");
+    if (-e "$extrep/$arch/$rname.db.tar.gz") {
+      link("$extrep/$arch/$rname.db.tar.gz", "$extrep/$arch/$rname.db");
+    }
+    if (-e "$extrep/$arch/$rname.files.tar.gz") {
+      link("$extrep/$arch/$rname.files.tar.gz", "$extrep/$arch/$rname.files");
+    }
+    if ($BSConfig::sign) {
+      my @signargs;
+      push @signargs, '--project', $projid if $BSConfig::sign_project;
+      push @signargs, @$signargs;
+      if (-e "$extrep/$arch/$rname.db.tar.gz") {
+        qsystem($BSConfig::sign, @signargs, '-D', "$extrep/$arch/$rname.db.tar.gz") && die("    sign failed: $?\n");
+        link("$extrep/$arch/$rname.db.tar.gz.sig", "$extrep/$arch/$rname.db.sig");
+      }
+      if (-e "$extrep/$arch/$rname.files.tar.gz") {
+        qsystem($BSConfig::sign, @signargs, '-D', "$extrep/$arch/$rname.files.tar.gz") && die("    sign failed: $?\n");
+        link("$extrep/$arch/$rname.files.tar.gz.sig", "$extrep/$arch/$rname.files.sig");
+      }
+    }
+  }
+}
+
+sub deleterepo_arch {
+  my ($extrep) = @_;
+  for my $arch (ls($extrep)) {
+    next unless -d "$extrep/$arch";
+    for (grep {/\.(?:\?db|db\.tar\.gz|files|files\.tar\.gz)(?:\.sig)?$/} ls("$extrep/$arch")) {
+      unlink("$extrep/$arch/$_");
+    }
+  }
+}
+
+##########################################################################
+
+sub createrepo_staticlinks {
+  my ($extrep, $projid, $repoid, $signargs, $pubkey, $repoinfo, $options) = @_;
+
+  my $versioned = grep {$_ eq 'versioned'} @{$options || []};
+  for my $arch ('.', ls($extrep)) {
+    next unless -d "$extrep/$arch";
+    for (ls("$extrep/$arch")) {
+      next unless -f "$extrep/$arch/$_";
+      my $link;
+      if (/^(.*)-([^-]*)-[^-]*\.rpm$/s) {
+        $link = "$1.rpm";
+        $link = "$1-$2.rpm" if $versioned;
+      } elsif (/^(.*)_([^_]*)-[^_]*\.deb$/s) {
+        $link = "$1.deb";
+        $link = "${1}_$2.deb" if $versioned;
+      } elsif (/^(.*)-(\d+\.\d+\.\d+)-Build\d+\.\d+([-\.].*\.(gz|bz2|tbz|xz))$/s) {
+        $link = "$1$3";
+        $link = "$1-$2$3" if $versioned;
+      } elsif (/^(.*)-(\d+\.\d+\.\d+)-Build\d+\.\d+(\.(raw.install.raw.xz|raw.xz|install.iso|iso|qcow2|ova))$/s) {
+        $link = "$1$3";
+        $link = "$1-$2$3" if $versioned;
+      }
+      next unless $link;
+      unlink("$extrep/$arch/.$link"); # drop left over
+      symlink($_, "$extrep/$arch/.$link");
+      rename("$extrep/$arch/.$link", "$extrep/$arch/$link"); # atomar update
+    }
+  }
+}
+
+sub deleterepo_staticlinks {
+  my ($extrep) = @_;
+  for my $arch ('.', ls($extrep)) {
+    next unless -d "$extrep/$arch";
+    for (ls("$extrep/$arch")) {
+      next unless -l "$extrep/$arch/$_";
+      next if /\.(?:db|files)(?:\.sig)?$/;
+      unlink("$extrep/$arch/$_");
+    }
+  }
+}
 
 ##########################################################################
 
@@ -603,7 +799,7 @@ sub createpatterns_rpmmd {
     my @signargs;
     push @signargs, '--project', $projid if $BSConfig::sign_project;
     push @signargs, @$signargs;
-    qsystem($BSConfig::sign, @signargs, '-d', "$extrep/repodata/repomd.xml") && print("    sign failed: $?\n");
+    qsystem($BSConfig::sign, @signargs, '-d', "$extrep/repodata/repomd.xml") && die("    sign failed: $?\n");
   }
 }
 
@@ -658,7 +854,7 @@ sub createpatterns_comps {
     my @signargs;
     push @signargs, '--project', $projid if $BSConfig::sign_project;
     push @signargs, @$signargs;
-    qsystem($BSConfig::sign, @signargs, '-d', "$extrep/repodata/repomd.xml") && print("    sign failed: $?\n");
+    qsystem($BSConfig::sign, @signargs, '-d', "$extrep/repodata/repomd.xml") && die("    sign failed: $?\n");
   }
 }
 
@@ -705,10 +901,10 @@ sub createpatterns_ymp {
     $group->{'name'} = $pat->{'name'};
     if ($pat->{'summary'}) {
       $group->{'summary'} = $pat->{'summary'}->[0]->{'_content'};
-    }    
+    }
     if ($pat->{'description'}) {
       $group->{'description'} = $pat->{'description'}->[0]->{'_content'};
-    }    
+    }
     my @repos;
     my @sprp = @{$repoinfo->{'prpsearchpath'} || []};
     while (@sprp) {
@@ -750,9 +946,9 @@ sub createpatterns_ymp {
     }
     $group->{'software'} = { 'item' => \@software };
     $ymp->{'group'} = [ $group ];
-    
+
     writexml("$extrep/.$ympname", "$extrep/$ympname", $ymp, $BSXML::ymp);
-    
+
     # write database entry
     my $ympidx = {'type' => 'ymp'};
     $ympidx->{'name'} = $pat->{'name'} if defined $pat->{'name'};
@@ -787,6 +983,9 @@ sub deleterepo {
   my $prp_ext = $prp;
   $prp_ext =~ s/:/:\//g;
   my $extrep = "$extrepodir/$prp_ext";
+  if ($BSConfig::publishredirect && exists($BSConfig::publishredirect->{$prp})) {
+    $extrep = $BSConfig::publishredirect->{$prp};
+  }
   if (! -d $extrep) {
     rmdir("$extrepodir/$projid_ext");
     print "    nothing to delete...\n";
@@ -800,8 +999,13 @@ sub deleterepo {
     $repoinfo = Storable::retrieve("$reporoot/$prp/:repoinfo", 1) || {};
   }
   # delete all binaries
+  my $subdir = $repoinfo->{'subdir'} || '';
+  my @archs = sort(ls($extrep));
+  if ($subdir) {
+    @archs = map {$_ eq $subdir ? sort(map {"$subdir/$_"} ls("$extrep/$subdir")) : $_} @archs;
+  }
   my @db_deleted;
-  for my $arch (ls($extrep)) {
+  for my $arch (@archs) {
     next if $arch =~ /^\./;
     next if $arch eq 'repodata' || $arch eq 'repocache' || $arch eq 'media.1' || $arch eq 'descr';
     my $r = "$extrep/$arch";
@@ -816,11 +1020,12 @@ sub deleterepo {
       } else {
         unlink("$r/$bin") || die("unlink $r/$bin: $!\n");
       }
-      push @db_deleted, $p if $p =~ /\.(?:rpm|deb)$/;
+      push @db_deleted, $p if $p =~ /\.(?:$binsufsre)$/;
     }
   }
   # update repoinfo
   unlink("$reporoot/$prp/:repoinfo");
+  rmdir("$reporoot/$prp/$subdir") if $subdir;
   rmdir("$reporoot/$prp");
 
   # update published database
@@ -851,6 +1056,8 @@ sub deleterepo {
   if ($BSConfig::stageserver && $BSConfig::stageserver =~ /^rsync:\/\/([^\/]+)\/(.*)$/) {
     print "    running rsync to $1 at ".localtime(time)."\n";
     # rsync with a timeout of 1 hour
+    # sync first just the binaries without deletion of the old ones, afterwards the rest(esp. meta data) and cleanup
+    qsystem('echo', "$projid_ext\0", 'rsync', '-ar0', @binsufsrsync, '--include=*/', '--exclude=*', '--timeout', '7200', '--files-from=-', $extrepodir, "$1::$2") && die("    rsync failed at ".localtime(time).": $?\n");
     qsystem('echo', "$projid_ext\0", 'rsync', '-ar0', '--delete-after', '--exclude=repocache', '--delete-excluded', '--timeout', '7200', '--files-from=-', $extrepodir, "$1::$2") && die("    rsync failed at ".localtime(time).": $?\n");
   }
   # push done trigger sync to other mirrors
@@ -907,6 +1114,15 @@ sub publish {
     }
   }
   $dbgsplit ||= '' if $repotype{'splitdebug'} && $repotype{'splitdebug'}->[0];
+  my $archorder;
+  $archorder = $repotype{'archorder'} if $repotype{'archorder'};
+
+  # is there a special subdirectory for binary packages configured?
+  my $subdir = '';
+  if ($repotype{'packagesubdir'} && $repotype{'packagesubdir'}->[0]) {
+    $subdir = $repotype{'packagesubdir'}->[0];
+    BSVerify::verify_filename($subdir);
+  }
 
   # get us the lock
   local *F;
@@ -923,11 +1139,10 @@ sub publish {
 
   if ($BSConfig::publishredirect && exists($BSConfig::publishredirect->{$prp})) {
     $extrep = $BSConfig::publishredirect->{$prp};
-    $prp_ext = undef;
   }
   $extrep .= $dbgsplit if $dbgsplit;
-  $prp_ext .= $dbgsplit if $prp_ext && $dbgsplit;
-  
+  $prp_ext .= $dbgsplit if $dbgsplit;
+
   # we now know that $reporoot/$prp/*/:repo will not change.
   # Build repo by mixing all architectures.
   my @archs = @{$repo->{'arch'} || []};
@@ -938,9 +1153,34 @@ sub publish {
   my @updateinfos;
   my $updateinfos_state;
 
+  my $appdatas;
+  my $appdatas_state;
+
+  my $supportstatus;
+  my $supportstatus_state;
+
   my %deltas;	# XXX remove hack
   my %deltainfos;
   my $deltainfos_state;
+
+  if ($archorder) {
+    my %archorder = map {$_ => 1} @$archorder;
+    my %archs = map {$_ => 1} @archs;
+    # last one wins in code below
+    @archs = ((grep {!$archorder{$_}} @archs), (grep {$archs{$_}} reverse(@$archorder)));
+  }
+
+  # drop entire repo it source :repo's have disappeared altogether. We need to find a way
+  # to specify this explicit instead checking all :repo's.
+  my $found_repo;
+  for my $arch (@archs) {
+    my $r = "$reporoot/$prp/$arch/:repo";
+    $found_repo = 1 if -e $r;
+  }
+  if (!defined($found_repo)) {
+    deleterepo($projid, "$repoid");
+    return;
+  }
 
   for my $arch (@archs) {
     my $r = "$reporoot/$prp/$arch/:repo";
@@ -949,6 +1189,11 @@ sub publish {
       $repoinfo = Storable::retrieve("${r}info") || {};
     }
     $repoinfo->{'binaryorigins'} ||= {};
+    my $sups = $repoinfo->{'supportstatus'};
+    if ($sups && !$supportstatus) {
+      $supportstatus = {};
+      $supportstatus_state = "\0";
+    }
     for my $rbin (sort(ls($r))) {
       my $bin = $rbin;
       if ($bin =~ /:updateinfo.xml$/) {
@@ -958,10 +1203,23 @@ sub publish {
 	my $updateinfo = readxml("$r/$bin", $BSXML::updateinfo, 1) || {};
 	push @updateinfos, @{$updateinfo->{'update'} || []};
       }
+      if ($bin =~ /-appdata.xml$/) {
+        # collect application data
+        my $appdataxml = readstr("$r/$bin", 1) || '';
+	$appdatas_state .= Digest::MD5::md5_hex($appdataxml);
+	my $appdata = readxml("$r/$bin", $BSXML::appdata, 1) || {};
+        # merge the applications
+	if ($appdatas) {
+	  push @{$appdatas->{'application'}}, @{$appdata->{'application'} || []};
+	} else {
+	  $appdatas = $appdata;
+	}
+      }
+
       if ($bin =~ /^(.*\.rpm)::(.*\.drpm)$/) {
 	# special drpm handling: only take it if we took the corresponding rpm
         if ($bin =~ /^(.+-[^-]+-[^-]+\.([a-zA-Z][^\/\.\-]*)\.rpm)::(.*\.drpm)$/) {
-	  if ($bins{"$2/$1"} eq "$r/$1") {
+	  if ($bins{$subdir ? "$subdir/$2/$1" : "$2/$1"} eq "$r/$1") {
 	    # ok, took it. also take delta
 	    $bin = $3;
 	    push @{$deltas{"$r/$1"}}, "$r/$rbin";
@@ -969,7 +1227,7 @@ sub publish {
 	}
       }
       $bin =~ s/^.*?:://;	# strip package name for now
-      #next unless $bin =~ /\.(?:rpm|deb)$/;
+      #next unless $bin =~ /\.(?:$binsufsre)$/;
       my $p;
       if ($bin =~ /^.+-[^-]+-[^-]+\.([a-zA-Z][^\/\.\-]*)\.d?rpm$/) {
 	$p = "$1/$bin";
@@ -986,18 +1244,35 @@ sub publish {
 	$p = "$q->{'arch'}/$q->{'name'}_$q->{'version'}";
 	$p .= "-$q->{'release'}" if defined $q->{'release'};
 	$p .= "_$q->{'arch'}.deb";
+      } elsif ($bin =~ /\.(?:pkg\.tar\.gz|pkg\.tar\.xz)$/) {
+	$p = "$arch/$bin";
+	$p = "i686/$bin" if $arch eq 'i586';	# HACK
+      } elsif ($bin =~ /\.(?:$binsufsre)$/) {
+	# our default
+	my $q = Build::query("$r/$rbin", 'evra' => 1);
+	$p = "$q->{'arch'}/$bin";
       } else {
-	if ($bin =~ /\.iso(:?\.sha256)?$/) {
+	if ($bin =~ /\.iso(?:\.sha256)?$/) {
 	  $p = "iso/$bin";
-	} elsif ($bin =~ /\.raw\.bz2(:?\.sha256)?$/) {
+	} elsif ($bin =~ /\.raw\.(?:gz|bz2|xz)(?:\.sha256)?$/) {
 	  $p = "$bin";
-	} elsif ($bin =~ /\.raw(:?\.install)?(:?\.sha256)?$/) {
+	} elsif ($bin =~ /\.tbz?(?:\.sha256)?$/) {
 	  $p = "$bin";
-	} elsif ($bin =~ /\.tar\.(:?gz|bz2)(:?\.sha256)?$/) {
+	} elsif ($bin =~ /\.raw(?:\.install)?(?:\.sha256)?$/) {
 	  $p = "$bin";
-	} elsif ($bin =~ /\.ovf(:?\.sha256)?$/) {
+	} elsif ($bin =~ /\.tar(?:\.(?:gz|bz2|xz))?(?:\.sha256)?$/) {
 	  $p = "$bin";
-	} elsif ($bin =~ /\.vmdk(:?\.sha256)?$/) {
+	} elsif ($bin =~ /\.diff\.(?:gz)(?:\.sha256)?$/) {
+	  $p = "$bin";
+	} elsif ($bin =~ /\.dsc(?:\.sha256)?$/) {
+	  $p = "$bin";
+	} elsif ($bin =~ /\.ovf(?:\.sha256)?$/) {
+	  $p = "$bin";
+	} elsif ($bin =~ /\.ova(?:\.sha256)?$/) {
+	  $p = "$bin";
+	} elsif ($bin =~ /\.qcow2(?:\.sha256)?$/) {
+	  $p = "$bin";
+	} elsif ($bin =~ /\.vmdk(?:\.sha256)?$/) {
 	  $p = "$bin";
 	} elsif (-d "$r/$rbin") {
 	  $p = "repo/$bin";
@@ -1006,14 +1281,17 @@ sub publish {
 	}
       }
       next unless defined $p;
+      $p = "$subdir/$p" if $subdir;
       # next if $bins{$p}; # first arch wins
       my @s = stat("$reporoot/$prp/$arch/:repo/$rbin");
       next unless @s;
       if ($bins{$p}) {
-        # keep old file (FIXME: should do this different)
-        my @s2 = stat("$extrep/$p");
-        next if !@s2 || "$s[9]/$s[7]/$s[1]" ne "$s2[9]/$s2[7]/$s2[1]";
-        # argh, kill taken deltas again
+	if (!$archorder) {
+          # keep old file (FIXME: should do this different)
+          my @s2 = stat("$extrep/$p");
+          next if !@s2 || "$s[9]/$s[7]/$s[1]" ne "$s2[9]/$s2[7]/$s2[1]";
+	}
+        # replace already taken binary. kill taken deltas again
         for my $d (@{$deltas{"$r/$rbin"} || []}) {
 	  for my $dp (grep {$bins{$_} eq $d} keys %bins) {
 	    delete $bins{$dp};
@@ -1026,6 +1304,14 @@ sub publish {
       $bins{$p} = "$r/$rbin";
       $bins_id{$p} = "$s[9]/$s[7]/$s[1]";
       $binaryorigins->{$p} = $repoinfo->{'binaryorigins'}->{$rbin} if defined $repoinfo->{'binaryorigins'}->{$rbin};
+      if ($supportstatus) {
+	if ($sups->{$rbin}) {
+	  $supportstatus->{$p} = $sups->{$rbin};
+	  $supportstatus_state .= "$r/$rbin\0$sups->{$rbin}\0";
+	} else {
+          delete $supportstatus->{$p};
+	}
+      }
       if ($rbin =~ /^(.*)\.drpm$/) {
 	# we took a delta rpm. collect desq if possible
 	my $dseq = "$r/$1.dseq";
@@ -1086,7 +1372,11 @@ sub publish {
   my @changed;  	# All changed files for hooks.
 
   my %bins_done;
-  for my $arch (sort(ls($extrep))) {
+  @archs = sort(ls($extrep));
+  if ($subdir) {
+    @archs = map {$_ eq $subdir ? sort(map {"$subdir/$_"} ls("$extrep/$subdir")) : $_} @archs;
+  }
+  for my $arch (@archs) {
     next if $arch =~ /^\./;
     next if $arch eq 'repodata' || $arch eq 'repocache' || $arch eq 'media.1' || $arch eq 'descr';
     next if $arch =~ /\.repo$/;
@@ -1099,14 +1389,14 @@ sub publish {
       if (!exists($bins{$p})) {
 	print "      - $p\n";
         unlink("$r/$bin") || die("unlink $r/$bin: $!\n");
-        push @db_deleted, $p if $p =~ /\.(?:rpm|deb)$/;
+        push @db_deleted, $p if $p =~ /\.(?:$binsufsre)$/;
         $changed = 1;
 	next;
       }
       if ("$s[9]/$s[7]/$s[1]" ne $bins_id{$p}) {
         unlink("$r/$bin") || die("unlink $r/$bin: $!\n");
         link($bins{$p}, "$r/$bin") || die("link $bins{$p} $r/$bin: $!\n");
-	push @db_changed, $p if $p =~ /\.(?:rpm|deb)$/;
+	push @db_changed, $p if $p =~ /\.(?:$binsufsre)$/;
 	push @changed, $p;
         $changed = 1;
       }
@@ -1126,7 +1416,7 @@ sub publish {
 	} else {
 	  unlink("$r/$bin") || die("unlink $r/$bin: $!\n");
 	}
-	push @db_deleted, $p if $p =~ /\.(?:rpm|deb)$/;
+	push @db_deleted, $p if $p =~ /\.(?:$binsufsre)$/;
         $changed = 1;
 	next;
       }
@@ -1155,7 +1445,7 @@ sub publish {
 	} else {
           link($bins{$p}, "$r/$bin") || die("link $bins{$p} $r/$bin: $!\n");
 	}
-	push @db_changed, $p if $p =~ /\.(?:rpm|deb)$/;
+	push @db_changed, $p if $p =~ /\.(?:$binsufsre)$/;
 	push @changed, $p;
         $changed = 1;
       }
@@ -1165,10 +1455,11 @@ sub publish {
   for my $p (sort keys %bins) {
     next if $bins_done{$p};
     # a new one
-    my ($arch, $bin) = split('/', $p, 2);
-    if (!defined($bin)) {
-      $arch = '.';
-      $bin = $p;
+    my ($arch, $bin);
+    if ($p =~ /^(.*)\/([^\/]*)$/s) {
+      ($arch, $bin) = ($1, $2);
+    } else {
+      ($arch, $bin) = ('.', $p);
     }
     my $r = "$extrep/$arch";
     mkdir_p($r) unless -d $r;
@@ -1178,7 +1469,7 @@ sub publish {
     } else {
       link($bins{$p}, "$r/$bin") || die("link $bins{$p} $r/$bin: $!\n");
     }
-    push @db_changed, $p if $p =~ /\.(?:rpm|deb)$/;
+    push @db_changed, $p if $p =~ /\.(?:$binsufsre)$/;
     push @changed, $p;
     $changed = 1;
   }
@@ -1196,7 +1487,9 @@ sub publish {
   $state .= "\0".join(',', @{$config->{'patterntype'} || []}) if $proj->{'patternmd5'};
   $state .= "\0".join('/', map {"$_->{'project'}/$_->{'repository'}"} @{$prpsearchpath || []}) if $proj->{'patternmd5'};
   $state .= "\0".$updateinfos_state if $updateinfos_state;
+  $state .= "\0".$appdatas_state if $appdatas_state;
   $state .= "\0".$deltainfos_state if $deltainfos_state;
+  $state .= "\0".Digest::MD5::md5_hex($supportstatus_state) if $supportstatus_state;
   $state = Digest::MD5::md5_hex($state) if $state ne '';
 
   # get us the old repoinfo, so we can compare the state
@@ -1223,7 +1516,7 @@ sub publish {
 
   # get sign key
   my $signargs = [];
-  my $signkey = BSRPC::rpc("$BSConfig::srcserver/getsignkey", undef, "project=$projid", "withpubkey=1");
+  my $signkey = BSRPC::rpc("$BSConfig::srcserver/getsignkey", undef, "project=$projid", "withpubkey=1", "autoextend=1");
   my $pubkey;
   if ($signkey) {
     ($signkey, $pubkey) = split("\n", $signkey, 2);
@@ -1264,6 +1557,8 @@ sub publish {
   };
   $repoinfo->{'arch'} = $repo->{'arch'} if $repo->{'arch'};
   $repoinfo->{'splitdebug'} = $repotype{'splitdebug'}->[0] if defined $dbgsplit;
+  $repoinfo->{'subdir'} = $subdir if $subdir;
+  $repoinfo->{'base'} = $repo->{'base'} if $repo->{'base'};
 
   # store repoinfo on disk
   if (!$dbgsplit) {
@@ -1287,10 +1582,10 @@ sub publish {
 
   # put in published database
   my $binarydb = db_open('binary');
-  updatebinaryindex($binarydb, [ map {"$prp_ext/$_"} @db_deleted ], [ map {"$prp_ext/$_"} @db_changed ]) if $binarydb && defined($prp_ext);
+  updatebinaryindex($binarydb, [ map {"$prp_ext/$_"} @db_deleted ], [ map {"$prp_ext/$_"} @db_changed ]) if $binarydb;
 
   # mark file origins so we can gather per package statistics
-  if ($BSConfig::markfileorigins && defined($prp_ext)) {
+  if ($BSConfig::markfileorigins) {
     print "    marking file origins\n";
     for my $f (sort @db_changed) {
       my $origin = $binaryorigins->{$f};
@@ -1345,7 +1640,7 @@ sub publish {
       return;
     }
     if (system($BSConfig::publishprogram->{$prp}, $prp, $extrep)) {
-      die("      $BSConfig::publishprogram{$prp} failed: $?\n");
+      die("      $BSConfig::publishprogram->{$prp} failed: $?\n");
     }
     goto publishprog_done;
   }
@@ -1354,7 +1649,7 @@ sub publish {
   $xrepoid .= $dbgsplit if $dbgsplit;
 
   if ($repotype{'rpm-md'}) {
-    createrepo_rpmmd($extrep, $projid, $xrepoid, $signargs, $pubkey, $repoinfo, $repotype{'rpm-md'}, \@updateinfos, \%deltainfos);
+    createrepo_rpmmd($extrep, $projid, $xrepoid, $signargs, $pubkey, $repoinfo, $repotype{'rpm-md'}, \@updateinfos, \%deltainfos, $appdatas, $supportstatus);
   } else {
     deleterepo_rpmmd($extrep, $projid, $xrepoid, $signargs, $pubkey, $repoinfo);
   }
@@ -1373,6 +1668,16 @@ sub publish {
     createrepo_debian($extrep, $projid, $xrepoid, $signargs, $pubkey, $repoinfo);
   } else {
     deleterepo_debian($extrep, $projid, $xrepoid, $signargs, $pubkey, $repoinfo);
+  }
+  if ($repotype{'arch'}) {
+    createrepo_arch($extrep, $projid, $xrepoid, $signargs, $pubkey, $repoinfo);
+  } else {
+    deleterepo_arch($extrep, $projid, $xrepoid, $signargs, $pubkey, $repoinfo);
+  }
+  if ($repotype{'staticlinks'}) {
+    createrepo_staticlinks($extrep, $projid, $xrepoid, $signargs, $pubkey, $repoinfo, $repotype{'staticlinks'});
+  } else {
+    deleterepo_staticlinks($extrep, $projid, $xrepoid, $signargs, $pubkey, $repoinfo, $repotype{'staticlinks'});
   }
 
   if ($patterntype{'ymp'}) {
@@ -1406,15 +1711,17 @@ publishprog_done:
     writestr("$extrep/.directory.yast", "$extrep/directory.yast", join('', @d));
   }
 
-  # push to stageserver
-  if ($BSConfig::stageserver && $BSConfig::stageserver =~ /^rsync:\/\/([^\/]+)\/(.*)$/ && defined($prp_ext)) {
-    print "    running rsync to $1 at ".localtime(time)."\n";
-    # sync project repos, timeout 1 hour
-    qsystem('echo', "$prp_ext\0", 'rsync', '-ar0', '--delete-after', '--exclude=repocache', '--timeout', '3600', '--files-from=-', $extrepodir, "$1::$2") && die("    rsync failed: $?\n");
-  }
+  # push the repo (unless there's a redirect)
+  if (!($BSConfig::publishredirect && $BSConfig::publishredirect->{$prp})) {
+    # push to stageserver
+    if ($BSConfig::stageserver && $BSConfig::stageserver =~ /^rsync:\/\/([^\/]+)\/(.*)$/) {
+      print "    running rsync to $1 at ".localtime(time)."\n";
+      # sync project repos, timeout 1 hour
+      qsystem('echo', "$prp_ext\0", 'rsync', '-ar0', @binsufsrsync, '--include=*/', '--exclude=*', '--timeout', '7200', '--files-from=-', $extrepodir, "$1::$2") && die("    rsync failed at ".localtime(time).": $?\n");
+      qsystem('echo', "$prp_ext\0", 'rsync', '-ar0', '--delete-after', '--exclude=repocache', '--timeout', '3600', '--files-from=-', $extrepodir, "$1::$2") && die("    rsync failed: $?\n");
+    }
 
-  # push done trigger to stageserver so that it can send it to the world
-  if (defined($prp_ext)) {
+    # push done trigger to stageserver so that it can send it to the world
     mkdir_p($extrepodir_sync);
     my $projid_ext = $projid;
     $projid_ext =~ s/:/:\//g;
@@ -1425,12 +1732,24 @@ publishprog_done:
       qsystem('rsync', '-a', '--timeout', '60', "$extrepodir_sync/$projid", "$1::$2/$projid") && warn("    trigger rsync failed: $?\n");
     }
   }
-  if ($BSConfig::publishedhook && $BSConfig::publishedhook->{$prp}) {
-    qsystem($BSConfig::publishedhook->{$prp}, $prp, $extrep, @changed) && warn("    $BSConfig::publishedhook failed: $?");
+
+  # support for regex usage in $BSConfig::publishedhook
+  my $publish_prp = $prp;
+  if ($BSConfig::publishedhook_use_regex) {
+    for my $key (sort {$b cmp $a} keys %{$BSConfig::publishedhook}) {
+      if ($prp =~ /^$key/) {
+        $publish_prp = $key;
+        last;
+      }
+    }
   }
 
-  
-  BSNotify::notify("REPO_PUBLISHED", { project => $projid , 'repo' => $repoid });
+  if ($BSConfig::publishedhook && $BSConfig::publishedhook->{$publish_prp}) {
+    qsystem($BSConfig::publishedhook->{$publish_prp}, $prp, $extrep, @changed) && warn("    $BSConfig::publishedhook->{$publish_prp} failed: $?");
+  }
+
+
+  notify('REPO_PUBLISHED', { project => $projid , 'repo' => $repoid });
   # all done. till next time...
   if ($BSConfig::publishprogram && $BSConfig::publishprogram->{$prp}) {
     exit(0);
@@ -1447,6 +1766,7 @@ $SIG{'PIPE'} = 'IGNORE';
 BSUtil::restartexit($ARGV[0], 'publisher', "$rundir/bs_publish", "$myeventdir/.ping");
 print "starting build service publisher\n";
 
+mkdir_p($rundir);
 open(RUNLOCK, '>>', "$rundir/bs_publish.lock") || die("$rundir/bs_publish.lock: $!\n");
 flock(RUNLOCK, LOCK_EX | LOCK_NB) || die("publisher is already running!\n");
 utime undef, undef, "$rundir/bs_publish.lock";
@@ -1461,6 +1781,8 @@ sysopen(PING, "$myeventdir/.ping", POSIX::O_RDWR) || die("$myeventdir/.ping: $!"
 db_sync();
 
 my %publish_retry;
+my %publish_lasttime;
+my %publish_duration;
 
 while(1) {
   # drain ping pipe
@@ -1477,6 +1799,10 @@ while(1) {
     last if -e "$rundir/bs_publish.exit";
     last if -e "$rundir/bs_publish.restart";
     my $ev = readxml("$myeventdir/$event", $BSXML::event, 1);
+    if ($ev && $ev->{'type'} eq 'configuration') {
+      print "updating configuration\n";
+      BSConfiguration::update_from_configuration();
+    }
     if (!$ev || !$ev->{'type'} || $ev->{'type'} ne 'publish') {
       unlink("$myeventdir/$event");
       next;
@@ -1492,27 +1818,48 @@ while(1) {
       if (open(PPLOCK, '<', "$reporoot/$prp/.pplock")) {
         if (flock(PPLOCK, LOCK_EX | LOCK_NB)) {
 	  close PPLOCK;
-	  print "external publish program still running\n";
+	  print "$prp: external publish program still running\n";
 	  $publish_retry{$event} = time() + 60;
 	  next;
 	}
 	close PPLOCK;
       }
     }
+    my $starttime = time();
+    if ($publish_lasttime{$prp} && $publish_duration{$prp} > 300 && $publish_lasttime{$prp} + 5 * $publish_duration{$prp} > $starttime)
+      {
+	print "$prp: not yet\n";
+	$publish_retry{$event} = $starttime + 60 * 5;
+	next;
+      }
     rename("$myeventdir/$event", "$myeventdir/${event}::inprogress");
-    BSNotify::notify('REPO_PUBLISH_STATE', { 'project' => $ev->{'project'}, 'repo' => $ev->{'repository'}, 'state' => 'publishing'} );
+    notify('REPO_PUBLISH_STATE', { 'project' => $ev->{'project'}, 'repo' => $ev->{'repository'}, 'state' => 'publishing'} );
     eval {
       publish($ev->{'project'}, $ev->{'repository'});
     };
     if ($@) {
       warn("publish failed: $@");
+      # delete state from repoinfo so that we will really re-publish
+      if (-s "$reporoot/$prp/:repoinfo") {
+	eval {
+	  my $repoinfo = Storable::retrieve("$reporoot/$prp/:repoinfo") || {};
+	  if ($repoinfo->{'state'}) {
+	    delete $repoinfo->{'state'};
+	    Storable::nstore($repoinfo, "$reporoot/$prp/:repoinfo");
+	  }
+	};
+      }
       rename("$myeventdir/${event}::inprogress", "$myeventdir/$event");
       $publish_retry{$event} = time() + 60;
+      db_sync();
     } else {
-      BSNotify::notify('REPO_PUBLISH_STATE', { 'project' => $ev->{'project'}, 'repo' => $ev->{'repository'}, 'state' => 'published'} );
+      my $now = time();
+      $publish_lasttime{$prp} = $now;
+      $publish_duration{$prp} = $now - $starttime;
+      notify('REPO_PUBLISH_STATE', { 'project' => $ev->{'project'}, 'repo' => $ev->{'repository'}, 'state' => 'published'} );
+      db_sync();
       unlink("$myeventdir/${event}::inprogress");
     }
-    db_sync();
   }
 
   # check for restart/exit

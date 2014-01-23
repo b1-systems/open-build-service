@@ -27,15 +27,12 @@ Rails::Initializer.run do |config|
 
 end
 
-ActiveXML::Base.config do |conf|
+ActiveXML::Node.config do |conf|
   conf.lazy_evaluation = true
 
   conf.setup_transport do |map|
 
-    map.default_server :rest, "#{SOURCE_PROTOCOL}://#{SOURCE_HOST}:#{SOURCE_PORT}"
-
-    map.connect :project, "bssql:///", :write_through => :false
-    map.connect :package, "bssql:///", :write_through => :false
+    map.default_server :rest, "#{CONFIG['source_protocol']}://#{CONFIG['source_host']}:#{CONFIG['source_port']}"
 
     map.connect :xproject, "rest:///source/:name/_meta",
       :all => "rest:///source/:name"
@@ -45,10 +42,10 @@ ActiveXML::Base.config do |conf|
 end
 
 
-class Xproject < ActiveXML::Base
+class Xproject < ActiveXML::Node
 end
 
-class Xpackage < ActiveXML::Base
+class Xpackage < ActiveXML::Node
 end
 
 
@@ -61,7 +58,7 @@ def store_project( p )
     STDERR.puts "success"
     store_packages_for p
     return true
-  rescue DbProject::SaveError => e
+  rescue Project::SaveError => e
     if e.message =~ /^unable to walk on path/
       STDERR.puts "delayed"
       return false
@@ -93,7 +90,7 @@ def store_packages_for( p )
   rescue Object => e
     # remove whole project to cause missing packages to be read at next run
     STDERR.puts "### store_packages exception handling"
-    DbProject.find_by_name(p.name.to_s).destroy
+    Project.find_by_name(p.name.to_s).destroy
     xmldebug xpack.dump_xml
     raise e
   end
@@ -153,7 +150,7 @@ projects.each_entry do |entry|
   cache[entry.name] = p unless store_project(p)
 end
 
-run_count = 0;
+run_count = 0
 
 while( cache.length > 0 )
   STDERR.puts "--> trying to store previously unsaved projects, run [#{run_count += 1}]"
@@ -161,7 +158,7 @@ while( cache.length > 0 )
   tmp.each do |p|
     p.each_repository do |repo|
       repo.each_path do |path|
-        unless cache.has_key?(path.project.to_s) or DbProject.find_by_name(path.project.to_s)
+        unless cache.has_key?(path.project.to_s) or Project.find_by_name(path.project.to_s)
           STDERR.puts "fetching dependency #{path.project}"
           cache[path.project.to_s] = Project.new(Xproject.find(path.project.to_s).dump_xml) 
         end

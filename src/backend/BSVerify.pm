@@ -24,11 +24,13 @@ package BSVerify;
 
 use strict;
 
+# keep in sync with src/api/app/model/project.rb
 sub verify_projid {
   my $projid = $_[0];
   die("projid is empty\n") unless defined($projid) && $projid ne '';
   die("projid '$projid' is illegal\n") if $projid =~ /[\/\000-\037]/;
   die("projid '$projid' is illegal\n") if ":$projid:" =~ /:[_\.:]/;
+  die("projid '$projid' is too long\n") if length($projid) > 200;
 }
 
 sub verify_projkind {
@@ -36,6 +38,7 @@ sub verify_projkind {
   die("projkind '$projkind' is illegal\n") if $projkind ne 'standard' && $projkind ne 'maintenance' && $projkind ne 'maintenance_incident' && $projkind ne 'maintenance_release'
 }
 
+# keep in sync with src/api/app/model/package.rb
 sub verify_packid {
   my $packid = $_[0];
   die("packid is empty\n") unless defined($packid) && $packid ne '';
@@ -43,6 +46,7 @@ sub verify_packid {
   $packid =~ s/^_patchinfo://s;
   die("packid '$packid' is illegal\n") if $packid =~ /[\/:\000-\037]/;
   die("packid '$packid' is illegal\n") if $packid =~ /^[_\.]/ && $packid ne '_product' && $packid ne '_pattern' && $packid ne '_project' && $packid ne '_patchinfo';
+  die("packid '$packid' is too long\n") if length($packid) > 200;
 }
 
 sub verify_repoid {
@@ -50,6 +54,7 @@ sub verify_repoid {
   die("repoid is empty\n") unless defined($repoid) && $repoid ne '';
   die("repoid '$repoid' is illegal\n") if $repoid =~ /[\/:\000-\037]/;
   die("repoid '$repoid' is illegal\n") if $repoid =~ /^[_\.]/;
+  die("repoid '$repoid' is too long\n") if length($repoid) > 200;
 }
 
 sub verify_jobid {
@@ -63,6 +68,7 @@ sub verify_arch {
   my $arch = $_[0];
   die("arch is empty\n") unless defined($arch) && $arch ne '';
   die("arch '$arch' is illegal\n") if $arch =~ /[\/:\.\000-\037]/;
+  die("arch '$arch' is too long\n") if length($arch) > 200;
   verify_simple($arch);
 }
 
@@ -75,7 +81,11 @@ sub verify_patchinfo {
   my $p = $_[0];
   verify_filename($p->{'name'}) if defined($p->{'name'});
   my %allowed_categories = map {$_ => 1} qw{security recommended optional feature};
-  die("Invalid category defined in _patchinfo\n") if defined($p->{'category'}) && $p->{'category'} ne "" && !$allowed_categories{$p->{'category'}};
+  die("Invalid category defined in _patchinfo\n") if defined($p->{'category'}) && !$allowed_categories{$p->{'category'}};
+  for my $rt (@{$p->{'releasetarget'} || []}) {
+    verify_projid($rt->{'project'});
+    verify_repoid($rt->{'repository'}) if defined $rt->{'repository'};
+  }
 }
 
 sub verify_patchinfo_complete {
@@ -113,6 +123,12 @@ sub verify_filename {
 sub verify_md5 {
   my $md5 = $_[0];
   die("not a md5 sum\n") unless $md5 && $md5 =~ /^[0-9a-f]{32}$/s;
+}
+
+# can be a md5sum or a git id
+sub verify_srcmd5 {
+  my $srcmd5 = $_[0];
+  die("not a srcmd5 sum\n") unless $srcmd5 && ($srcmd5 =~ /^[0-9a-f]{32}$/s || $srcmd5 =~ /^[0-9a-f]{40}$/s);
 }
 
 sub verify_rev {
@@ -172,7 +188,10 @@ sub verify_prpa {
 
 sub verify_resultview {
   my $view = $_[0];
-  die("unknown view parameter: '$view'\n") if $view ne 'summary' && $view ne 'status' && $view ne 'binarylist';
+  die("unknown view parameter: '$view'\n") if $view ne 'summary' && $view ne 'status' && $view ne 'binarylist' && $view ne 'stats';
+}
+
+sub verify_workerid {
 }
 
 sub verify_disableenable {
@@ -207,6 +226,10 @@ sub verify_proj {
     }
     for my $a (@{$repo->{'arch'} || []}) {
       verify_arch($a);
+    }
+    for my $rt (@{$repo->{'releasetarget'} || []}) {
+      verify_projid($rt->{'project'});
+      verify_repoid($rt->{'repository'});
     }
   }
   for my $link (@{$proj->{'link'} || []}) {
@@ -245,6 +268,7 @@ sub verify_link {
   verify_packid($l->{'package'}) if exists $l->{'package'};
   verify_rev($l->{'rev'}) if exists $l->{'rev'};
   verify_rev($l->{'baserev'}) if exists $l->{'baserev'};
+  verify_simple($l->{'vrev'}) if defined $l->{'vrev'};
   die("link must contain some target description \n") unless exists $l->{'project'} || exists $l->{'package'} || exists $l->{'rev'};
   if (exists $l->{'cicount'}) {
     if ($l->{'cicount'} ne 'add' && $l->{'cicount'} ne 'copy' && $l->{'cicount'} ne 'local') {
@@ -288,6 +312,26 @@ sub verify_aggregatelist {
       verify_repoid($r->{'source'}) if exists $r->{'source'};
       verify_repoid($r->{'target'}) if exists $r->{'target'};
     }
+  }
+}
+
+sub verify_channel {
+  my ($channel) = @_;
+  for my $binaries (@{$channel->{'binaries'} || []}) {
+    verify_projid($binaries->{'project'}) if defined $binaries->{'project'};
+    verify_arch($binaries->{'arch'}) if defined $binaries->{'arch'};
+    for my $binary (@{$binaries->{'binary'} || []}) {
+      verify_filename($binary->{'name'});
+      verify_arch($binaries->{'binaryarch'}) if defined $binary->{'binaryarch'};
+      verify_projid($binary->{'project'}) if defined $binary->{'project'};
+      verify_packid($binary->{'package'}) if defined $binary->{'package'};
+      verify_packid($binary->{'arch'}) if defined $binary->{'arch'};
+    }
+  }
+  for my $rt (@{$channel->{'target'} || []}) {
+    die("bad target specification\n") unless $rt->{'project'} || $rt->{'repository'};
+    verify_projid($rt->{'project'}) if $rt->{'project'};
+    verify_repoid($rt->{'repository'}) if $rt->{'repository'};
   }
 }
 
@@ -385,6 +429,38 @@ sub verify_nevraquery {
   verify_simple($f);
 }
 
+sub verify_attribute {
+  my ($attribute) = @_;
+  die("no namespace defined\n") unless defined $attribute->{'namespace'};
+  die("no name defined\n") unless defined $attribute->{'name'};
+  verify_simple($attribute->{'namespace'});
+  verify_simple($attribute->{'name'});
+  verify_simple($attribute->{'binary'}) if exists $attribute->{'binary'};
+}
+
+sub verify_attributes {
+  my ($attributes) = @_;
+  for my $attribute (@{$attributes->{'attribute'} || []}) {
+    verify_attribute($attribute);
+  }
+}
+
+sub verify_frozenlinks {
+  my ($frozenlinks) = @_;
+  my %seen;
+  for my $fp (@{$frozenlinks->{'frozenlink'} || []}) {
+    my $xp = exists($fp->{'project'}) ? $fp->{'project'} : '/all';
+    verify_projid($fp->{'project'}) if exists $fp->{'project'};
+    die("project listed multiple times in frozenlinks\n") if $seen{$xp} || $seen{'/all'};
+    $seen{$xp} = 1;
+    for my $p (@{$fp->{'package'} || []}) {
+      verify_packid($p->{'name'});
+      verify_srcmd5($p->{'srcmd5'});
+      verify_simple($p->{'vrev'}) if defined $p->{'vrev'};
+    }
+  }
+}
+
 our $verifyers = {
   'project' => \&verify_projid,
   'package' => \&verify_packid,
@@ -394,6 +470,7 @@ our $verifyers = {
   'package_repository' => \&verify_packid_repository,
   'filename' => \&verify_filename,
   'md5' => \&verify_md5,
+  'srcmd5' => \&verify_srcmd5,
   'rev' => \&verify_rev,
   'linkrev' => \&verify_linkrev,
   'bool' => \&verify_bool,
@@ -403,6 +480,9 @@ our $verifyers = {
   'prp' => \&verify_prp,
   'prpa' => \&verify_prpa,
   'resultview' => \&verify_resultview,
+  'jobid' => \&verify_md5,
+  'workerid' => \&verify_workerid,
 };
 
 1;
+

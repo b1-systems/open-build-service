@@ -1,78 +1,63 @@
-#require "rexml/document"
-
 class GroupController < ApplicationController
 
-  before_filter :have_login
+  validate_action :groupinfo => { :method => :get, :response => :group }
+  validate_action :groupinfo => { :method => :put, :request => :group, :response => :status }
+  validate_action :groupinfo => { :method => :delete, :response => :status }
+
+  before_action :require_admin, except: [:index, :show]
 
   def index
-    valid_http_methods :get
-
     if params[:login]
-      user = User.get_by_login(params[:login])
-      list = user.groups
+      user = User.find_by_login!(params[:login])
+      @list = user.groups
     else
-      list = Group.find(:all)
+      @list = Group.all
     end
     if params[:prefix]
-      list = list.find_all {|group| group.title.match(/^#{params[:prefix]}/)}
+      @list = @list.find_all { |group| group.title.match(/^#{params[:prefix]}/) }
     end
-
-    builder = Builder::XmlMarkup.new(:indent => 2)
-    xml = builder.directory(:count => list.length) do |dir|
-      list.each {|group| dir.entry(:name => group.title)}
-    end
-    render :text => xml, :content_type => "text/xml"
   end
 
-  # OBSOLETE with 3.0
-  def grouplist
-    valid_http_methods :get
-
-    builder = Builder::XmlMarkup.new(:indent => 2)
-    xml = ""
-    if params[:title]
-      group = URI.unescape(params[:title])
-      logger.debug "Generating user listing for group  #{group}"
-      group = Group.find_by_title( group )
-      unless group
-        render_error :status => 404, :errorcode => 'unknown_group', :message => "Group is not existing" 
-        return
-      end
-      # list all users of the group
-      list = GroupsUser.find(:all, :conditions => ["group_id = ?", group])
-      xml = builder.directory( :count => list.length ) do |dir|
-        list.each {|g| dir.entry( :name => g.user.login)}
-      end
-    else
-      # list all groups
-      list = Group.find(:all)
-      xml = builder.directory( :count => list.length ) do |dir|
-        list.each {|g| dir.entry( :name => g.title )}
-      end
-    end
-
-    render :text => xml, :content_type => "text/xml" and return
+  # DELETE for removing it
+  def delete
+    group = Group.find_by_title!(params[:title])
+    group.destroy
+    render_ok
   end
 
+  # GET for showing the group
   def show
-    valid_http_methods :get
-    required_parameters :title
-
-    @group = Group.get_by_title( params[:title] )
-    @involved_users = GroupsUser.find(:all, :conditions => ["group_id = ?", @group])
+    @group = Group.find_by_title!(params[:title])
   end
 
-  private
-
-  # filter to check if a user is logged in
-  def have_login
-    if !@http_user
-      logger.debug "No user logged in, access to group information denied"
-      @errorcode = 401
-      @summary = "No user logged in, access to group information denied"
-      render :template => 'error', :status => 401
-      return
+  # PUT for rewriting it completely including defined user list.
+  def update
+    group = Group.find_by_title(params[:title])
+    if group.nil?
+      group = Group.create(:title => params[:title])
     end
+    group.update_from_xml(Xmlhash.parse(request.raw_post))
+    group.save!
+
+    render_ok
+  end
+
+  # POST for editing it, adding or remove users
+  def command
+    group = Group.find_by_title!(URI.unescape(params[:title]))
+    user = User.find_by_login!(params[:userid]) if params[:userid]
+
+    if params[:cmd] == "add_user"
+      group.add_user user
+    elsif params[:cmd] == "remove_user"
+      group.remove_user user
+    elsif params[:cmd] == "set_email"
+      group.set_email params[:email]
+    else
+      raise UnknownCommandError.new "cmd must be set to add_user or remove_user"
+    end
+
+    render_ok
   end
 
 end

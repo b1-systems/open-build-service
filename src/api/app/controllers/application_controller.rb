@@ -1,334 +1,305 @@
 # Filters added to this controller will be run for all controllers in the application.
 # Likewise, all the methods added will be available for all controllers.
 
-require 'opensuse/permission'
-require 'opensuse/backend'
-require 'opensuse/validator'
-require 'rexml/document'
-
-class InvalidHttpMethodError < Exception; end
-class MissingParameterError < Exception; end
-class IllegalRequestError < Exception; end
-class IllegalEncodingError < Exception; end
-class UserNotFoundError < Exception; end
-class GroupNotFoundError < Exception; end
-class RoleNotFoundError < Exception; end
-class TagNotFoundError < Exception; end
-class IssueTrackerNotFoundError < Exception; end
-class IssueNotFoundError < Exception; end
+require_dependency 'opensuse/permission'
+require_dependency 'opensuse/backend'
+require_dependency 'opensuse/validator'
+require_dependency 'api_exception'
 
 class ApplicationController < ActionController::Base
 
-  # Do never use a layout here since that has impact on every controller
-  layout nil
+  protect_from_forgery
+
+  class NoDataEntered < APIException
+    setup 403
+  end
+
+  class AuthenticationRequiredError < APIException
+    setup 401, "Authentication required"
+  end
+
+  include ActionController::ImplicitRender
+  include ActionController::MimeResponds
+
   # session :disabled => true
 
   @user_permissions = nil
   @http_user = nil
+  @skip_validation = false
 
-  helper RbacHelper
-
-
-  before_filter :validate_xml_request, :add_api_version
-  if defined?( RESPONSE_SCHEMA_VALIDATION ) && RESPONSE_SCHEMA_VALIDATION == true
-    after_filter :validate_xml_response
-  end
-
-  if Rails.env.test?
-    before_filter :start_test_backend
+  before_action :validate_xml_request, :add_api_version
+  if CONFIG['response_schema_validation'] == true
+    after_action :validate_xml_response
   end
 
   # skip the filter for the user stuff
-  before_filter :extract_user, :except => :register
-  before_filter :setup_backend, :add_api_version, :restrict_admin_pages
-  before_filter :shutup_rails
-  before_filter :set_current_user
+  before_action :extract_user
+  before_action :setup_backend
+  before_action :shutup_rails
+  before_action :validate_params
 
   #contains current authentification method, one of (:proxy, :basic)
   attr_accessor :auth_method
   
-  hide_action :auth_method
-  hide_action 'auth_method='
-
-  @@backend = nil
-  def start_test_backend
-    return if @@backend
-    logger.debug "Starting test backend..."
-    @@backend = IO.popen("#{RAILS_ROOT}/script/start_test_backend")
-    logger.debug "Test backend started with pid: #{@@backend.pid}"
-    while true do
-      line = @@backend.gets
-      raise RuntimeError.new('Backend died') unless line
-      break if line =~ /DONE NOW/
-      logger.debug line.strip
-    end
-    ActiveXML::Config.global_write_through = true
-    at_exit do
-      logger.debug "kill #{@@backend.pid}"
-      Process.kill "INT", @@backend.pid
-      @@backend = nil
-    end
-  end
-  hide_action :start_test_backend
-
   protected
-  def set_current_user
-    User.current = nil
-    User.currentID = nil
-    User.currentAdmin = false
-    User.current = @http_user if @http_user
-    User.currentID = @http_user.id if @http_user and @http_user.id
-    User.currentAdmin = true if @http_user and @http_user.is_admin?
-  end
 
-  def restrict_admin_pages
-     if params[:controller] =~ /^active_rbac/ or params[:controller] =~ /^admin/
-        return require_admin
-     end
+  def load_nobody
+    @http_user = User.find_by_login( "_nobody_" )
+    User.current = @http_user
+    User.current.is_admin = false
+    @user_permissions = Suse::Permission.new( User.current )
   end
 
   def require_admin
     logger.debug "Checking for  Admin role for user #{@http_user.login}"
     unless @http_user.is_admin?
       logger.debug "not granted!"
-      render_error :status => 403, :errorcode => "put_request_no_permission", :message => "Requires admin privileges" and return
+      render_error :status => 403, :errorcode => "put_request_no_permission", :message => "Requires admin privileges" and return false
     end
-  end
-
-  def http_anonymous_user 
-    return User.find_by_login( "_nobody_" )
-  end
-
-  def extract_user_public
-    # to become _public_ special user 
-    @http_user = User.find_by_login( "_nobody_" )
-    @user_permissions = Suse::Permission.new( @http_user )
-    User.current = nil
-    User.currentID = nil
-    User.currentAdmin = false
-    User.current = @http_user if @http_user
-    User.currentID = @http_user.id if @http_user and @http_user.id
-    User.currentAdmin = @http_user.is_admin? if @http_user and @http_user.is_admin?
     return true
   end
 
-  def extract_user
-    mode = :basic
-    mode = ICHAIN_MODE if defined? ICHAIN_MODE
-    mode = PROXY_AUTH_MODE if defined? PROXY_AUTH_MODE
-    if mode == :on || mode == :simulate # configured in the the environment file
-      @auth_method = :proxy
-      proxy_user = request.env['HTTP_X_USERNAME']
-      if proxy_user
-        logger.info "iChain user extracted from header: #{proxy_user}"
-      elsif mode == :simulate
-        proxy_user = PROXY_AUTH_TEST_USER
-        logger.debug "iChain user extracted from config: #{proxy_user}"
+  def validate_params
+    params.each do |key, value|
+      next if value.nil?
+      next if key == 'xmlhash' # perfectly fine
+      if !value.kind_of? String
+        raise InvalidParameterError, "Parameter #{key} has non String class #{value.class}"
       end
+    end
+    return true
+  end
 
-      # we're using a login proxy, there is no need to authenticate the user from the credentials
-      # However we have to care for the status of the user that must not be unconfirmed or proxy requested
-      if proxy_user
-        @http_user = User.find_by_login proxy_user
+  class InactiveUserError < APIException
+    setup 403
+  end
 
-        # If we do not find a User here, we need to create a user and wait for
-        # the confirmation by the user and the BS Admin Team.
-        unless @http_user
-          if CONFIG['new_user_registration'] == "deny"
-            logger.debug( "No user found in database, creation disabled" )
-            render_error( :message => "User '#{login}' does not exist<br>#{errstr}", :status => 401 )
-            @http_user=nil
-            return false
+  class UnconfirmedUserError < APIException
+    setup 403
+  end
+
+  class UnregisteredUserError < APIException
+    setup 403
+  end
+
+  def extract_ldap_user
+    begin
+      require 'ldap'
+      logger.debug( "Using LDAP to find #{@login}" )
+      ldap_info = User.find_with_ldap( @login, @passwd )
+    rescue LoadError
+      logger.warn "ldap_mode selected but 'ruby-ldap' module not installed."
+      ldap_info = nil # now fall through as if we'd not found a user
+    rescue Exception
+      logger.debug "#{login} not found in LDAP."
+      ldap_info = nil # now fall through as if we'd not found a user
+    end
+
+    if ldap_info
+      # We've found an ldap authenticated user - find or create an OBS userDB entry.
+      @http_user = User.find_by_login( login )
+      if @http_user
+        # Check for ldap updates
+        if @http_user.email != ldap_info[0]
+          @http_user.email = ldap_info[0]
+          @http_user.save
+        end
+      else
+        if ::Configuration.registration == "deny"
+          logger.debug( "No user found in database, creation disabled" )
+          @http_user=nil
+          raise AuthenticationRequiredError.new "User '#{login}' does not exist<br>#{errstr}"
+        end
+        logger.debug( "No user found in database, creating" )
+        logger.debug( "Email: #{ldap_info[0]}" )
+        logger.debug( "Name : #{ldap_info[1]}" )
+        # Generate and store a fake pw in the OBS DB that no-one knows
+        chars = ["A".."Z","a".."z","0".."9"].collect { |r| r.to_a }.join
+        fakepw = (1..24).collect { chars[rand(chars.size)] }.pack('a'*24)
+        newuser = User.create(
+            :login => login,
+            :password => fakepw,
+            :password_confirmation => fakepw,
+            :email => ldap_info[0] )
+        unless newuser.errors.empty?
+          errstr = String.new
+          logger.debug("Creating User failed with: ")
+          newuser.errors.each_full do |msg|
+            errstr = errstr+msg
+            logger.debug(msg)
           end
-          state = User.states['confirmed']
-          state = User.states['unconfirmed'] if CONFIG['new_user_registration'] == "confirmation"
-          # Generate and store a fake pw in the OBS DB that no-one knows
-          # FIXME: we should allow NULL passwords in DB, but that needs user management cleanup
-          chars = ["A".."Z","a".."z","0".."9"].collect { |r| r.to_a }.join
-          fakepw = (1..24).collect { chars[rand(chars.size)] }.pack("C*")
-          @http_user = User.create(
+          @http_user=nil
+          raise AuthenticationRequiredError.new "Cannot create ldap userid: '#{login}' on OBS<br>#{errstr}"
+        end
+        newuser.realname = ldap_info[1]
+        newuser.state = User.states['confirmed']
+        newuser.state = User.states['unconfirmed'] if ::Configuration.registration == "confirmation"
+        newuser.adminnote = "User created via LDAP"
+        user_role = Role.find_by_title("User")
+        newuser.roles << user_role
+
+        logger.debug( "saving new user..." )
+        newuser.save
+
+        @http_user = newuser
+      end
+    else
+      logger.debug( "User not found with LDAP, falling back to database" )
+    end
+
+  end
+
+  def extract_proxy_user(mode)
+    @auth_method = :proxy
+    proxy_user = request.env['HTTP_X_USERNAME']
+    if proxy_user
+      logger.info "iChain user extracted from header: #{proxy_user}"
+    elsif mode == :simulate
+      proxy_user = CONFIG['proxy_auth_test_user']
+      logger.debug "iChain user extracted from config: #{proxy_user}"
+    end
+
+    # we're using a login proxy, there is no need to authenticate the user from the credentials
+    # However we have to care for the status of the user that must not be unconfirmed or proxy requested
+    if proxy_user
+      @http_user = User.find_by_login proxy_user
+
+      # If we do not find a User here, we need to create a user and wait for
+      # the confirmation by the user and the BS Admin Team.
+      unless @http_user
+        if ::Configuration.registration == "deny"
+          logger.debug("No user found in database, creation disabled")
+          raise AuthenticationRequiredError.new "User '#{login}' does not exist<br>#{errstr}"
+        end
+        state = User.states['confirmed']
+        state = User.states['unconfirmed'] if ::Configuration.registration == "confirmation"
+        # Generate and store a fake pw in the OBS DB that no-one knows
+        # FIXME: we should allow NULL passwords in DB, but that needs user management cleanup
+        chars = ["A".."Z", "a".."z", "0".."9"].collect { |r| r.to_a }.join
+        fakepw = (1..24).collect { chars[rand(chars.size)] }.pack("a"*24)
+        @http_user = User.new(
             :login => proxy_user,
             :password => fakepw,
             :password_confirmation => fakepw,
             :state => state)
-        end
-
-        # update user data from login proxy headers
-        @http_user.update_user_info_from_proxy_env(request.env) unless @http_user.nil?
-      else
-        if CONFIG['allow_anonymous']
-          @http_user = User.find_by_login( "_nobody_" )
-          @user_permissions = Suse::Permission.new( @http_user )
-          return true
-        end
-        logger.error "No X-username header from login proxy! Are we really using an authentification proxy?"
-        render_error( :message => "No user header found found!", :status => 401 ) and return false
       end
+
+      # update user data from login proxy headers
+      @http_user.update_user_info_from_proxy_env(request.env) if @http_user
     else
-      #active_rbac is used for authentication
+      logger.error "No X-username header from login proxy! Are we really using an authentification proxy?"
+    end
+
+  end
+
+  def authorization_infos
+    # 1. try to get it where mod_rewrite might have put it
+    # 2. for Apace/mod_fastcgi with -pass-header Authorization
+    # 3. regular location
+    %w{X-HTTP_AUTHORIZATION Authorization HTTP_AUTHORIZATION}.each do |header|
+      if request.env.has_key? header
+        return request.env[header].to_s.split
+      end
+    end
+    return nil
+  end
+
+  def extract_basic_auth_user
+    authorization = authorization_infos
+
+    # privacy! logger.debug( "AUTH: #{authorization.inspect}" )
+
+    if authorization and authorization[0] == "Basic"
+      # logger.debug( "AUTH2: #{authorization}" )
+      @login, @passwd = Base64.decode64(authorization[1]).split(':', 2)[0..1]
+
+      #set password to the empty string in case no password is transmitted in the auth string
+      @passwd ||= ""
+    else
+      logger.debug "no authentication string was sent"
+    end
+  end
+
+  def extract_user
+    mode = CONFIG['proxy_auth_mode'] || CONFIG['ichain_mode'] || :basic
+    if mode == :on || mode == :simulate # configured in the the environment file
+      extract_proxy_user mode
+    else
       @auth_method = :basic
 
-      if request.env.has_key? 'X-HTTP_AUTHORIZATION'
-        # try to get it where mod_rewrite might have put it
-        authorization = request.env['X-HTTP_AUTHORIZATION'].to_s.split
-      elsif request.env.has_key? 'Authorization'
-        # for Apace/mod_fastcgi with -pass-header Authorization
-        authorization = request.env['Authorization'].to_s.split
-      elsif request.env.has_key? 'HTTP_AUTHORIZATION'
-        # this is the regular location
-        authorization = request.env['HTTP_AUTHORIZATION'].to_s.split
-      end
+      extract_basic_auth_user
 
-      logger.debug( "AUTH: #{authorization.inspect}" )
-
-      if authorization and authorization[0] == "Basic"
-        # logger.debug( "AUTH2: #{authorization}" )
-        login, passwd = Base64.decode64(authorization[1]).split(':', 2)[0..1]
-
-        #set password to the empty string in case no password is transmitted in the auth string
-        passwd ||= ""
-      else
-        if @http_user.nil? and CONFIG['allow_anonymous'] 
-          read_only_hosts = []
-          read_only_hosts = CONFIG['read_only_hosts'] if CONFIG['read_only_hosts']
-          read_only_hosts << CONFIG['webui_host'] if CONFIG['webui_host'] # this was used in config files until OBS 2.1
-          if read_only_hosts.include?(request.env['REMOTE_HOST']) or read_only_hosts.include?(request.env['REMOTE_ADDR'])
-            # Fixed list of clients which do support the read only mode
-            hua = request.env['HTTP_USER_AGENT']
-            if hua && (hua.match(/^obs-webui/) || hua.match(/^obs-software/))
-              @http_user = User.find_by_login( "_nobody_" )
-              @user_permissions = Suse::Permission.new( @http_user )
-              return true
-            end
-          end
-
-          if login
-            render_error :message => "User not yet registered", :status => 403,
-              :errorcode => "unregistered_user",
-              :details => "Please register."
-            return false
-          end
+      if CONFIG['ldap_mode'] == :on
+        # disallow empty passwords to prevent LDAP lockouts
+        if @passwd.blank?
+          raise AuthenticationRequiredError.new "User '#{@login}' did not provide a password"
         end
 
-        logger.debug "no authentication string was sent"
-        render_error( :message => "Authentication required", :status => 401 ) 
-        return false
+        extract_ldap_user
       end
 
-      # disallow empty passwords to prevent LDAP lockouts
-      if !passwd or passwd == ""
-        render_error( :message => "User '#{login}' did not provide a password", :status => 401 ) and return false
-      end
-
-      if defined?( LDAP_MODE ) && LDAP_MODE == :on
-        begin
-          require 'ldap'
-          logger.debug( "Using LDAP to find #{login}" )
-          ldap_info = User.find_with_ldap( login, passwd )
-        rescue LoadError
-          logger.warn "LDAP_MODE selected but 'ruby-ldap' module not installed."
-          ldap_info = nil # now fall through as if we'd not found a user
-        rescue Exception
-          logger.debug "#{login} not found in LDAP."
-          ldap_info = nil # now fall through as if we'd not found a user          
-        end
-
-        if not ldap_info.nil?
-          # We've found an ldap authenticated user - find or create an OBS userDB entry.
-          @http_user = User.find_by_login( login )
-          if @http_user
-            # Check for ldap updates
-            if @http_user.email != ldap_info[0]
-              @http_user.email = ldap_info[0]
-              @http_user.save
-            end
-          else
-            if CONFIG['new_user_registration'] == "deny"
-              logger.debug( "No user found in database, creation disabled" )
-              render_error( :message => "User '#{login}' does not exist<br>#{errstr}", :status => 401 )
-              @http_user=nil
-              return false
-            end
-            logger.debug( "No user found in database, creating" )
-            logger.debug( "Email: #{ldap_info[0]}" )
-            logger.debug( "Name : #{ldap_info[1]}" )
-            # Generate and store a fake pw in the OBS DB that no-one knows
-            chars = ["A".."Z","a".."z","0".."9"].collect { |r| r.to_a }.join
-            fakepw = (1..24).collect { chars[rand(chars.size)] }.pack("C*")
-            newuser = User.create(
-              :login => login,
-              :password => fakepw,
-              :password_confirmation => fakepw,
-              :email => ldap_info[0] )
-            unless newuser.errors.empty?
-              errstr = String.new
-              logger.debug("Creating User failed with: ")
-              newuser.errors.each_full do |msg|
-                errstr = errstr+msg
-                logger.debug(msg)
-              end
-              render_error( :message => "Cannot create ldap userid: '#{login}' on OBS<br>#{errstr}",
-                :status => 401 )
-              @http_user=nil
-              return false
-            end
-            newuser.realname = ldap_info[1]
-            newuser.state = User.states['confirmed']
-            newuser.state = User.states['unconfirmed'] if CONFIG['new_user_registration'] == "confirmation"
-            newuser.adminnote = "User created via LDAP"
-            user_role = Role.find_by_title("User")
-            newuser.roles << user_role
-
-            logger.debug( "saving new user..." )
-            newuser.save
-
-            @http_user = newuser
-          end
-
-          session[:rbac_user_id] = @http_user.id
-        else
-          logger.debug( "User not found with LDAP, falling back to database" )
-          @http_user = User.find_with_credentials login, passwd
-        end
-
-      else
-        @http_user = User.find_with_credentials login, passwd
+      if @login && !@http_user
+        @http_user = User.find_with_credentials @login, @passwd
       end
     end
 
-    if @http_user.nil?
-      render_error( :message => "Unknown user '#{login}' or invalid password", :status => 401 ) and return false
-    else
-      if @http_user.state == User.states['ichainrequest'] or @http_user.state == User.states['unconfirmed']
-        render_error :message => "User is registered but not yet approved.", :status => 403,
-          :errorcode => "unconfirmed_user",
-          :details => "<p>Your account is a registered account, but it is not yet approved for the OBS by admin.</p>"
-        return false
-      end
+    if !@http_user && session[:login]
+      @http_user = User.find_by_login session[:login]
+    end
 
-      if @http_user.state == User.states['confirmed']
-        logger.debug "USER found: #{@http_user.login}"
-        @user_permissions = Suse::Permission.new( @http_user )
-        # Make sure the user has a valid home project
-        @http_user.find_or_create_home_project()
+    check_extracted_user
+  end
+
+  def check_for_anonymous_user
+    if ::Configuration.anonymous?
+      # Fixed list of clients which do support the read only mode
+      hua = request.env['HTTP_USER_AGENT']
+      if hua # ignore our test suite (TODO: we need to fix that)
+        load_nobody
         return true
       end
     end
-
-    render_error :message => "User is registered but not in confirmed state.", :status => 403,
-      :errorcode => "inactive_user",
-      :details => "<p>Your account is a registered account, but it is in a not active state.</p>"
-    return false
+    false
   end
 
-  hide_action :setup_backend  
+  def check_extracted_user
+    unless @http_user
+      if @login.blank?
+        return true if check_for_anonymous_user
+        raise AuthenticationRequiredError.new
+      end
+      raise AuthenticationRequiredError.new "Unknown user '#{@login}' or invalid password"
+    end
+
+    if @http_user.state == User.states['ichainrequest'] or @http_user.state == User.states['unconfirmed']
+      raise UnconfirmedUserError.new "User is registered but not yet approved. " +
+                                         "Your account is a registered account, but it is not yet approved for the OBS by admin."
+    end
+
+    User.current = @http_user
+
+    if @http_user.state == User.states['confirmed']
+      logger.debug "USER found: #{@http_user.login}"
+      @user_permissions = Suse::Permission.new(@http_user)
+      return true
+    end
+
+    raise InactiveUserError.new "User is registered but not in confirmed state. Your account is a registered account, but it is in a not active state."
+  end
+
+  def require_valid_project_name
+    required_parameters :project
+    valid_project_name!(params[:project])
+    # important because otherwise the filter chain is stopped
+    return true
+  end
+
   def setup_backend
     # initialize backend on every request
-    Suse::Backend.source_host = SOURCE_HOST
-    Suse::Backend.source_port = SOURCE_PORT
+    Suse::Backend.source_host = CONFIG['source_host']
+    Suse::Backend.source_port = CONFIG['source_port']
   end
 
-  hide_action :add_api_version
   def add_api_version
     response.headers["X-Opensuse-APIVersion"] = "#{CONFIG['version']}"
   end
@@ -339,8 +310,10 @@ class ApplicationController < ActionController::Base
     # apache & mod_xforward case
     if CONFIG['use_xforward'] and CONFIG['use_xforward'] != "false"
       logger.debug "[backend] VOLLEY(mod_xforward): #{path}"
-      headers['X-Forward'] = "http://#{SOURCE_HOST}:#{SOURCE_PORT}#{path}"
+      headers['X-Forward'] = "http://#{CONFIG['source_host']}:#{CONFIG['source_port']}#{path}"
+      headers['Cache-Control'] = 'no-transform' # avoid compression
       head(200)
+      @skip_validation = true
       return
     end
 
@@ -349,36 +322,56 @@ class ApplicationController < ActionController::Base
       logger.debug "[backend] VOLLEY(lighttpd): #{path}"
       headers['X-Rewrite-URI'] = path
       headers['X-Rewrite-Host'] = CONFIG['x_rewrite_host']
+      headers['Cache-Control'] = 'no-transform' # avoid compression
       head(200)
+      @skip_validation = true
       return
     end
 
+    # nginx case
+    if CONFIG['use_nginx_redirect']
+      logger.debug "[backend] VOLLEY(nginx): #{path}"
+      headers['X-Accel-Redirect'] = "#{CONFIG['use_nginx_redirect']}/http/#{CONFIG['source_host']}:#{CONFIG['source_port']}#{path}"
+      headers['Cache-Control'] = 'no-transform' # avoid compression
+      head(200)
+      @skip_validation = true
+      return
+    end
+
+    volley_backend_path path
+  end
+
+  def volley_backend_path(path)
     logger.debug "[backend] VOLLEY: #{path}"
-    backend_http = Net::HTTP.new(SOURCE_HOST, SOURCE_PORT)
+    Suse::Backend.start_test_backend
+    backend_http = Net::HTTP.new(CONFIG['source_host'], CONFIG['source_port'])
     backend_http.read_timeout = 1000
 
-    file = Tempfile.new 'volley'
-    type = nil
-
+    # we have to be careful with object life cycle. the actual data is
+    # deleted once the tempfile is garbage collected, but isn't kept alive
+    # as the send_file function only references the path to it. So we keep it
+    # for ourselves. And once the controller is garbage collected, it should
+    # be fine to unlink the data
+    @volleyfile = Tempfile.new 'volley', :encoding => 'ascii-8bit'
     opts = { :url_based_filename => true }
-    
+
     backend_http.request_get(path) do |res|
       opts[:status] = res.code
       opts[:type] = res['Content-Type']
       res.read_body do |segment|
-        file.write(segment)
+        @volleyfile.write(segment)
       end
     end
-    opts[:length] = file.length
+    opts[:length] = @volleyfile.length
     # streaming makes it very hard for test cases to verify output
     opts[:stream] = false if Rails.env.test?
-    send_file(file.path, opts)
-    file.close
+    send_file(@volleyfile.path, opts)
+    # close the file so it's not staying in the file system
+    @volleyfile.close
   end
 
-  hide_action :download_request
   def download_request
-    file = Tempfile.new 'volley'
+    file = Tempfile.new 'volley', :encoding => 'ascii-8bit'
     b = request.body
     buffer = String.new
     while b.read(40960, buffer)
@@ -389,25 +382,36 @@ class ApplicationController < ActionController::Base
     file
   end
 
+  def get_request_path
+    path = request.path
+    query_string = request.query_string
+    if request.form_data?
+      # it's uncommon, but possible that we have both
+      query_string += "&" unless query_string.blank?
+      query_string += request.raw_post
+    end
+    query_string = "?" + query_string unless query_string.blank?
+    path + query_string 
+  end
+
   def pass_to_backend( path = nil )
 
-    unless path
-      path = request.path
-      if not request.query_string.blank?
-        path = path + '?'+request.query_string
-      elsif not request.env["rack.request.form_vars"].blank?
-        path = path + '?' + request.env["rack.request.form_vars"]
-      end
-    end
+    path ||= get_request_path
 
-    case request.method
-    when :get
+    if request.get? || request.head?
       forward_from_backend( path )
       return
+    end
+    case request.method_symbol
     when :post
-      file = download_request
-      response = Suse::Backend.post( path, file )
-      file.close!
+      # for form data we don't need to download anything
+      if request.form_data?
+        response = Suse::Backend.post( path, '', { 'Content-Type' => 'application/x-www-form-urlencoded' } )
+      else
+        file = download_request
+        response = Suse::Backend.post( path, file )
+        file.close!
+      end
     when :put
       file = download_request
       response = Suse::Backend.put( path, file )
@@ -416,181 +420,68 @@ class ApplicationController < ActionController::Base
       response = Suse::Backend.delete( path )
     end
 
-    send_data( response.body, :type => response.fetch( "content-type" ),
+    text = response.body
+    send_data( text, :type => response.fetch( "content-type" ),
       :disposition => "inline" )
+    return text
   end
   public :pass_to_backend
 
-  def strip_sensitive_data_from(request)
-    # Strip HTTP_AUTHORIZATION header that contains the user's password
-    # try to get it where mod_rewrite might have put it
-    request.env["X-HTTP_AUTHORIZATION"] = "STRIPPED" if request.env.has_key? "X-HTTP_AUTHORIZATION"
-    # for Apace/mod_fastcgi with -pass-header Authorization
-    request.env["Authorization"] = "STRIPPED" if request.env.has_key? "Authorization"
-    # this is the regular location
-    request.env["HTTP_AUTHORIZATION"] = "STRIPPED" if request.env.has_key? "HTTP_AUTHORIZATION"
-    return request
+  rescue_from ActiveRecord::RecordInvalid do |exception|
+    render_error status: 400, errorcode: "invalid_record", message: exception.record.errors.full_messages.join('\n')
   end
-  private :strip_sensitive_data_from
 
-  # default uses logger.fatal, but we have too many unknown object exceptions to make that useful
-  # in production
-  def log_error(exception)
-    case exception
-    when DbProject::UnknownObjectError, DbPackage::UnknownObjectError
-      logger.debug("\n#{exception.class} (#{exception.message}):\n  " +
-                   clean_backtrace(exception).join("\n  ") + "\n\n")
-    else
-      super
+  rescue_from ActiveXML::Transport::Error do |exception|
+    render_error status: exception.code, errorcode: "uncaught_exception", message: exception.summary
+  end
+
+  rescue_from Timeout::Error do |exception|
+    render_error status: 408, errorcode: "timeout_error", message: exception.message
+  end
+
+  rescue_from ActiveXML::ParseError do |exception|
+    render_error status: 400, errorcode: 'invalid_xml', message: "Invalid XML"
+  end
+
+  rescue_from APIException do |exception|
+    bt = exception.backtrace.join("\n")
+    logger.debug "#{exception.class.name} #{exception.message} #{bt}"
+    message = exception.message
+    if message.blank? || message == exception.class.name
+      message = exception.default_message
     end
+    render_error message: message, status: exception.status, errorcode: exception.errorcode
   end
 
-  def rescue_action_locally( exception )
-    # there is no point in answering HTML even for local usage - osc won't get it
-    rescue_action_in_public( exception )
-  end
-
-  def rescue_action_in_public( exception )
-    case exception
-    when Suse::Backend::HTTPError
-      xml = REXML::Document.new( exception.message.body )
-      http_status = xml.root.attributes['code']
-      unless xml.root.attributes.include? 'origin'
-        xml.root.add_attribute "origin", "backend"
+  rescue_from ActiveXML::Transport::Error do |exception|
+    text = exception.message
+    http_status = 500
+    begin
+      xml = ActiveXML::Node.new( text )
+      http_status = xml.value('code')
+      unless xml.has_attribute? 'origin'
+        xml.set_attribute "origin", "backend"
       end
-      xml_text = String.new
-      xml.write xml_text
-      render :text => xml_text, :status => http_status
-    when ActiveXML::Transport::NotFoundError
-      render_error :message => exception.message, :status => 404
-    when Suse::ValidationError
-      render_error :message => exception.message, :status => 400, :errorcode => 'validation_failed'
-    when InvalidHttpMethodError
-      render_error :message => exception.message, :errorcode => "invalid_http_method", :status => 400
-    when IllegalEncodingError
-      render_error :message => exception.message, :errorcode => "invalid_text_encoding", :status => 400
-    when Timeout::Error
-      render_error :message => "Timeout during progress", :status => 504, :errorcode => "timeout"
-    when DbPackage::SaveError
-      render_error :message => "Error saving package: #{exception.message}", :errorcode => "package_save_error", :status => 400
-    when DbProject::SaveError
-      render_error :message => "Error saving project: #{exception.message}", :errorcode => "project_save_error", :status => 400
-    when DbPackage::DeleteError
-      render_error :status => 400, :message => exception.message, :errorcode => "delete_error"
-    when IllegalRequestError
-      message = "Illegal request"
-      message = exception.message unless exception.message.nil?
-      render_error :status => 404, :errorcode => 'illegal_request',
-                   :message => message
-    when ActionController::RoutingError, ActiveRecord::RecordNotFound
-      render_error :message => exception.message, :status => 404, :errorcode => "not_found"
-    when ActionController::UnknownAction
-      render_error :message => exception.message, :status => 403, :errorcode => "unknown_action"
-    when ActionView::MissingTemplate
-      render_error :message => exception.message, :status => 404, :errorcode => "not_found"
-    when MissingParameterError
-      render_error :status => 400, :message => exception.message, :errorcode => "missing_parameter"
-    when DbProject::CycleError
-      render_error :status => 400, :message => exception.message, :errorcode => "project_cycle"
-    when DbProject::DeleteError
-      render_error :status => 400, :message => exception.message, :errorcode => "delete_error"
-    when IssueTracker::UnknownObjectError
-      render_error :status => 400, :message => exception.message, :errorcode => "unknown_issue_tracker"
-
-    # unknown objects and no read access permission are handled in the same way by default
-    when DbProject::ReadAccessError, DbProject::UnknownObjectError
-      logger.error "ReadAccessError: #{exception.message}"
-      if exception.message == ""
-        render_error :status => 404, :errorcode => 'unknown_project',
-          :message => "Unknown project"
-      else
-        render_error :status => 404, :errorcode => 'unknown_project',
-          :message => exception.message
-      end
-    when DbPackage::ReadAccessError, DbPackage::UnknownObjectError
-      logger.error "ReadAccessError: #{exception.message}"
-      if exception.message == ""
-        render_error :status => 404, :errorcode => 'unknown_package',
-          :message => "Unknown package"
-      else
-        render_error :status => 404, :errorcode => 'unknown_package',
-          :message => exception.message
-      end
-    when DbPackage::ReadSourceAccessError
-      logger.error "ReadSourceAccessError: #{exception.message}"
-      if exception.message == ""
-        render_error :status => 403, :errorcode => 'source_access_no_permission',
-          :message => "Source Access not alllowed"
-      else
-        render_error :status => 403, :errorcode => 'source_access_no_permission',
-          :message => exception.message
-      end
-    when TagNotFoundError
-      logger.error "TagNotFoundError: #{exception.message}"
-      if exception.message == ""
-        render_error :status => 404, :errorcode => 'tag_not_found',
-          :message => "Tag not found"
-      else
-        render_error :status => 404, :errorcode => 'tag_not_found',
-          :message => exception.message
-      end
-    when IssueNotFoundError
-      logger.error "IssueTrackerNotFoundError: #{exception.message}"
-      if exception.message == ""
-        render_error :status => 404, :errorcode => 'issue_not_found',
-          :message => "Issue not found"
-      else
-        render_error :status => 404, :errorcode => 'issue_not_found',
-          :message => exception.message
-      end
-    when IssueTrackerNotFoundError
-      logger.error "IssueTrackerNotFoundError: #{exception.message}"
-      if exception.message == ""
-        render_error :status => 404, :errorcode => 'issue_tracker_not_found',
-          :message => "Issue Tracker not found"
-      else
-        render_error :status => 404, :errorcode => 'issue_tracker_not_found',
-          :message => exception.message
-      end
-    when UserNotFoundError
-      logger.error "UserNotFoundError: #{exception.message}"
-      if exception.message == ""
-        render_error :status => 404, :errorcode => 'user_not_found',
-          :message => "User not found"
-      else
-        render_error :status => 404, :errorcode => 'user_not_found',
-          :message => exception.message
-      end
-    when GroupNotFoundError
-      logger.error "GroupNotFoundError: #{exception.message}"
-      if exception.message == ""
-        render_error :status => 404, :errorcode => 'group_not_found',
-          :message => "Group not found"
-      else
-        render_error :status => 404, :errorcode => 'group_not_found',
-          :message => exception.message
-      end
-    when RoleNotFoundError
-      logger.error "RoleNotFoundError: #{exception.message}"
-      if exception.message == ""
-        render_error :status => 404, :errorcode => 'role_not_found',
-          :message => "Role not found"
-      else
-        render_error :status => 404, :errorcode => 'role_not_found',
-          :message => exception.message
-      end
-    else
-      if send_exception_mail?
-        ExceptionNotifier.deliver_exception_notification(exception, self, strip_sensitive_data_from(request), {})
-      end
-      render_error :message => "Uncaught exception: #{exception.message}", :status => 400
+      text = xml.dump_xml
+    rescue ActiveXML::ParseError
     end
+    render text: text, status: http_status
   end
 
-  def send_exception_mail?
-    return false if Rails.env.test?
-    return false unless ExceptionNotifier.exception_recipients
-    return !local_request? && !Rails.env.development?
+  rescue_from Project::WritePermissionError do |exception|
+    render_error :status => 403, :errorcode => "modify_project_no_permission", :message => exception.message
+  end
+
+  rescue_from Package::WritePermissionError do |exception|
+    render_error :status => 403, :errorcode => "modify_package_no_permission", :message => exception.message
+  end
+
+  rescue_from ActiveXML::Transport::NotFoundError, ActiveRecord::RecordNotFound do |exception|
+    render_error message: exception.message, status: 404, errorcode: 'not_found'
+  end
+
+  rescue_from ActionController::RoutingError do |exception|
+    render_error message: exception.message, status: 404, errorcode: 'not_route'
   end
 
   def permissions
@@ -601,19 +492,48 @@ class ApplicationController < ActionController::Base
     return @http_user
   end
 
-  def required_parameters(*parameters)
-    parameters.each do |parameter|
-      unless params.include? parameter.to_s
-        raise MissingParameterError, "Required Parameter #{parameter} missing"
-      end
+  def require_parameter!(parameter)
+    unless params.include? parameter.to_s
+      raise MissingParameterError, "Required Parameter #{parameter} missing"
     end
   end
 
-  def valid_http_methods(*methods)
-    list = methods.map {|x| x.to_s.downcase.to_s}
-    unless methods.include? request.method
-      raise InvalidHttpMethodError, "Invalid HTTP Method: #{request.method.to_s.upcase}"
+  def required_parameters(*parameters)
+    parameters.each { |parameter| require_parameter!(parameter) }
+  end
+
+  def gather_exception_defaults(opt)
+    if opt[:message]
+      @summary = opt[:message]
+    elsif @exception
+      @summary = @exception.message
     end
+
+    @exception = opt[:exception]
+    @errorcode = opt[:errorcode]
+
+    if opt[:status]
+      @status = opt[:status].to_i
+    else
+      @status = 400
+    end
+
+    if @status == 401
+      response.headers["WWW-Authenticate"] = 'basic realm="API login"'
+    end
+    if @status == 404
+      @summary ||= "Not found"
+      @errorcode ||= "not_found"
+    end
+
+    @summary ||= "Internal Server Error"
+
+    if @exception
+      @errorcode ||= 'uncaught_exception'
+    else
+      @errorcode ||= 'unknown'
+    end
+
   end
 
   def render_error( opt = {} )
@@ -623,90 +543,51 @@ class ApplicationController < ActionController::Base
       request.body.size if request.body.respond_to? 'size'
     end
 
-    if opt[:status]
-      if opt[:status].to_i == 401
-        response.headers["WWW-Authenticate"] = 'basic realm="API login"'
-      end
-    else
-      opt[:status] = 400
-    end
+    # avoid double render error
+    self.response_body = nil
+    gather_exception_defaults(opt)
 
-    @exception = opt[:exception]
-    @details = opt[:details]
-
-    @summary = "Internal Server Error"
-    if opt[:message]
-      @summary = opt[:message]
-    elsif @exception
-      @summary = @exception.message
-    end
-
-    if opt[:errorcode]
-      @errorcode = opt[:errorcode]
-    elsif @exception
-      @errorcode = 'uncaught_exception'
-    else
-      @errorcode = 'unknown'
-    end
-
-    # if the exception was raised inside a template (-> @template.first_render != nil),
-    # the instance variables created in here will not be injected into the template
-    # object, so we have to do it manually
-    # This is commented out, since it does not work with Rails 2.3 anymore and is also not needed there
-    #    if @template.first_render
-    #      logger.debug "injecting error instance variables into template object"
-    #      %w{@summary @errorcode @exception}.each do |var|
-    #        @template.instance_variable_set var, eval(var) if @template.instance_variable_get(var).nil?
-    #      end
-    #    end
-
-    # on some occasions the status template doesn't receive the instance variables it needs
-    # unless render_to_string is called before (which is an ugly workaround but I don't have any
-    # idea where to start searching for the real problem)
-    render_to_string :template => 'status'
-
-    logger.info "errorcode '#{@errorcode}' - #{@summary}"
     response.headers['X-Opensuse-Errorcode'] = @errorcode
-    render :template => 'status', :status => opt[:status], :layout => false
+    respond_to do |format|
+      format.xml { render template: 'status', status: @status }
+      format.json { render json: { errorcode: @errorcode, summary: @summary }, status: @status }
+      format.html { render template: 'webui/error', status: @status }
+    end
+  end
+
+  class AnonymousUser < APIException
+   setup 401
+  end
+
+  def be_not_nobody!
+    if !User.current || User.current.is_nobody?
+      raise AnonymousUser.new  "Anonymous user is not allowed here - please login"
+    end 
   end
 
   def render_ok(opt={})
     # keep compatible to old call style
-    opt = {:details => opt} if opt.kind_of? String
-
     @errorcode = "ok"
     @summary = "Ok"
-    @details = opt[:details] if opt[:details]
     @data = opt[:data] if opt[:data]
-    render :template => 'status', :status => 200, :layout => false
+    render :template => 'status', :status => 200
   end
 
   def render_invoked(opt={})
     @errorcode = "invoked"
     @summary = "Job invoked"
-    @details = opt[:details] if opt[:details]
     @data = opt[:data] if opt[:data]
-    render :template => 'status', :status => 200, :layout => false
+    render :template => 'status', :status => 200
   end
 
   def backend
-    @backend ||= ActiveXML::Config.transport_for :bsrequest
+    Suse::Backend.start_test_backend if Rails.env.test?
+    @backend ||= ActiveXML.backend
   end
 
   def backend_get( path )
     # TODO: check why not using SUSE:Backend::get
     backend.direct_http( URI(path) )
-  end
-
-  def backend_put( path, data )
-    backend.direct_http( URI(path), :method => "PUT", :data => data )
-  end
-
-  def backend_post( path, data )
-    backend.set_additional_header("Content-Length", data.size.to_s())
-    response = backend.direct_http( URI(path), :method => "POST", :data => data )
-    backend.delete_additional_header("Content-Length")
-    return response
   end
 
   # Passes control to subroutines determined by action and a request parameter. By
@@ -718,89 +599,84 @@ class ApplicationController < ActionController::Base
   # If you call dispatch_command from an action 'index' with the query parameter cmd
   # having the value 'show', it will call the method 'index_show'
   #
-  def dispatch_command(opt={})
-    defaults = {
-      :cmd_param => :cmd
-    }
-    opt = defaults.merge opt
-    unless params.has_key? opt[:cmd_param]
-      render_error :status => 400, :errorcode => "missing_parameter'",
-        :message => "Missing parameter '#{opt[:cmd_param]}'"
-      return
-    end
-
-    cmd_handler = "#{params[:action]}_#{params[opt[:cmd_param]]}"
+  def dispatch_command(action, cmd)
+    cmd_handler = "#{action}_#{cmd}"
     logger.debug "dispatch_command: trying to call method '#{cmd_handler}'"
-
-    if not self.respond_to? cmd_handler, true
-      render_error :status => 400, :errorcode => "unknown_command",
-        :message => "Unknown command '#{params[opt[:cmd_param]]}' for path #{request.path}"
-      return
-    end
-
     __send__ cmd_handler
   end
-  public :dispatch_command
-  hide_action :dispatch_command
 
   def build_query_from_hash(hash, key_list=nil)
-    key_list ||= hash.keys
-    query = key_list.map do |key|
-      if hash.has_key?(key)
-        str = hash[key].to_s
-        begin
-          Iconv.iconv( "UCS4", "UTF-8", str )
-        rescue
-          raise IllegalEncodingError.new('Illegal encoded parameter')
-        end
+    Suse::Backend.build_query_from_hash(hash, key_list)
+  end
 
-        if hash[key].nil?
-          # just a boolean argument ?
-          [hash[key]].flatten.map {|x| "#{key}"}.join("&")
+  # Method for mapping actions in a controller to (XML) schemas based on request
+  # method (GET, PUT, POST, etc.). Example:
+  #
+  # class UserController < ActionController::Base
+  #   # Validation on request data is performed based on the request type and the
+  #   # provided schema name. Validation for a GET request only checks the XML response,
+  #   # whereas a POST request may want to check the (user-supplied) request as well as the
+  #   # own response to the request.
+  #
+  #   validate_action :index => {:method => :get, :response => :users}
+  #   validate_action :edit =>  {:method => :put, :request => :user, :response => :status}
+  #
+  #   def index
+  #     # return all users ...
+  #   end
+  #
+  #   def edit
+  #     if @request.put?
+  #       # request data has already been validated here
+  #     end
+  #   end
+  # end
+  def self.validate_action(opt)
+    opt.each do |action, action_opt|
+      Suse::Validator.add_schema_mapping(self.controller_path, action, action_opt)
+    end
+  end
+
+  class LazyRequestReader
+    def initialize(req)
+      @req = req
+    end
+    def to_s
+      @req.raw_post
+    end
+  end
+
+  def validate_xml_request(method = nil)
+    opt = params()
+    opt[:method] = method || request.method.to_s
+    opt[:type] = 'request'
+    logger.debug "Validate XML request: #{request}"
+    Suse::Validator.validate(opt, LazyRequestReader.new(request))
+  end
+
+  def validate_xml_response
+    return if @skip_validation
+    if request.format != 'json' && response.status.to_s[0..2] == '200' && response.headers['Content-Type'] !~ /.*\/json/i && response.headers['Content-Disposition'] != 'attachment'
+      opt = params()
+      opt[:method] = request.method.to_s
+      opt[:type] = 'response'
+      ms = Benchmark.ms do
+        if response.body.respond_to? :call
+          sio = StringIO.new()
+          response.body.call(nil, sio) # send_file can return a block that takes |response, output|
+          str = sio.string
         else
-          [hash[key]].flatten.map {|x| "#{key}=#{CGI.escape(hash[key].to_s)}"}.join("&")
+          str = response.body
         end
+        Suse::Validator.validate(opt, str)
       end
+      logger.debug "Validate XML response: #{response} took #{Integer(ms + 0.5)}ms"
     end
-
-    if query.empty?
-      return ""
-    else
-      return "?"+query.compact.join('&')
-    end
-  end
-
-  def query_parms_missing?(*list)
-    missing = Array.new
-    for param in list
-      missing << param unless params.has_key? param
-    end
-
-    if missing.length > 0
-      render_error :status => 400, :errorcode => "missing_query_parameters",
-        :message => "Missing query parameters: #{missing.join ', '}"
-    end
-    return false
-  end
-
-  def min_votes_for_rating
-    return CONFIG["min_votes_for_rating"]
   end
 
   private
   def shutup_rails
-    Rails.cache.silence!
-  end
-
-  def action_fragment_key( options )
-    # this is for customizing the path/filename of cached files (cached by the
-    # action_cache plugin). here we want to include params in the filename
-    par = params
-    par.delete 'controller'
-    par.delete 'action'
-    pairs = []
-    par.sort.each { |pair| pairs << pair.join('=') }
-    url_for( options ).split('://').last + "/"+ pairs.join(',').gsub(' ', '-')
+    Rails.cache.silence! unless Rails.env.development?
   end
 
 end

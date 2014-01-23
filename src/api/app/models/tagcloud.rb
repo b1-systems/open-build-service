@@ -27,22 +27,16 @@ class Tagcloud
 
     elsif opt[:scope] == "user"
       user = opt[:user]
-      @tags = user.tags.find(:all, :group => "name")
+      @tags = user.tags.group(:name)
       #initialize the tag count in the user context
       @tags.each do |tag|
         tag.count(:scope => "user", :user => user)
       end
 
     else
-#      @tags = Tag.find(:all, :group => "id")
-      @tags = Tag.find( :all,
-                 :from => 'tags, taggings',
-                 :select => 'tags.*, count(tags.id) AS sql_count',
-                 :conditions => 'tags.id=taggings.tag_id',
-                 :group => 'tags.id'
-                 )
+      @tags = Tag.includes(:taggings)
       @tags.each do |tag|
-        tag.cached_count = tag.sql_count.to_i
+        tag.cached_count = tag.taggings.count
       end
 
       #initialize the tag count and remove unused tags from the list
@@ -164,7 +158,7 @@ class Tagcloud
     range = 1 if @max == @min
     tagcloud = Hash.new
     @tags.each do |tag|
-      ratio = (tag.count - @min.to_f) / range;
+      ratio = (tag.count - @min.to_f) / range
       fsize = (0 + steps) * ratio
       tagcloud[tag.name] = fsize.round
     end

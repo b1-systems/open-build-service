@@ -1,101 +1,136 @@
-require File.expand_path(File.dirname(__FILE__) + "/..") + "/test_helper"
+require File.expand_path(File.dirname(__FILE__) + '/..') + '/test_helper'
 require 'source_controller'
 
-class InterConnectTests < ActionController::IntegrationTest 
+class InterConnectTests < ActionDispatch::IntegrationTest 
 
   fixtures :all
    
+  def setup
+    wait_for_scheduler_start
+  end
+
   def test_anonymous_access
-    ActionController::IntegrationTest::reset_auth 
-    get "/public/lastevents"
+    get '/public/lastevents' # OBS 2.1
     assert_response :success
-    post "/public/lastevents", nil
+    assert_xml_tag :tag => 'events', :attributes => {:sync => 'lost' }
+    post '/public/lastevents?start=1'
     assert_response :success
+    assert_xml_tag :tag => 'event', :attributes => {:type => 'project' }
+    assert_no_xml_tag :tag => 'events', :attributes => {:sync => 'lost' }
+
+    post '/public/lastevents', nil # OBS 2.3 and later
+    assert_response :success
+    assert_xml_tag :tag => 'events', :attributes => {:sync => 'lost' }
+    post '/public/lastevents', :start => '1'
+    assert_response :success
+    assert_xml_tag :tag => 'event', :attributes => {:type => 'project' }
+    assert_no_xml_tag :tag => 'events', :attributes => {:sync => 'lost' }
 
     # direct access
-    get "/public/source/BaseDistro"
+    get '/public/source/BaseDistro'
     assert_response :success
-    get "/public/source/BaseDistro/_meta"
+    get '/public/source/BaseDistro/_meta'
     assert_response :success
-    get "/public/source/BaseDistro/_config"
+    get '/public/source/BaseDistro/_config'
     assert_response :success
-    get "/public/source/BaseDistro/_pubkey"
+    get '/public/source/BaseDistro/_pubkey'
     assert_response :success
-    get "/public/source/BaseDistro/pack1"
+    get '/public/source/BaseDistro/pack1'
     assert_response :success
-    get "/public/source/BaseDistro/pack1?expand"
+    get '/public/source/BaseDistro/pack1?expand'
     assert_response :success
-    get "/public/source/BaseDistro/pack1?expand=1"
+    get '/public/source/BaseDistro/pack1?expand=1'
     assert_response :success
-    get "/public/source/BaseDistro/pack1?view=cpio"
+    get '/public/source/BaseDistro/pack1?view=cpio'
     assert_response :success
-    get "/public/source/BaseDistro/pack1/_meta"
+    get '/public/source/BaseDistro/pack1/_meta'
     assert_response :success
-    get "/public/source/BaseDistro/pack1/my_file"
+    get '/public/source/BaseDistro/pack1/my_file'
     assert_response :success
 
     # direct access to remote instance
-    get "/public/source/RemoteInstance:BaseDistro"
+    get '/public/source/RemoteInstance:BaseDistro'
     assert_response :success
-    get "/public/source/RemoteInstance:BaseDistro/_meta"
+    get '/public/source/RemoteInstance:BaseDistro/_meta'
     assert_response :success
-    get "/public/source/RemoteInstance:BaseDistro/_config"
+    get '/public/source/RemoteInstance:BaseDistro/_config'
     assert_response :success
-    get "/public/source/RemoteInstance:BaseDistro/_pubkey"
+    get '/public/source/RemoteInstance:BaseDistro/_pubkey'
     assert_response :success
-    get "/public/source/RemoteInstance:BaseDistro/pack1"
+    get '/public/source/RemoteInstance:BaseDistro/pack1'
     assert_response :success
-    get "/public/source/RemoteInstance:BaseDistro/pack1?expand"
+    get '/public/source/RemoteInstance:BaseDistro/pack1?expand'
     assert_response :success
-    get "/public/source/RemoteInstance:BaseDistro/pack1?expand=1"
+    get '/public/source/RemoteInstance:BaseDistro/pack1?expand=1'
     assert_response :success
-    get "/public/source/RemoteInstance:BaseDistro/pack1/_meta"
+    get '/public/source/RemoteInstance:BaseDistro/pack1/_meta'
     assert_response :success
-    get "/public/source/RemoteInstance:BaseDistro/pack1/my_file"
+    get '/public/source/RemoteInstance:BaseDistro/pack1/my_file'
     assert_response :success
 
     # public binary access
-    get "/public/build/home:Iggy/10.2/i586/_repository?view=cache"
+    get '/public/build/home:Iggy/10.2/i586/_repository?view=cache'
     assert_response :success
-    get "/public/build/home:Iggy/10.2/i586/_repository?view=solvstate"
+    get '/public/build/home:Iggy/10.2/i586/_repository?view=solvstate'
     assert_response :success
-    get "/public/build/home:Iggy/10.2/i586/_repository?view=binaryversions"
+    get '/public/build/home:Iggy/10.2/i586/_repository?view=binaryversions'
     assert_response :success
-    get "/public/build/home:Iggy/10.2/i586/pack1"
+    get '/public/build/home:Iggy/10.2/i586/pack1'
     assert_response :success
-    get "/public/build/home:Iggy/10.2/i586/pack1?view=cpio"
+    get '/public/build/home:Iggy/10.2/i586/pack1?view=cpio'
     assert_response :success
-    get "/public/build/home:Iggy/10.2/i586/pack1?view=binaryversions"
+    get '/public/build/home:Iggy/10.2/i586/pack1?view=binaryversions'
     assert_response :success
 
     # access to local project with project link to remote
-    get "/public/source/UseRemoteInstance"
+    get '/public/source/UseRemoteInstance'
     assert_response :success
-    get "/public/source/UseRemoteInstance/_meta"
+    get '/public/source/UseRemoteInstance/_meta'
     assert_response :success
-    get "/public/source/UseRemoteInstance/pack1"
+    get '/public/source/UseRemoteInstance/pack1'
     assert_response :success
-    get "/public/source/UseRemoteInstance/pack1?expand"
+    get '/public/source/UseRemoteInstance/pack1?expand'
     assert_response :success
-    get "/public/source/UseRemoteInstance/pack1?expand=1"
+    get '/public/source/UseRemoteInstance/pack1?expand=1'
     assert_response :success
-    get "/public/source/UseRemoteInstance/pack1/_meta"
+    get '/public/source/UseRemoteInstance/pack1/_meta'
     assert_response :success
-    get "/public/source/UseRemoteInstance/pack1/my_file"
+    get '/public/source/UseRemoteInstance/pack1/my_file'
     assert_response :success
-    get "/public/source/UseRemoteInstance/NotExisting"
+    get '/public/source/UseRemoteInstance/NotExisting'
     assert_response 404
-    get "/public/source/UseRemoteInstance/NotExisting/_meta"
+    get '/public/source/UseRemoteInstance/NotExisting/_meta'
     assert_response 404
-    get "/public/source/UseRemoteInstance/NotExisting/my_file"
+    get '/public/source/UseRemoteInstance/NotExisting/my_file'
     assert_response 404
   end
 
+  def test_backend_support
+    get '/public/source/UseRemoteInstance?package=pack1&package=pack2&view=info'
+    assert_response :success
+    assert_xml_tag( :tag => 'sourceinfo', :attributes => { :package => 'pack1' } )
+    assert_xml_tag( :tag => 'sourceinfo', :attributes => { :package => 'pack2' } )
+    assert_no_xml_tag( :tag => 'sourceinfo', :attributes => { :package => 'pack3' } )
+
+    # with credentials
+    login_tom
+    get '/source/UseRemoteInstance?package=pack1&package=pack2&view=info'
+    assert_response :success
+    assert_xml_tag( :tag => 'sourceinfo', :attributes => { :package => 'pack1' } )
+    assert_xml_tag( :tag => 'sourceinfo', :attributes => { :package => 'pack2' } )
+    assert_no_xml_tag( :tag => 'sourceinfo', :attributes => { :package => 'pack3' } )
+  end
+
+  def test_backend_post_with_forms
+    post '/public/lastevents', 'filter=pack1&filter=pack2'
+    assert_response :success
+  end
+
   def test_use_remote_repositories
-    prepare_request_with_user "tom", "thunder"
+    login_tom
 
     # use repo
-    put "/source/home:tom:testing/_meta", '<project name="home:tom:testing">
+    put '/source/home:tom:testing/_meta', '<project name="home:tom:testing">
 	  <title />
 	  <description />
 	  <repository name="repo">
@@ -106,177 +141,206 @@ class InterConnectTests < ActionController::IntegrationTest
     assert_response :success
 
     # try to update remote project container
-    prepare_request_with_user "king", "sunflower"
-    get "/source/RemoteInstance/_meta"
+    login_king
+    get '/source/RemoteInstance/_meta'
     assert_response :success
-    put "/source/RemoteInstance/_meta", @response.body.dup
+    put '/source/RemoteInstance/_meta', @response.body.dup
     assert_response :success
 
     # cleanup     
-    delete "/source/home:tom:testing"
+    delete '/source/home:tom:testing'
     assert_response :success
   end
 
   def test_read_and_command_tests
-    prepare_request_with_user "tom", "thunder"
-    get "/source"
+    login_tom
+    get '/source'
     assert_response :success
 
     # direct access to remote instance
-    get "/source/RemoteInstance:BaseDistro"
+    get '/source/RemoteInstance:BaseDistro'
     assert_response :success
-    get "/source/RemoteInstance:BaseDistro/_meta"
+    get '/source/RemoteInstance:BaseDistro/_meta'
     assert_response :success
-    get "/source/RemoteInstance:BaseDistro/_pubkey"
+    get '/source/RemoteInstance:BaseDistro/_pubkey'
     assert_response :success
-    get "/source/RemoteInstance:BaseDistro/pack1"
+    get '/source/RemoteInstance:BaseDistro/pack1'
     assert_response :success
-    get "/source/RemoteInstance:BaseDistro/pack1/_meta"
+    get '/source/RemoteInstance:BaseDistro/pack1/_meta'
     assert_response :success
-    get "/source/RemoteInstance:BaseDistro/pack1/my_file"
+    get '/source/RemoteInstance:BaseDistro/pack1/my_file'
     assert_response :success
-    post "/source/RemoteInstance:BaseDistro/pack1", :cmd => "showlinked"
+    post '/source/RemoteInstance:BaseDistro/pack1', :cmd => 'showlinked'
     assert_response :success
-    post "/source/RemoteInstance:BaseDistro/pack1", :cmd => "branch"
+    post '/source/RemoteInstance:BaseDistro/pack1', :cmd => 'branch'
     assert_response :success
+    get '/source/RemoteInstance:BaseDistro2.0:LinkedUpdateProject'
+    assert_response :success
+    assert_xml_tag( :tag => 'directory', :children => { :count => 0 } ) # backend does not provide a counter
+    get '/source/RemoteInstance:BaseDistro2.0:LinkedUpdateProject?expand=1'
+    assert_response :success
+    assert_xml_tag( :tag => 'entry', :attributes => { :name => 'pack2', :originproject => 'RemoteInstance:BaseDistro2.0' } )
+    assert_xml_tag( :tag => 'entry', :attributes => { :name => 'pack2.linked', :originproject => 'RemoteInstance:BaseDistro2.0' } )
     # test binary operations
-    prepare_request_with_user "king", "sunflower"
-    post "/build/RemoteInstance:BaseDistro", :cmd => "wipe", :package => "pack1"
+    login_king
+    post '/build/RemoteInstance:BaseDistro', :cmd => 'wipe', :package => 'pack1'
     assert_response 403
-    post "/build/RemoteInstance:BaseDistro", :cmd => "rebuild", :package => "pack1"
+    post '/build/RemoteInstance:BaseDistro', :cmd => 'rebuild', :package => 'pack1'
     assert_response 403
-    post "/build/RemoteInstance:BaseDistro", :cmd => "wipe"
+    post '/build/RemoteInstance:BaseDistro', :cmd => 'wipe'
     assert_response 403
-    post "/build/RemoteInstance:BaseDistro", :cmd => "rebuild"
+    post '/build/RemoteInstance:BaseDistro', :cmd => 'rebuild'
     assert_response 403
     # the webui requires this for repository browsing in advanced repo add mask
-    get "/build/RemoteInstance:BaseDistro"
+    get '/build/RemoteInstance:BaseDistro'
     assert_response :success
-    get "/build/RemoteInstance:BaseDistro/BaseDistro_repo"
+    get '/build/RemoteInstance:BaseDistro/BaseDistro_repo'
     assert_response :success
-    get "/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/pack2/package-1.0-1.i586.rpm"
+    get '/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/pack2/package-1.0-1.i586.rpm'
     assert_response :success
-    get "/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository"
+    get '/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository'
     assert_response :success
-    get "/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository/package"
+    get '/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository/package'
     assert_response :success
-    get "/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586"
+    get '/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586'
     assert_response :success
-    get "/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/pack2"
+    get '/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/pack2'
     assert_response :success
-    get "/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/pack2?view=cpio"
+    get '/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/pack2?view=cpio'
     assert_response :success
-    get "/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/pack2?view=binaryversions"
+    get '/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/pack2?view=binaryversions'
     assert_response :success
-    get "/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository"
+    get '/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository'
     assert_response :success
-    get "/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository?view=cache"
+    get '/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository?view=cache'
     assert_response :success
-    get "/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository?view=solvstate"
+    get '/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository?view=solvstate'
     assert_response :success
-    get "/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository?view=binaryversions"
+    get '/build/RemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository?view=binaryversions'
     assert_response :success
 
     # direct access to remote instance, not existing project/package
-    prepare_request_with_user "tom", "thunder"
-    get "/source/RemoteInstance:NotExisting/_meta"
+    login_tom
+    get '/source/RemoteInstance:NotExisting/_meta'
     assert_response 404
-    get "/source/RemoteInstance:NotExisting/pack1"
+    get '/source/RemoteInstance:NotExisting/pack1'
     assert_response 404
-    get "/source/RemoteInstance:NotExisting/pack1/_meta"
+    get '/source/RemoteInstance:NotExisting/pack1/_meta'
     assert_response 404
-    get "/source/RemoteInstance:NotExisting/pack1/my_file"
+    get '/source/RemoteInstance:NotExisting/pack1/my_file'
     assert_response 404
-    get "/source/RemoteInstance:BaseDistro/NotExisting"
+    get '/source/RemoteInstance:BaseDistro/NotExisting'
     assert_response 404
-    get "/source/RemoteInstance:BaseDistro/NotExisting/_meta"
+    get '/source/RemoteInstance:BaseDistro/NotExisting/_meta'
     assert_response 404
-    get "/source/RemoteInstance:BaseDistro/NotExisting/my_file"
+    get '/source/RemoteInstance:BaseDistro/NotExisting/my_file'
     assert_response 404
-    get "/source/RemoteInstance:kde4/_pubkey"
+    get '/source/RemoteInstance:kde4/_pubkey'
     assert_response 404
     assert_match(/no pubkey available/, @response.body)
 
-    # access to local project with project link to remote
-    get "/source/UseRemoteInstance"
-    assert_response :success
-    get "/source/UseRemoteInstance/_meta"
-    assert_response :success
-    get "/source/UseRemoteInstance/pack1"
-    assert_response :success
-    get "/source/UseRemoteInstance/pack1/_meta"
-    assert_response :success
-    get "/source/UseRemoteInstance/pack1/my_file"
-    assert_response :success
-    post "/source/UseRemoteInstance/pack1", :cmd => "showlinked"
-    assert_response :success
-    post "/source/UseRemoteInstance/pack1", :cmd => "branch"
-    assert_response :success
-    get "/source/UseRemoteInstance/NotExisting"
+    # access to local project with project link to remote, and via a local indirection
+    %w(UseRemoteInstance UseRemoteInstanceIndirect).each do |project|
+      get "/source/#{project}"
+      assert_response :success
+      get "/source/#{project}/_meta"
+      assert_response :success
+      get "/source/#{project}/pack1"
+      assert_response :success
+      get "/source/#{project}/pack1/_meta"
+      assert_response :success
+      get "/source/#{project}/pack1/my_file"
+      assert_response :success
+      post "/source/#{project}/pack1", :cmd => 'showlinked'
+      assert_response :success
+      post "/source/#{project}/pack1", :cmd => 'branch'
+      assert_response :success
+      get "/source/#{project}"
+      assert_response :success
+      assert_xml_tag( :tag => 'directory', :attributes => { :count => '0' } )
+      get "/source/#{project}?expand=1"
+      assert_response :success
+if $ENABLE_BROKEN_TEST
+#FIXME2.4: remote packages get not added yet.
+      assert_xml_tag( :tag => 'directory', :attributes => { :count => '1' } )
+      assert_xml_tag( :tag => 'entry', :attributes => { :name => 'pack1', :originproject => 'BaseDistro2.0' } )
+end
+    end
+
+    # check access to binaries of remote instance
+    get '/build/UseRemoteInstance/pop/i586/pack1/_log'
+    assert_response 400
+    assert_match(/remote error: pack1  no logfile/, @response.body) # we had no build, but request reached backend
+    # test source modifications
+    post '/build/UseRemoteInstance/pack1', :cmd => 'set_flag'
+    assert_response 403
+    post '/build/UseRemoteInstance/pack1', :cmd => 'unlock'
+    assert_response 403
+    get '/source/UseRemoteInstance/NotExisting'
     assert_response 404
-    get "/source/UseRemoteInstance/NotExisting/_meta"
+    get '/source/UseRemoteInstance/NotExisting/_meta'
     assert_response 404
-    get "/source/UseRemoteInstance/NotExisting/my_file"
+    get '/source/UseRemoteInstance/NotExisting/my_file'
     assert_response 404
     # test binary operations
-    prepare_request_with_user "king", "sunflower"
-    post "/build/UseRemoteInstance", :cmd => "wipe", :package => "pack1"
+    login_king
+    post '/build/UseRemoteInstance', :cmd => 'wipe', :package => 'pack1'
     assert_response :success
-    post "/build/UseRemoteInstance", :cmd => "rebuild", :package => "pack1"
+    post '/build/UseRemoteInstance', :cmd => 'rebuild', :package => 'pack1'
     assert_response :success
-    post "/build/UseRemoteInstance", :cmd => "wipe"
+    post '/build/UseRemoteInstance', :cmd => 'wipe'
     assert_response :success
-    post "/build/UseRemoteInstance", :cmd => "rebuild"
+    post '/build/UseRemoteInstance', :cmd => 'rebuild'
     assert_response :success
 
     # access via a local package linking to a remote package
-    prepare_request_with_user "tom", "thunder"
-    get "/source/LocalProject/remotepackage"
+    login_tom
+    get '/source/LocalProject/remotepackage'
     assert_response :success
-    ret = ActiveXML::XMLNode.new @response.body
-    xsrcmd5 = ret.linkinfo.xsrcmd5
+    ret = Xmlhash.parse(@response.body)['linkinfo']
+    xsrcmd5 = ret['xsrcmd5']
     assert_not_nil xsrcmd5
-    post "/source/LocalProject/remotepackage", :cmd => "showlinked"
+    post '/source/LocalProject/remotepackage', :cmd => 'showlinked'
     assert_response :success
-    get "/source/LocalProject/remotepackage/_meta"
+    get '/source/LocalProject/remotepackage/_meta'
     assert_response :success
-    get "/source/LocalProject/remotepackage/my_file"
+    get '/source/LocalProject/remotepackage/my_file'
     assert_response 404
-    get "/source/LocalProject/remotepackage/_link"
+    get '/source/LocalProject/remotepackage/_link'
     assert_response :success
-    ret = ActiveXML::XMLNode.new @response.body
-    assert_equal ret.project, "RemoteInstance:BaseDistro"
-    assert_equal ret.package, "pack1"
+    ret = Xmlhash.parse(@response.body)
+    assert_equal 'RemoteInstance:BaseDistro', ret['project']
+    assert_equal 'pack1', ret['package']
     get "/source/LocalProject/remotepackage/my_file?rev=#{xsrcmd5}"
     assert_response :success
-    post "/source/LocalProject/remotepackage", :cmd => "branch"
+    post '/source/LocalProject/remotepackage', :cmd => 'branch'
     assert_response :success
     get "/source/LocalProject/remotepackage/_link?rev=#{xsrcmd5}"
     assert_response 404
-    get "/source/LocalProject/remotepackage/not_existing"
+    get '/source/LocalProject/remotepackage/not_existing'
     assert_response 404
     # test binary operations
-    prepare_request_with_user "king", "sunflower"
-    post "/build/LocalProject", :cmd => "wipe", :package => "remotepackage"
+    login_king
+    post '/build/LocalProject', :cmd => 'wipe', :package => 'remotepackage'
     assert_response :success
-    post "/build/LocalProject", :cmd => "rebuild", :package => "remotepackage"
+    post '/build/LocalProject', :cmd => 'rebuild', :package => 'remotepackage'
     assert_response :success
-    post "/build/LocalProject", :cmd => "wipe"
+    post '/build/LocalProject', :cmd => 'wipe'
     assert_response :success
-    post "/build/LocalProject", :cmd => "rebuild"
+    post '/build/LocalProject', :cmd => 'rebuild'
     assert_response :success
   end
 
   def test_submit_requests_from_remote
 
-    prepare_request_with_user "king", "sunflower"
-    post "/source/LocalProject/pack1", :cmd => :copy, :oproject => "LocalProject", :opackage => "remotepackage"
+    login_king
+    post '/source/LocalProject/pack1', :cmd => :copy, :oproject => 'LocalProject', :opackage => 'remotepackage'
     assert_response :success
 
-    prepare_request_with_user "tom", "thunder"
+    login_tom
     # FIXME: submission from a remote project is not yet supported "RemoteInstance:BaseDistro"
-    [ "LocalProject", "UseRemoteInstance" ].each do |prj|
-      post "/request?cmd=create", '<request>
+    %w(LocalProject UseRemoteInstance).each do |prj|
+      post '/request?cmd=create', '<request>
                                    <action type="submit">
                                      <source project="' + prj + '" package="pack1" rev="1"/>
                                      <target project="home:tom" package="pack1"/>
@@ -284,7 +348,7 @@ class InterConnectTests < ActionController::IntegrationTest
                                    <state name="new" />
                                  </request>'
       assert_response :success
-      node = ActiveXML::XMLNode.new(@response.body)
+      node = ActiveXML::Node.new(@response.body)
       assert node.has_attribute?(:id)
       id = node.value('id')
 
@@ -292,110 +356,163 @@ class InterConnectTests < ActionController::IntegrationTest
       post "/request/#{id}?cmd=changestate&newstate=accepted"
       assert_response :success
 
-      delete "/source/home:tom/pack1"
+      delete '/source/home:tom/pack1'
       assert_response :success
     end
 
-    prepare_request_with_user "king", "sunflower"
-    delete "/source/LocalProject/pack1"
+    login_king
+    delete '/source/LocalProject/pack1'
     assert_response :success
   end
 
   def test_copy_and_diff_package
     # do copy commands twice to test it with existing target and without
-    prepare_request_with_user "tom", "thunder"
-    post "/source/LocalProject/temporary", :cmd => :copy, :oproject => "LocalProject", :opackage => "remotepackage"
+    login_tom
+    post '/source/LocalProject/temporary', :cmd => :copy, :oproject => 'LocalProject', :opackage => 'remotepackage'
     assert_response :success
-    post "/source/LocalProject/temporary", :cmd => :copy, :oproject => "LocalProject", :opackage => "remotepackage"
+    post '/source/LocalProject/temporary', :cmd => :copy, :oproject => 'LocalProject', :opackage => 'remotepackage'
     assert_response :success
-    delete "/source/LocalProject/temporary"
+    delete '/source/LocalProject/temporary'
     assert_response :success
-    post "/source/LocalProject/temporary", :cmd => :copy, :oproject => "UseRemoteInstance", :opackage => "pack1"
+    post '/source/LocalProject/temporary', :cmd => :copy, :oproject => 'UseRemoteInstance', :opackage => 'pack1'
     assert_response :success
-    post "/source/LocalProject/temporary", :cmd => :copy, :oproject => "RemoteInstance:BaseDistro", :opackage => "pack1"
+    post '/source/LocalProject/temporary', :cmd => :copy, :oproject => 'RemoteInstance:BaseDistro', :opackage => 'pack1'
     assert_response :success
 
-    post "/source/LocalProject/temporary", :cmd => :diff, :oproject => "LocalProject", :opackage => "remotepackage"
+    post '/source/LocalProject/temporary', :cmd => :diff, :oproject => 'LocalProject', :opackage => 'remotepackage'
     assert_response :success
-    post "/source/LocalProject/temporary", :cmd => :diff, :oproject => "UseRemoteInstance", :opackage => "pack1"
+    post '/source/LocalProject/temporary', :cmd => :diff, :oproject => 'UseRemoteInstance', :opackage => 'pack1'
     assert_response :success
   end
 
   def test_diff_package
-    prepare_request_with_user "tom", "thunder"
+    login_tom
 
 # FIXME: not supported in api atm
 #    post "/source/RemoteInstance:BaseDistro/pack1", :cmd => :branch, :target_project => "LocalProject", :target_package => "branchedpackage"
 #    assert_response :success
 
-    Suse::Backend.put( '/source/LocalProject/newpackage/_meta', DbPackage.find_by_project_and_name("LocalProject", "newpackage").to_axml)
-    Suse::Backend.put( '/source/LocalProject/newpackage/new_file', "adding stuff")
-    post "/source/LocalProject/newpackage", :cmd => :diff, :oproject => "RemoteInstance:BaseDistro", :opackage => "pack1"
+    Suse::Backend.put( '/source/LocalProject/newpackage/_meta?user=king', Package.find_by_project_and_name('LocalProject', 'newpackage').to_axml)
+    Suse::Backend.put( '/source/LocalProject/newpackage/new_file?user=king', 'adding stuff')
+    post '/source/LocalProject/newpackage', :cmd => :diff, :oproject => 'RemoteInstance:BaseDistro', :opackage => 'pack1'
     assert_response :success
   end
 
+# FIXME: backend does not support project copy from remote
+# def test_copy_project
+#   login_tom
+#   get "/source/RemoteInstance:BaseDistro"
+#   assert_response :success
+#   post "/source/home:tom:TEMPORARY?cmd=copy&oproject=RemoteInstance:BaseDistro&nodelay=1"
+#   assert_response :success
+#   get "/source/home:tom:TEMPORARY"
+#   assert_response :success
+#   delete "/source/home:tom:TEMPORARY"
+#   assert_response :success
+# end
+
   def test_get_packagelist_with_hidden_remoteurlproject
-    prepare_request_with_user "tom", "thunder"
-    get "/source/HiddenRemoteInstance"
+    login_tom
+    get '/source/HiddenRemoteInstance'
     assert_response 404
-    get "/source/HiddenRemoteInstance:BaseDistro"
+    get '/source/HiddenRemoteInstance:BaseDistro'
     assert_response 404
-    ActionController::IntegrationTest::reset_auth
-    prepare_request_with_user "hidden_homer", "homer"
-    get "/source/HiddenRemoteInstance"
+    reset_auth
+    prepare_request_with_user 'hidden_homer', 'homer'
+    get '/source/HiddenRemoteInstance'
     assert_response :success
-    get "/source/HiddenRemoteInstance:BaseDistro"
+    get '/source/HiddenRemoteInstance:BaseDistro'
     assert_response :success
   end
 
   def test_read_access_hidden_remoteurlproject_index
-    prepare_request_with_user "tom", "thunder"
-    get "/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository"
+    login_tom
+    get '/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository'
     assert_response 404
-    get "/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository?view=cache"
+    get '/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository?view=cache'
     assert_response 404
-    get "/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository?view=binaryversions"
+    get '/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository?view=binaryversions'
     assert_response 404
-    get "/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository?view=cpio"
+    get '/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository?view=cpio'
     assert_response 404
-    get "/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/pack1"
+    get '/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/pack1'
     assert_response 404
-    ActionController::IntegrationTest::reset_auth
-    prepare_request_with_user "hidden_homer", "homer"
-    get "/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository"
+    reset_auth
+    prepare_request_with_user 'hidden_homer', 'homer'
+    get '/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository'
     assert_response :success
-    get "/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository?view=cache"
+    get '/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository?view=cache'
     assert_response :success
-    get "/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository?view=binaryversions"
+    get '/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository?view=binaryversions'
     assert_response :success
-    get "/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository?view=cpio"
+    get '/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/_repository?view=cpio'
     assert_response :success
-    get "/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/pack1"
+    get '/build/HiddenRemoteInstance:BaseDistro/BaseDistro_repo/i586/pack1'
     assert_response :success
   end
 
   def test_setup_remote_propject
     p='<project name="home:tom:remote"> <title/> <description/>  <remoteurl>http://localhost</remoteurl> </project>'
 
-    prepare_request_with_user "tom", "thunder"
-    put "/source/home:tom:remote/_meta", p
+    login_tom
+    put '/source/home:tom:remote/_meta', p
     assert_response 403
 
-    prepare_request_with_user "king", "sunflower"
-    put "/source/home:tom:remote/_meta", p
+    login_king
+    put '/source/home:tom:remote/_meta', p
     assert_response :success
     p='<project name="home:tom:remote"> <title/> <description/>  <remoteurl>http://localhost2</remoteurl> </project>'
-    put "/source/home:tom:remote/_meta", p
+    put '/source/home:tom:remote/_meta', p
     assert_response :success
-    get "/source/home:tom:remote/_meta"
+    get '/source/home:tom:remote/_meta'
     assert_response :success
-    assert_tag :tag => 'remoteurl', :content => 'http://localhost2'
+    assert_xml_tag :tag => 'remoteurl', :content => 'http://localhost2'
     p='<project name="home:tom:remote"> <title/> <description/>  </project>'
-    put "/source/home:tom:remote/_meta", p
+    put '/source/home:tom:remote/_meta', p
     assert_response :success
 
     #cleanup
-    delete "/source/home:tom:remote"
+    delete '/source/home:tom:remote'
     assert_response :success
   end
+
+  def test_check_meta_stripping
+    login_Iggy
+    # package meta
+    get '/source/home:Iggy/TestPack/_meta'
+    assert_response :success
+    assert_xml_tag :tag => 'person'
+    get '/source/RemoteInstance:home:Iggy/TestPack/_meta'
+    assert_response :success
+    assert_no_xml_tag :tag => 'person'
+
+    # project meta
+    get '/source/home:Iggy/_meta'
+    assert_response :success
+    assert_xml_tag :tag => 'person'
+    get '/source/RemoteInstance:home:Iggy/_meta'
+    assert_response :success
+    assert_no_xml_tag :tag => 'person'
+  end
+
+  def test_remove_broken_link
+    login_Iggy
+    put '/source/home:Iggy/TestLinkPack/_meta', "<package project='home:Iggy' name='TestLinkPack'> <title/> <description/> </package>"
+    assert_response :success
+    put '/source/home:Iggy/TestLinkPack/_link', "<link project='RemoteInstance:home:Iggy' package='TestPack' rev='invalid' />"
+    assert_response :success
+    get '/source/home:Iggy/TestLinkPack'
+    assert_response :success
+    get '/source/RemoteInstance:home:Iggy/TestLinkPack'
+    assert_response 400 # always expanded against remote
+    get '/source/home:Iggy/TestLinkPack?expand=1'
+    assert_response 400
+
+    delete '/source/home:Iggy/TestLinkPack/_link'
+    assert_response :success
+
+    delete '/source/home:Iggy/TestLinkPack'
+    assert_response :success
+  end
+
 end

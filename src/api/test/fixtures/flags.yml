@@ -1,171 +1,118 @@
-flags_129437008: 
-  position: "1"
-  architecture_id: 
-  repo: 
-  db_package_id: 
-  flag: publish
-  db_project_id: "3006"
-  id: "129437008"
-  status: disable
-flags_212298610: 
-  position: "1"
-  architecture_id: "1"
-  repo: "10.2"
-  db_package_id: 
-  flag: debuginfo
-  db_project_id: "502"
-  id: "212298610"
-  status: disable
-flags_220542956: 
-  position: "2"
-  architecture_id: "2"
-  repo: "10.2"
-  db_package_id: 
-  flag: debuginfo
-  db_project_id: "502"
-  id: "220542956"
+record_0:
   status: enable
-flags_238287425: 
-  position: "1"
-  architecture_id: 
-  repo: 
-  db_package_id: 
-  flag: access
-  db_project_id: "3000"
-  id: "238287425"
-  status: disable
-flags_361997832: 
-  position: "1"
-  architecture_id: 
-  repo: 
-  db_package_id: 
-  flag: publish
-  db_project_id: "3002"
-  id: "361997832"
-  status: disable
-flags_370537857: 
-  position: "1"
-  architecture_id: "2"
-  repo: "10.2"
-  db_package_id: "10095"
-  flag: publish
-  db_project_id: 
-  id: "370537857"
-  status: enable
-flags_377253800: 
-  position: "1"
-  architecture_id: "2"
-  repo: "10.2"
-  db_package_id: "10095"
+  repo: '10.2'
+  position: 2
   flag: debuginfo
-  db_project_id: 
-  id: "377253800"
+  architecture: x86_64
+  project: home_Iggy
+record_1:
+  status: disable
+  position: 1
+  flag: useforbuild
+  package: BaseDistro_pack1
+record_2:
   status: enable
-flags_421651534: 
-  position: "1"
-  architecture_id: 
-  repo: 
-  db_package_id: 
-  flag: binarydownload
-  db_project_id: "3002"
-  id: "421651534"
-  status: disable
-flags_463292953: 
-  position: "1"
-  architecture_id: 
-  repo: 
-  db_package_id: 
-  flag: access
-  db_project_id: "3006"
-  id: "463292953"
-  status: disable
-flags_512515298: 
-  position: "1"
-  architecture_id: "1"
-  repo: "10.2"
-  db_package_id: 
+  repo: '10.2'
+  position: 1
   flag: build
-  db_project_id: "502"
-  id: "512515298"
+  architecture: i586
+  package: home_Iggy_TestPack
+record_3:
   status: disable
-flags_521011324: 
-  position: "2"
-  architecture_id: "2"
-  repo: "10.2"
-  db_package_id: 
-  flag: build
-  db_project_id: "502"
-  id: "521011324"
-  status: disable
-flags_632907309: 
-  position: "1"
-  architecture_id: 
-  repo: 
-  db_package_id: 
+  position: 1
   flag: sourceaccess
-  db_project_id: "3001"
-  id: "632907309"
+  project: SourceprotectedProject
+record_4:
   status: disable
-flags_688596071: 
-  position: "1"
-  architecture_id: 
-  repo: 
-  db_package_id: 
+  position: 3
   flag: publish
-  db_project_id: "3001"
-  id: "688596071"
+  project: BaseDistro2.0_LinkedUpdateProject
+record_5:
   status: disable
-flags_792784507: 
-  position: "1"
-  architecture_id: 
-  repo: 
-  db_package_id: 
+  position: 1
   flag: publish
-  db_project_id: "3000"
-  id: "792784507"
+  project: SourceprotectedProject
+record_6:
   status: disable
-flags_801465961: 
-  position: "1"
-  architecture_id: "1"
-  repo: "10.2"
-  db_package_id: "10095"
+  position: 1
+  flag: publish
+  project: HiddenProject
+record_7:
+  status: disable
+  position: 1
+  flag: publish
+  project: BinaryprotectedProject
+record_8:
+  status: disable
+  position: 2
   flag: build
-  db_project_id: 
-  id: "801465961"
+  project: BaseDistro2.0_LinkedUpdateProject
+record_9:
   status: enable
-flags_811918905: 
-  position: "1"
-  architecture_id: "2"
-  repo: "10.2"
-  db_package_id: 
+  repo: '10.2'
+  position: 2
   flag: publish
-  db_project_id: "502"
-  id: "811918905"
+  architecture: i586
+  project: home_Iggy
+record_10:
+  status: enable
+  repo: '10.2'
+  position: 1
+  flag: debuginfo
+  architecture: x86_64
+  package: home_Iggy_TestPack
+record_11:
   status: disable
-flags_813496: 
-  position: "2"
-  architecture_id: "1"
-  repo: "10.2"
-  db_package_id: 
-  flag: publish
-  db_project_id: "502"
-  id: "813496"
-  status: enable
-flags_BaseDistro2_0_LinkedUpdateProject_build_disable: 
-  position: "2"
-  architecture_id: 
-  repo: 
-  db_package_id: 
+  position: 1
+  flag: binarydownload
+  project: BinaryprotectedProject
+record_12:
+  status: disable
+  repo: '10.2'
+  position: 2
   flag: build
-  db_project_id: "2046"
-  id: "477459121"
+  architecture: x86_64
+  project: home_Iggy
+record_13:
   status: disable
-flags_BaseDistro2_0_LinkedUpdateProject_publish_disable: 
-  position: "3"
-  architecture_id: 
-  repo: 
-  db_package_id: 
+  position: 1
+  flag: access
+  project: HiddenProject
+record_14:
+  status: disable
+  repo: '10.2'
+  position: 1
+  flag: debuginfo
+  architecture: i586
+  project: home_Iggy
+record_15:
+  status: disable
+  repo: '10.2'
+  position: 1
+  flag: build
+  architecture: i586
+  project: home_Iggy
+record_16:
+  status: enable
+  repo: '10.2'
+  position: 1
   flag: publish
-  db_project_id: "2046"
-  id: "477459122"
+  architecture: x86_64
+  package: home_Iggy_TestPack
+record_17:
   status: disable
+  position: 1
+  flag: publish
+  project: HiddenRemoteInstance
+record_18:
+  status: disable
+  position: 1
+  flag: access
+  project: HiddenRemoteInstance
+record_19:
+  status: disable
+  repo: '10.2'
+  position: 1
+  flag: publish
+  architecture: x86_64
+  project: home_Iggy

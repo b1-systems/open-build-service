@@ -1,17 +1,19 @@
 require 'net/smtp'
 
+depend :local, :gem, 'capistrano', '>=2.11.2'
+
 set :application, "obs-api"
 
 # git settings
 set :scm, :git
 set :repository,  "git://github.com/openSUSE/open-build-service.git"
-set :branch, "master"
+set :branch, "2.3"
 set :deploy_via, :remote_cache
 set :git_enable_submodules, 1
 set :git_subdir, '/src/api'
 set :migrate_target, :current
 
-set :deploy_notification_to, ['tschmidt@suse.de', 'coolo@suse.de', 'adrian@suse.de', 'saschpe@suse.de', 'mls@suse.de']
+set :deploy_notification_to, %w(tschmidt@suse.de coolo@suse.de adrian@suse.de saschpe@suse.de mls@suse.de)
 server "buildserviceapi.suse.de", :app, :web, :db, :primary => true
 
 # If you aren't deploying to /u/apps/#{application} on the target
@@ -37,12 +39,11 @@ set :user, "root"
 set :runner, "root"
 
 after "deploy:update_code", "config:symlink_shared_config"
-after "deploy:symlink", "config:permissions"
+after "deploy:create_symlink", "config:permissions"
 
 before "deploy:update_code", "deploy:test_suite"
 
 # workaround because we are using a subdirectory of the git repo as rails root
-before "deploy:finalize_update", "deploy:apidocs"
 before "deploy:finalize_update", "deploy:use_subdir"
 after "deploy:finalize_update", "deploy:reset_subdir"
 after "deploy:finalize_update", "deploy:notify"
@@ -87,7 +88,7 @@ namespace :deploy do
     set :latest_release, latest_release_bak
   end
 
-  task :symlink, :except => { :no_release => true } do
+  task :create_symlink, :except => { :no_release => true } do
     on_rollback do
       if previous_release
         run "rm -f #{current_path}; ln -s #{previous_release}#{git_subdir} #{current_path}; true"
@@ -99,15 +100,10 @@ namespace :deploy do
     run "rm -f #{current_path} && ln -s #{latest_release}#{git_subdir} #{current_path}"
   end
 
-  desc "Create API docs"
-  task :apidocs do
-    run "cd #{release_path}/docs/api && make"
-  end
-
   desc "Send email notification of deployment"
   task :notify do
     #diff = `#{source.local.diff(current_revision)}`
-    diff_log = `#{source.local.log( source.next_revision(current_revision) )}`
+    diff_log = `#{source.local.log(source.next_revision(current_revision), branch)}`
     user = `whoami`
     body = %Q[From: obs-api-deploy@suse.de
 To: #{deploy_notification_to.join(", ")}
