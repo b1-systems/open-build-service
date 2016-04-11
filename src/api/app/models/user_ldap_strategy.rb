@@ -8,13 +8,13 @@ class UserLdapStrategy
     user_in_group_ldap? user.login, group
   end
 
-  def local_role_check(role, object)
-    local_role_check_with_ldap role, object
+  def local_role_check(user, role, object)
+    local_role_check_with_ldap user, role, object
   end
 
-  def local_permission_check(roles, object)
+  def local_permission_check(user, roles, object)
     groups = object.relationships.groups
-    local_permission_check_with_ldap(groups.where("role_id in (?)", roles))
+    local_permission_check_with_ldap(user, groups.where("role_id in (?)", roles))
   end
 
   # This method returns all groups assigned to the given user via ldap - including
@@ -513,7 +513,7 @@ class UserLdapStrategy
     end
 
     begin
-      return true unless render_grouplist_ldap(grouplist, user).empty?
+      return true unless UserLdapStrategy.render_grouplist_ldap(grouplist, user).empty?
     rescue Exception
       Rails.logger.warn "Error occurred in searching user_group in ldap."
     end
@@ -521,23 +521,23 @@ class UserLdapStrategy
     return false
   end
 
-  def local_permission_check_with_ldap (group_relationships)
+  def local_permission_check_with_ldap (user, group_relationships)
     group_relationships.each do |r|
       return false if r.group.nil?
       #check whether current user is in this group
-      return true if user_in_group_ldap?(self.login, r.group)
+      return true if user_in_group_ldap?(user.login, r.group)
     end
     Rails.logger.debug "Failed with local_permission_check_with_ldap"
     return false
   end
 
-  def local_role_check_with_ldap (role, object)
+  def local_role_check_with_ldap (user, role, object)
     Rails.logger.debug "Checking role with ldap: object #{object.name}, role #{role.title}"
     rels = object.relationships.groups.where(:role_id => role.id).includes(:group)
     for rel in rels
       return false if rel.group.nil?
       #check whether current user is in this group
-      return true if user_in_group_ldap?(self.login, rel.group)
+      return true if user_in_group_ldap?(user.login, rel.group)
     end
     Rails.logger.debug "Failed with local_role_check_with_ldap"
     return false

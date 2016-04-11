@@ -6,11 +6,11 @@ class UserBasicStrategy
     user.groups_users.where(group_id: group.id).exists?
   end
 
-  def local_role_check(role, object)
+  def local_role_check(user, role, object)
     false # all is checked, nothing remote
   end
 
-  def local_permission_check(roles, object)
+  def local_permission_check(user, roles, object)
     false # all is checked, nothing remote
   end
 
@@ -667,7 +667,7 @@ class User < ActiveRecord::Base
       rels = object.relationships.joins(:groups_users).where(:groups_users => { user_id: self.id }).where(:role_id => role.id)
       return true if rels.exists?
 
-      return true if lookup_strategy.local_role_check(role, object)
+      return true if lookup_strategy.local_role_check(self, role, object)
     end
 
     if object.is_a? Package
@@ -704,7 +704,7 @@ class User < ActiveRecord::Base
     rel = object.relationships.joins(:groups_users).where(:groups_users => { user_id: self.id }).where('role_id in (?)', roles)
     return true if rel.exists?
 
-    return true if lookup_strategy.local_permission_check(roles, object)
+    return true if lookup_strategy.local_permission_check(self, roles, object)
 
     if parent
       #check permission of parent project
