@@ -73,6 +73,9 @@ ldap_servers: ldap1.mycompany.com:ldap2.mycompany.com
 # Max number of times to attempt to contact the LDAP servers
 ldap_max_attempts: 15
 
+# timeout of a ldap search requests to avoid infinitely lookups (in seconds, 0 no timeout)
+ldap_search_timeout: 5
+
 # The attribute the user memberof is stored in
 ldap_user_memberof_attr: memberof
 

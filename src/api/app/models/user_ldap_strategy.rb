@@ -2,6 +2,7 @@
 class UserLdapStrategy
 
   @@ldap_search_con = nil
+  @@ldap_search_timeout = CONFIG.has_key?('ldap_search_timeout') ? CONFIG['ldap_search_timeout'] : 0
 
   def is_in_group?(user, group)
     user_in_group_ldap? user.login, group
@@ -49,7 +50,7 @@ class UserLdapStrategy
     end
     user_filter = "(#{CONFIG['ldap_search_attr']}=#{login})"
     dn = String.new
-    ldap_con.search(CONFIG['ldap_search_base'], LDAP::LDAP_SCOPE_SUBTREE, user_filter) do |entry|
+    ldap_con.search(CONFIG['ldap_search_base'], LDAP::LDAP_SCOPE_SUBTREE, user_filter, nil, false, @@ldap_search_timeout) do |entry|
       dn = entry.dn
     end
     if dn.empty?
@@ -146,7 +147,7 @@ class UserLdapStrategy
     end
     user_filter = "(#{CONFIG['ldap_search_attr']}=#{login})"
     dn = String.new
-    ldap_con.search(CONFIG['ldap_search_base'], LDAP::LDAP_SCOPE_SUBTREE, user_filter) do |entry|
+    ldap_con.search(CONFIG['ldap_search_base'], LDAP::LDAP_SCOPE_SUBTREE, user_filter, nil, false, @@ldap_search_timeout) do |entry|
       dn = entry.dn
     end
     if dn.empty?
@@ -191,7 +192,7 @@ class UserLdapStrategy
     end
     Rails.logger.debug("Search: #{filter}")
     result = Array.new
-    ldap_con.search(search_base, LDAP::LDAP_SCOPE_SUBTREE, filter) do |entry|
+    ldap_con.search(search_base, LDAP::LDAP_SCOPE_SUBTREE, filter, nil, false, @@ldap_search_timeout) do |entry|
       result << entry.dn
       result << entry.attrs
       if required_attr and entry.attrs.include?(required_attr)
@@ -226,7 +227,7 @@ class UserLdapStrategy
       end
       user_dn = String.new
       user_memberof_attr = String.new
-      ldap_con.search(CONFIG['ldap_search_base'], LDAP::LDAP_SCOPE_SUBTREE, filter) do |entry|
+      ldap_con.search(CONFIG['ldap_search_base'], LDAP::LDAP_SCOPE_SUBTREE, filter, nil, false, @@ldap_search_timeout) do |entry|
         user_dn = entry.dn
         if CONFIG.has_key?('ldap_user_memberof_attr') && entry.attrs.include?(CONFIG['ldap_user_memberof_attr'])
           user_memberof_attr=entry.vals(CONFIG['ldap_user_memberof_attr'])
@@ -264,7 +265,7 @@ class UserLdapStrategy
       group_dn = ""
       group_member_attr = ""
       Rails.logger.debug("Search group: #{filter}")
-      ldap_con.search(CONFIG['ldap_group_search_base'], LDAP::LDAP_SCOPE_SUBTREE, filter) do |entry|
+      ldap_con.search(CONFIG['ldap_group_search_base'], LDAP::LDAP_SCOPE_SUBTREE, filter, nil, false, @@ldap_search_timeout) do |entry|
         group_dn = entry.dn
         if CONFIG.has_key?('ldap_group_member_attr') && entry.attrs.include?(CONFIG['ldap_group_member_attr'])
           group_member_attr = entry.vals(CONFIG['ldap_group_member_attr'])
@@ -311,7 +312,7 @@ class UserLdapStrategy
     end
     user_filter = "(#{CONFIG['ldap_search_attr']}=#{login})"
     dn = String.new
-    ldap_con.search(CONFIG['ldap_search_base'], LDAP::LDAP_SCOPE_SUBTREE, user_filter) do |entry|
+    ldap_con.search(CONFIG['ldap_search_base'], LDAP::LDAP_SCOPE_SUBTREE, user_filter, nil, false, @@ldap_search_timeout) do |entry|
       dn = entry.dn
     end
     if dn.empty?
@@ -427,7 +428,7 @@ class UserLdapStrategy
       end
       Rails.logger.debug("Search for #{user_filter}")
       begin
-        ldap_con.search(CONFIG['ldap_search_base'], LDAP::LDAP_SCOPE_SUBTREE, user_filter) do |entry|
+        ldap_con.search(CONFIG['ldap_search_base'], LDAP::LDAP_SCOPE_SUBTREE, user_filter, nil, false, @@ldap_search_timeout) do |entry|
           user = entry.to_hash
         end
       rescue
@@ -460,7 +461,7 @@ class UserLdapStrategy
         return nil
       else
         # Redo the search as the user for situations where the anon search may not be able to see attributes
-        user_con.search(CONFIG['ldap_search_base'], LDAP::LDAP_SCOPE_SUBTREE, user_filter) do |entry|
+        user_con.search(CONFIG['ldap_search_base'], LDAP::LDAP_SCOPE_SUBTREE, user_filter, nil, false, @@ldap_search_timeout) do |entry|
           user.replace(entry.to_hash())
         end
         user_con.unbind()
