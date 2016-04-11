@@ -164,7 +164,7 @@ module HasRelationships
       # check with LDAP
       if CONFIG['ldap_mode'] == :on && CONFIG['ldap_group_support'] == :on
         if UserLdapStrategy.find_group_with_ldap(id)
-          logger.debug "Find and Create group '#{id}' from LDAP"
+          Rails.logger.debug "Find and Create group '#{id}' from LDAP"
           return Group.create!(title: id)
         else
           raise SaveError, "unknown group '#{id}' on LDAP server"
