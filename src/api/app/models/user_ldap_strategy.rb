@@ -489,6 +489,20 @@ class UserLdapStrategy
     ldap_info
   end
 
+  # This static method check if the user is in special groups for global roles
+  # For now only ldap_obs_admin_group is checked for Admin role
+  def self.check_global_roles_with_ldap(user)
+    if CONFIG['ldap_group_support'] == :on && CONFIG.has_key?('ldap_obs_admin_group')
+      grouplist = []
+      grouplist.push CONFIG['ldap_obs_admin_group']
+
+      groups = UserLdapStrategy.render_grouplist_ldap(grouplist, user.login)
+      if not groups.empty?
+        user.update_globalroles(%w(Admin))
+      end
+    end
+  end
+
   def groups_ldap
     Rails.logger.debug "List the groups #{self.login} is in"
     ldapgroups = Array.new
