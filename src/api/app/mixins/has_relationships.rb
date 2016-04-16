@@ -155,23 +155,8 @@ module HasRelationships
       record.group = item
     end
 
-    # TODO: this surely does not belong here, this should be handled transparently by Group model
     def find!(id)
-      # for groups we create groups transparently (for now, see above)
-      group = Group.find_by_title(id)
-      return group if group
-
-      # check with LDAP
-      if CONFIG['ldap_mode'] == :on && CONFIG['ldap_group_support'] == :on
-        if UserLdapStrategy.find_group_with_ldap(id)
-          Rails.logger.debug "Find and Create group '#{id}' from LDAP"
-          return Group.create!(title: id)
-        else
-          raise SaveError, "unknown group '#{id}' on LDAP server"
-        end
-      else
-        raise SaveError, "unknown group '#{id}'"
-      end
+      Group.find_by_title!(id)
     end
   end
 

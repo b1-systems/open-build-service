@@ -29,7 +29,19 @@ class Group < ActiveRecord::Base
   has_and_belongs_to_many :roles, -> { uniq }
 
   def self.find_by_title!(title)
-    find_by_title(title) or raise NotFoundError.new("Couldn't find Group '#{title}'")
+    group = find_by_title(title)
+    if group.nil?
+      if Configuration.ldapgroup_enabled?
+        if UserLdapStrategy.find_group_with_ldap(title)
+          # for groups we create groups transparently if a matching LDAP group exist
+          group = create!(title: title)
+        end
+      end
+    end
+    if group.nil?
+      raise NotFoundError.new("Couldn't find Group '#{title}'")
+    end
+    return group
   end
 
   def update_from_xml( xmlhash )
