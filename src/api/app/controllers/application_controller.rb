@@ -116,6 +116,11 @@ class ApplicationController < ActionController::Base
       @http_user = User.find_by_login( @login )
       if @http_user
         # Check for ldap updates
+        # update confirmed users to ldap state
+        if @http_user.state == User.states['confirmed']
+          @http_user.state = User.states['ldap']
+          @http_user.save
+        end
         if @http_user.email != ldap_info[0]
           @http_user.email = ldap_info[0]
           @http_user.save
@@ -148,7 +153,7 @@ class ApplicationController < ActionController::Base
           raise AuthenticationRequiredError.new "Cannot create ldap userid: '#{login}' on OBS<br>#{errstr}"
         end
         newuser.realname = ldap_info[1]
-        newuser.state = User.states['confirmed']
+        newuser.state = User.states['ldap']
         newuser.state = User.states['unconfirmed'] if ::Configuration.registration == "confirmation"
         newuser.adminnote = "User created via LDAP"
 
@@ -289,7 +294,7 @@ class ApplicationController < ActionController::Base
 
     User.current = @http_user
 
-    if @http_user.state == User.states['confirmed']
+    if @http_user.state == User.states['confirmed'] || @http_user.state == User.states['ldap']
       logger.debug "USER found: #{@http_user.login}"
       @user_permissions = Suse::Permission.new(@http_user)
       return true
