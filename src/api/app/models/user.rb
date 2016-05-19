@@ -185,7 +185,7 @@ class User < ActiveRecord::Base
   # Returns true when users with the given state may log in. False otherwise.
   # The given parameter must be an integer.
   def self.state_allows_login?(state)
-    [ User.states['confirmed'], User.states['retrieved_password'] ].include?(state)
+    [ User.states['confirmed'], User.states['retrieved_password'], User.states['ldap'] ].include?(state)
   end
 
   # Overwrite the state setting so it backs up the initial state from
@@ -251,12 +251,14 @@ class User < ActiveRecord::Base
       true
     when User.states['confirmed']
       %w(retrieved_password locked deleted deleted ichainrequest).map{|x| User.states[x]}.include?(to)
+    when User.states['ldap']
+      %w(retrieved_password locked deleted deleted ichainrequest).map{|x| User.states[x]}.include?(to)
     when User.states['locked']
-      %w(confirmed deleted).map{|x| User.states[x]}.include?(to)
+      %w(confirmed deleted ldap).map{|x| User.states[x]}.include?(to)
     when User.states['deleted']
-      to == User.states['confirmed']
+      %w(confirmed ldap).map{|x| User.states[x]}.include?(to)
     when User.states['ichainrequest']
-      %w(locked confirmed deleted).map{|x| User.states[x]}.include?(to)
+      %w(locked confirmed ldap deleted).map{|x| User.states[x]}.include?(to)
     when 0
       User.states.value?(to)
     else
@@ -418,6 +420,7 @@ class User < ActiveRecord::Base
     'deleted'            => 4,
     'ichainrequest'      => 5,
     'retrieved_password' => 6,
+    'ldap'               => 7,
   }
 
   def self.states
