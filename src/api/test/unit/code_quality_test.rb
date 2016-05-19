@@ -66,7 +66,7 @@ class CodeQualityTest < ActiveSupport::TestCase
 
   # our current exceptions
   BlackList = {
-      'ApplicationController#extract_ldap_user' => 132.11,
+      'ApplicationController#extract_ldap_user' => 152.47,
       'AttributeController#attribute_definition' => 87.7,
       'BinaryRelease::update_binary_releases_via_json' => 122.54,
       'BranchPackage#find_packages_to_branch' => 239.64,
@@ -101,7 +101,7 @@ class CodeQualityTest < ActiveSupport::TestCase
       'SourceController#project_command_copy' => 140.04,
       'SourceController#update_file' => 97.26,
       'SourceController#update_project_meta' => 106.89,
-      'UserLdapStrategy::find_with_ldap' => 119.04,
+      'UserLdapStrategy::find_with_ldap' => 138.39,
       'UserLdapStrategy::render_grouplist_ldap' => 100.3,
       'Webui::DriverUpdateController#save' => 97.16,
       'Webui::PackageController#submit_request' => 149.9,

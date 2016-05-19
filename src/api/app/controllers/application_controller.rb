@@ -94,6 +94,29 @@ class ApplicationController < ActionController::Base
     setup 403
   end
 
+  def update_ldap_user_groups(grouplist)
+    usergroups = @http_user.get_groups
+    all_groups = Group.all_groups
+    # remove not longer membership
+    usergroups.each do |grp|
+      unless grouplist.include?(grp)
+        logger.debug("removed user #{@http_user} from group #{grp}")
+        mygroup = Group.find_by_title(grp)
+        mygroup.remove_user(@http_user) unless mygroup.nil?
+      end
+    end
+    # add new membership only if the group is already used
+    grouplist.each do |grp|
+      if all_groups.include?(grp)
+        unless usergroups.include?(grp)
+          logger.debug("add #{@http_user} to group #{grp}")
+          mygroup = Group.find_by_title(grp)
+          mygroup.add_user(@http_user) unless mygroup.nil?
+        end
+      end
+    end
+  end
+
   def extract_ldap_user
     # Reject empty passwords to prevent LDAP lockouts.
     return if @passwd.blank?
@@ -115,15 +138,18 @@ class ApplicationController < ActionController::Base
       logger.debug "User.find_by_login( #{@login} )"
       @http_user = User.find_by_login( @login )
       if @http_user
-        # Check for ldap updates
-        # update confirmed users to ldap state
-        if @http_user.state == User.states['confirmed']
-          @http_user.state = User.states['ldap']
-          @http_user.save
-        end
-        if @http_user.email != ldap_info[0]
-          @http_user.email = ldap_info[0]
-          @http_user.save
+        # Check for ldap updates only if not a cached value was used
+        if ldap_info[2] != "cached"
+          update_ldap_user_groups(ldap_info[3]) if ldap_info[2] == "group_update"
+          # update confirmed users to ldap state
+          if @http_user.state == User.states['confirmed']
+            @http_user.state = User.states['ldap']
+            @http_user.save
+          end
+          if @http_user.email != ldap_info[0]
+            @http_user.email = ldap_info[0]
+            @http_user.save
+          end
         end
       else
         if ::Configuration.registration == "deny"
@@ -163,6 +189,8 @@ class ApplicationController < ActionController::Base
         newuser.save
 
         @http_user = newuser
+        # set group membership if required
+        update_ldap_user_groups(ldap_info[3]) if ldap_info[2] == "group_update"
       end
     else
       logger.debug( "User not found with LDAP, falling back to database" )
