@@ -72,7 +72,11 @@ class Configuration < ActiveRecord::Base
 
     # Check if ldap group support is enabled?
     def ldapgroup_enabled?
-      CONFIG['ldap_mode'] == :on && CONFIG['ldap_group_support'] == :on
+      CONFIG['ldap_mode'] == :on && CONFIG['ldap_group_support'] != :off
+    end
+
+    def ldapgroup_mirror?
+      CONFIG['ldap_mode'] == :on && CONFIG['ldap_group_support'] == :mirror
     end
 
   end

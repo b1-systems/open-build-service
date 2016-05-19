@@ -937,6 +937,14 @@ class User < ActiveRecord::Base
     end
   end
 
+  def get_groups
+    groups = Array.new
+    groups_users.each do |gu|
+      groups.push Group.find_by_id(gu.group_id).to_s if gu.user_id == self.id
+    end
+    groups
+  end
+
   def display_name
     address = Mail::Address.new self.email
     address.display_name = self.realname 

@@ -44,6 +44,14 @@ class Group < ActiveRecord::Base
     return group
   end
 
+  def self.all_groups
+    groups = []
+    find_each do |grp|
+      groups << grp.title
+    end
+    return groups
+  end
+
   def update_from_xml( xmlhash )
     self.with_lock do
       if xmlhash.value('email')

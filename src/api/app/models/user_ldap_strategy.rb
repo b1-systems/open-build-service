@@ -3,16 +3,26 @@ class UserLdapStrategy
 
   @@ldap_search_con = nil
   @@ldap_search_timeout = CONFIG.has_key?('ldap_search_timeout') ? CONFIG['ldap_search_timeout'] : 0
+  @@ldap_group_title_attr = CONFIG.has_key?('ldap_group_title_attr') ? CONFIG['ldap_group_title_attr'] : 'cn'
+
 
   def is_in_group?(user, group)
-    user_in_group_ldap? user.login, group
+    if Configuration.ldapgroup_mirror?
+      return user.groups_users.where(group_id: group.id).exists?
+    else
+      return user_in_group_ldap? user.login, group
+    end
   end
 
   def local_role_check(user, role, object)
+    # With ldapgroup_mirror we have group information local, so do not lookup again
+    return false if Configuration.ldapgroup_mirror?
     local_role_check_with_ldap user, role, object
   end
 
   def local_permission_check(user, roles, object)
+    # With ldapgroup_mirror we have group information local, so do not lookup again
+    return false if Configuration.ldapgroup_mirror?
     groups = object.relationships.groups
     local_permission_check_with_ldap(user, groups.where("role_id in (?)", roles))
   end
@@ -385,6 +395,14 @@ class UserLdapStrategy
     return upn
   end
 
+  def self.extract_group_name(entry)
+    entry.split(',').each do |pair|
+      key,value = pair.split('=')
+      return value if key.casecmp(@@ldap_group_title_attr)
+    end
+    return nil
+  end
+
   # This static method tries to find a user with the given login and
   # password in the active directory server.  Returns nil unless
   # credentials are correctly found using LDAP.
@@ -399,6 +417,7 @@ class UserLdapStrategy
       if ar[0] == Digest::MD5.digest(password)
         ldap_info[0] = ar[1]
         ldap_info[1] = ar[2]
+        ldap_info[2] = "cached"
         Rails.logger.debug("login success for checking with ldap cache")
         return ldap_info
       end
@@ -473,6 +492,8 @@ class UserLdapStrategy
 
     # Only collect the required user information *AFTER* we successfully
     # completed the authentication!
+    # signal that this is actual info
+    ldap_info[2] = "refreshed"
     if user[CONFIG['ldap_mail_attr']] then
       ldap_info[0] = String.new(user[CONFIG['ldap_mail_attr']][0])
     else
@@ -483,7 +504,20 @@ class UserLdapStrategy
     else
       ldap_info[1] = login
     end
-
+    memberlist = []
+    if Configuration.ldapgroup_mirror? then
+      if user[CONFIG['ldap_user_memberof_attr']] then
+        ldap_info[2] = "group_update"
+        glist = user[CONFIG['ldap_user_memberof_attr']]
+        glist.each do |entry|
+          name = extract_group_name(entry)
+          memberlist.push name unless name.nil?
+        end
+        ldap_info[3] = memberlist
+      else
+        Rails.logger.warn("LDAP group mirror enabled but  #{CONFIG['ldap_user_memberof_attr']} not found")
+      end
+    end
     Rails.cache.write(key, [Digest::MD5.digest(password), ldap_info[0], ldap_info[1]], :expires_in => 2.minute)
     Rails.logger.debug("login success for checking with ldap server")
     ldap_info
