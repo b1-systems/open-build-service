@@ -51,9 +51,11 @@
           <%= link_to sprited_text('user_edit', 'Edit your account'), "#{CONFIG['proxy_auth_account_page']}" %><br />
         <% end %>
       <% else %>
-        <%= link_to(sprited_text('user_edit', 'Edit your account'), { :controller => 'user', :action => 'save_dialog', :user => User.current }, {:id => 'save_dialog', :remote => true}) %><br />
+        <% unless User.current.state == User.states['ldap'] %>
+          <%= link_to(sprited_text('user_edit', 'Edit your account'), { :controller => 'user', :action => 'save_dialog', :user => User.current }, {:id => 'save_dialog', :remote => true}) %><br />
+        <% end %>
       <% end %>
-      <% if @configuration['change_password'] and CONFIG['proxy_auth_mode'] != :on %>
+      <% if @configuration['change_password'] and CONFIG['proxy_auth_mode'] != :on and User.current.state != User.states['ldap'] %>
         <%= link_to(sprited_text('key', 'Change your password'), { :controller => 'user', :action => 'password_dialog', :user => User.current }, {:id => 'password_dialog', :remote => true}) %><br />
       <% end %>
       <%= link_to(sprited_text('email', 'Change your notifications'), user_notifications_path) %><br />
