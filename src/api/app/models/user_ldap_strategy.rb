@@ -526,7 +526,7 @@ class UserLdapStrategy
   # This static method check if the user is in special groups for global roles
   # For now only ldap_obs_admin_group is checked for Admin role
   def self.check_global_roles_with_ldap(user)
-    if CONFIG['ldap_group_support'] == :on && CONFIG.has_key?('ldap_obs_admin_group')
+    if Configuration.ldapgroup_enabled? && CONFIG.has_key?('ldap_obs_admin_group')
       grouplist = []
       grouplist.push CONFIG['ldap_obs_admin_group']
 
