@@ -94,19 +94,37 @@ class ApplicationController < ActionController::Base
     setup 403
   end
 
-  def update_ldap_user_groups(grouplist)
+  def update_ldap_user_groups(ldap_info)
+    return unless ldap_info[2] == "group_update"
     usergroups = @http_user.get_groups
     all_groups = Group.all_groups
     # remove not longer membership
     usergroups.each do |grp|
-      unless grouplist.include?(grp)
+      unless ldap_info[3].include?(grp)
         logger.debug("removed user #{@http_user} from group #{grp}")
         mygroup = Group.find_by_title(grp)
         mygroup.remove_user(@http_user) unless mygroup.nil?
       end
     end
+    # check admin
+    if ldap_info[4]
+      unless @http_user.is_admin?
+        logger.info("User #{@http_user} is Admin now")
+        # this will add the admin group if not already added
+        mygroup = Group.find_by_title!(CONFIG['ldap_obs_admin_group'])
+        @http_user.update_globalroles(%w(Admin))
+        @http_user.save
+      end
+    else
+      if @http_user.is_admin?
+        logger.info("User #{@http_user} removed Admin role")
+        # remove all global roles - OK for now ?
+        @http_user.update_globalroles([])
+        @http_user.save
+      end
+    end
     # add new membership only if the group is already used
-    grouplist.each do |grp|
+    ldap_info[3].each do |grp|
       if all_groups.include?(grp)
         unless usergroups.include?(grp)
           logger.debug("add #{@http_user} to group #{grp}")
@@ -140,7 +158,6 @@ class ApplicationController < ActionController::Base
       if @http_user
         # Check for ldap updates only if not a cached value was used
         if ldap_info[2] != "cached"
-          update_ldap_user_groups(ldap_info[3]) if ldap_info[2] == "group_update"
           # update confirmed users to ldap state
           if @http_user.state == User.states['confirmed']
             @http_user.state = User.states['ldap']
@@ -183,15 +200,14 @@ class ApplicationController < ActionController::Base
         newuser.state = User.states['unconfirmed'] if ::Configuration.registration == "confirmation"
         newuser.adminnote = "User created via LDAP"
 
-        UserLdapStrategy.check_global_roles_with_ldap(newuser)
+        UserLdapStrategy.check_global_roles_with_ldap(newuser) unless ::Configuration.ldapgroup_mirror?
 
         logger.debug( "saving new user..." )
         newuser.save
 
         @http_user = newuser
-        # set group membership if required
-        update_ldap_user_groups(ldap_info[3]) if ldap_info[2] == "group_update"
       end
+      update_ldap_user_groups(ldap_info)
     else
       logger.debug( "User not found with LDAP, falling back to database" )
     end

@@ -5,6 +5,7 @@ class UserLdapStrategy
   @@ldap_search_timeout = CONFIG.has_key?('ldap_search_timeout') ? CONFIG['ldap_search_timeout'] : 0
   @@ldap_group_title_attr = CONFIG.has_key?('ldap_group_title_attr') ? CONFIG['ldap_group_title_attr'] : 'cn'
   @@ldap_group_member_attr = CONFIG.has_key?('ldap_group_member_attr') ? CONFIG['ldap_group_member_attr'] : "member"
+  @@ldap_obs_admin_group = CONFIG.has_key?('ldap_obs_admin_group') ? CONFIG['ldap_obs_admin_group'] : ""
 
 
   def is_in_group?(user, group)
@@ -527,12 +528,17 @@ class UserLdapStrategy
     if Configuration.ldapgroup_mirror? then
       if user[CONFIG['ldap_user_memberof_attr']] then
         ldap_info[2] = "group_update"
+        admin = false
         glist = user[CONFIG['ldap_user_memberof_attr']]
         glist.each do |entry|
           name = extract_group_name(entry)
-          memberlist.push name unless name.nil?
+          unless name.nil?
+            admin = true if name == @@ldap_obs_admin_group
+            memberlist.push name unless name.nil?
+          end
         end
         ldap_info[3] = memberlist
+        ldap_info[4] = admin
       else
         Rails.logger.warn("LDAP group mirror enabled but  #{CONFIG['ldap_user_memberof_attr']} not found")
       end
@@ -550,8 +556,10 @@ class UserLdapStrategy
       grouplist.push CONFIG['ldap_obs_admin_group']
 
       groups = UserLdapStrategy.render_grouplist_ldap(grouplist, user.login)
-      if not groups.empty?
-        user.update_globalroles(%w(Admin))
+      unless groups.empty?
+        unless user.is_admin?
+          user.update_globalroles(%w(Admin))
+        end
       end
     end
   end
