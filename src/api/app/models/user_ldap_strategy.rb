@@ -4,6 +4,7 @@ class UserLdapStrategy
   @@ldap_search_con = nil
   @@ldap_search_timeout = CONFIG.has_key?('ldap_search_timeout') ? CONFIG['ldap_search_timeout'] : 0
   @@ldap_group_title_attr = CONFIG.has_key?('ldap_group_title_attr') ? CONFIG['ldap_group_title_attr'] : 'cn'
+  @@ldap_group_member_attr = CONFIG.has_key?('ldap_group_member_attr') ? CONFIG['ldap_group_member_attr'] : "member"
 
 
   def is_in_group?(user, group)
@@ -173,21 +174,39 @@ class UserLdapStrategy
     return
   end
 
+  def self.extract_member_name(entry)
+    entry.split(',').each do |pair|
+      key,value = pair.split('=')
+      return value if key.casecmp("cn")
+    end
+    return nil
+  end
+
   # This static method tries to find a group with the given gorup_title to check whether the group is in the LDAP server.
   def self.find_group_with_ldap(group)
+    group_info = Array.new
     if CONFIG.has_key?('ldap_group_objectclass_attr')
       filter = "(&(#{CONFIG['ldap_group_title_attr']}=#{group})(objectclass=#{CONFIG['ldap_group_objectclass_attr']}))"
     else
       filter = "(#{CONFIG['ldap_group_title_attr']}=#{group})"
     end
-    result = search_ldap(CONFIG['ldap_group_search_base'], filter)
+    attr = Configuration.ldapgroup_mirror? ? @@ldap_group_member_attr : nil
+    result = search_ldap(CONFIG['ldap_group_search_base'], filter, attr )
     if result.nil?
       Rails.logger.debug("Fail to find group: #{group} in LDAP")
-      return false
+      group_info[0] = false
     else
       Rails.logger.debug("group dn: #{result[0]}")
-      return true
+      group_info[0] = true
+      if result.size > 2
+        members = Array.new
+        result[2].each do |member|
+          members << extract_member_name(member) unless nil
+        end
+	group_info[1] = members unless members.empty?
+      end
     end
+    return group_info
   end
 
   # This static method performs the search with the given search_base, filter
