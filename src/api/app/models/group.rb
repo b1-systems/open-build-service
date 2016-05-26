@@ -32,9 +32,13 @@ class Group < ActiveRecord::Base
     group = find_by_title(title)
     if group.nil?
       if Configuration.ldapgroup_enabled?
-        if UserLdapStrategy.find_group_with_ldap(title)
+        group_info = UserLdapStrategy.find_group_with_ldap(title)
+        if group_info[0]
           # for groups we create groups transparently if a matching LDAP group exist
           group = create!(title: title)
+          if Configuration.ldapgroup_mirror? && group_info.size > 1
+            group.update_member_list(group_info[1])
+          end
         end
       end
     end
@@ -115,6 +119,13 @@ class Group < ActiveRecord::Base
 
   def remove_user(user)
     GroupsUser.delete_all(['user_id = ? AND group_id = ?', user.id, self.id])
+  end
+
+  def update_member_list(userlist)
+    userlist.each do |uname|
+      user = User.find_by_login(uname)
+      add_user(user) unless user.nil?
+    end
   end
 
   def set_email(email)
