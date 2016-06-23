@@ -1,0 +1,8 @@
+<% @pagetitle = 'Changes' %>
+<% project_bread_crumb('Changes') %>
+
+<%= render partial: 'tabs' %>
+
+<h3>Changes of Revision <%= @rev %></h3>
+
+<%= render(partial: 'shared/sourcediff', locals: { filenames: @filenames, files: @files, source: { project: @project, expand: 1, rev: @rev }, editor_width: '915px' }) %>

@@ -1,6 +1,7 @@
 class Webui::ProjectController < Webui::WebuiController
 
   include Webui::HasComments
+  include ParsePackageDiff
   include Webui::WebuiHelper
   include Webui::RequestHelper
   include Webui::ProjectHelper
@@ -1067,7 +1068,19 @@ class Webui::ProjectController < Webui::WebuiController
   end
 
   def meta
-    @meta = @project.api_obj.render_xml
+    lastrev = @project.api_obj.rev({ :meta => 1 }).to_i
+    if params[:rev] && lastrev != params[:rev].to_i
+      @rev = params[:rev] unless params[:revert]
+      path = Package.source_path(params[:project], '_project', '_meta', { :rev => params[:rev] })
+      begin
+        @meta = Suse::Backend.get(path).body
+      rescue ActiveXML::Transport::NotFoundError
+        flash[:error] = "Project _meta revision #{params[:rev]} do not found: #{params[:project]}"
+        redirect_to :controller => 'project', :action => 'list_public', :nextstatus => 404 and return
+      end
+    else
+      @meta = @project.api_obj.render_xml
+    end
   end
 
   def save_meta
@@ -1082,8 +1095,14 @@ class Webui::ProjectController < Webui::WebuiController
   end
 
   def prjconf
+    lastrev = @project.api_obj.rev.to_i
+    opts = {}
+    if params[:rev] && lastrev != params[:rev].to_i
+      @rev = params[:rev] unless params[:revert]
+      opts[:rev] = params[:rev]
+    end
     begin
-      @config = @project.api_obj.source_file('_config')
+      @config = @project.api_obj.source_file('_config', opts)
     rescue ActiveXML::Transport::NotFoundError
       flash[:error] = "Project _config not found: #{params[:project]}"
       redirect_to :controller => 'project', :action => 'list_public', :nextstatus => 404 and return
@@ -1092,7 +1111,7 @@ class Webui::ProjectController < Webui::WebuiController
 
   def save_prjconf
     check_ajax
-    frontend.put_file(params[:config], :project => params[:project], :filename => '_config')
+    frontend.put_file(params[:config], :project => params[:project], :filename => '_config', :rev => params[:rev])
     flash[:notice] = 'Project Config successfully saved'
     render text: 'Config successfully saved', content_type: 'text/plain'
   end
@@ -1102,6 +1121,65 @@ class Webui::ProjectController < Webui::WebuiController
     required_parameters :cmd, :flag
     frontend.source_cmd params[:cmd], :project => @project, :repository => params[:repository], :arch => params[:arch], :flag => params[:flag], :status => params[:status]
     @flags = @project.api_obj.expand_flags[params[:flag]]
+  end
+
+  def commit
+    required_parameters :revision
+    render partial: 'commit_item', locals: {rev: params[:revision] }
+  end
+
+
+  def revisions
+    @lastrev = @project.api_obj.rev({ :meta => params[:meta] }).to_i
+    @lastrev = params[:rev].to_i if params[:rev]
+    if params[:showall]
+      @revisions = (1..@lastrev).to_a.reverse
+    else
+      if @lastrev < 21
+        @revisions = (1..@lastrev).to_a.reverse
+      else
+        @revisions = []
+        @lastrev.downto(@lastrev-19) { |n| @revisions << n }
+      end
+    end
+  end
+
+  class DiffError < APIException
+  end
+
+  def get_diff(path)
+    begin
+      @rdiff = ActiveXML.backend.direct_http URI(path + '&expand=1'), method: 'POST', timeout: 10
+    rescue ActiveXML::Transport::Error => e
+      flash[:error] = 'Problem getting expanded diff: ' + e.summary
+      begin
+        @rdiff = ActiveXML.backend.direct_http URI(path + '&expand=0'), method: 'POST', timeout: 10
+      rescue ActiveXML::Transport::Error => e
+        flash[:error] = 'Error getting diff: ' + e.summary
+        redirect_back_or_to project_show_path(project: @project)
+        return false
+      end
+    end
+    return true
+  end
+
+
+  def rdiff
+    @last_rev = @project.api_obj.rev({ :meta => params[:meta] })
+    @rev = params[:rev] || @last_rev
+
+    query = {'cmd' => 'diff', 'view' => 'xml', 'withissues' => 1}
+    [:meta, :orev, :oproject, :linkrev, :olinkrev].each do |k|
+      query[k] = params[k] unless params[k].blank?
+    end
+    query[:rev] = @rev if @rev
+    return unless get_diff(@project.api_obj.source_path('_project') + "?#{query.to_query}")
+
+    # we only look at [0] because this is a generic function for multi diffs - but we're sure we get one
+    filenames = sorted_filenames_from_sourcediff(@rdiff)[0]
+    @files = filenames['files']
+    @filenames = filenames['filenames']
+
   end
 
   def clear_failed_comment

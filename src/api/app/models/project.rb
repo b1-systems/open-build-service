@@ -1427,6 +1427,44 @@ class Project < ActiveRecord::Base
     return release_targets_ng
   end
 
+  def dir_hash(opts = {})
+    Package.dir_hash( self.name, '_project', opts)
+  end
+
+  def rev(opts = {})
+    dir_hash(opts)['rev']
+  end
+
+  def parse_all_history(opts, hkey)
+    path = Package.source_path(self.name, '_project', '_history', opts)
+    answer = Suse::Backend.get(path).body
+    doc = Xmlhash.parse(answer)
+    doc.elements('revision') do |s|
+      Rails.cache.write([hkey, self, s['rev']], s)
+    end
+  end
+
+  def commit( rev = nil, meta = nil )
+    hkey = meta == '1' ? 'mhistory' : 'history'
+    opts = { :meta => meta }
+    if rev and rev.to_i < 0
+      # going backward from not yet known current revision, find out ...
+      r = self.rev(opts).to_i + rev.to_i + 1
+      rev = r.to_s
+      return nil if rev.to_i < 1
+    end
+    rev ||= self.rev(opts)
+
+    cache_key = [hkey, self, rev]
+    c = Rails.cache.read(cache_key)
+    return c if c
+
+    parse_all_history(opts, hkey)
+    # now it has to be in cache
+    Rails.cache.read(cache_key)
+  end
+
+
   def self.source_path(project, file = nil, opts = {})
     path = "/source/#{URI.escape(project)}"
     path += "/#{URI.escape(file)}" unless file.blank?

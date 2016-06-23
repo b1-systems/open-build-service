@@ -4,9 +4,21 @@
 
 <%= render :partial => 'tabs' %>
 
-<h3><%= @pagetitle %></h3>
-<% if User.current.can_modify_project?(@project.api_obj) %>
-  <%= render partial: "shared/editor", locals: {text: @meta, mode: 'xml', save: {url: url_for(controller: 'project', action: 'save_meta'), method: 'POST', data: {project: @project.name, submit: 'meta'}}} %>
+<h3><%= @pagetitle %> <% if @rev %>(Revision <%= @rev %>)<% end %></h3>
+
+<% unless @spider_bot -%>
+  <p>
+  <% if @rev %>
+    <% txt = "Revert to Revision #{@rev}" %>
+    <%= link_to(sprited_text('brick', txt), :controller => :project, :action => :meta, :project => @project, :rev => @rev, :revert => 1) %>
+  <% else %>
+    <%= link_to(sprited_text('brick', 'Show Revisions'), :controller => :project, :action => :revisions, :meta => 1) %>
+  <% end %>
+  </p>
+<% end %>
+
+<% if User.current.can_modify_project?(@project.api_obj) && !@rev %>
+  <%= render partial: "shared/editor", locals: {text: @meta, mode: 'xml', save: {url: url_for(controller: 'project', action: 'save_meta'), method: 'POST', data: {project: @project.name, submit: 'meta', rev: @rev}}} %>
 <% else %>
-  <%= render partial: "shared/editor", locals: {text: @meta, mode: 'xml'} %>
+  <%= render partial: "shared/editor", locals: {text: @meta, mode: 'xml', read_only: true} %>
 <% end %>

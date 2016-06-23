@@ -4,9 +4,21 @@
 
 <%= render :partial => 'tabs' %>
 
-<h3><%= @pagetitle %></h3>
+<h3><%= @pagetitle %> <% if @rev %>(Revision <%= @rev %>)<% end %></h3>
+
+<% unless @spider_bot -%>
+  <p>
+  <% if @rev %>
+    <% txt = "Revert to Revision #{@rev}" %>
+    <%= link_to(sprited_text('brick', txt), :controller => :project, :action => :prjconf, :project => @project, :rev => @rev, :revert => 1) %>
+  <% else %>
+    <%= link_to(sprited_text('brick', 'Show Revisions'), :controller => :project, :action => :revisions, :meta => 0) %>
+  <% end %>
+  </p>
+</div>
+
 <div style="margin-left: 15px; margin-right: 15px;">
-  <% if User.current.can_modify_project?(@project.api_obj) %>
+  <% if User.current.can_modify_project?(@project.api_obj) && ! @rev %>
     <%= render partial: "shared/editor", locals: {text: @config, mode: 'prjconf', save: {url: url_for(controller: 'project', action: 'save_prjconf'), method: 'POST', data: {project: @project.name, submit: 'config'}}} %>
   <% else %>
     <%= render partial: "shared/editor", locals: {text: @config, mode: 'prjconf', read_only: true} %>
