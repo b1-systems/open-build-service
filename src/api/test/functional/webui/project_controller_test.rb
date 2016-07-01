@@ -420,4 +420,42 @@ class Webui::ProjectControllerTest < Webui::IntegrationTest
     # we only test it's not crashing here
     page.must_have_text 'Rebuildtime: '
   end
+
+  test 'revision control for project meta is here' do
+    use_js
+    login_Iggy to: project_repositories_path(project: 'home:Iggy')
+
+    visit project_meta_path(project: 'home:Iggy')
+    # check title
+    page.must_have_text 'Meta Configuration of home:Iggy'
+    page.must_have_link 'Show Revisions'
+
+    click_link 'Show Revisions'
+
+    # check title
+    page.must_have_text 'Revision Log of home:Iggy'
+    page.must_have_link 'Show all'
+
+    # should be enhanced to create some revisions first
+  end
+
+  test 'revision control for project config is here' do
+    use_js
+    login_Iggy to: project_repositories_path(project: 'home:Iggy')
+
+    visit project_prjconf_path(project: 'home:Iggy')
+
+    # check title
+    page.must_have_text 'Project Configuration of home:Iggy'
+    page.must_have_link 'Show Revisions'
+
+    click_link 'Show Revisions'
+
+    # check title
+    page.must_have_text 'Revision Log of home:Iggy'
+    page.must_have_link 'Show all'
+
+    # should be enhanced to create some revisions first
+  end
+
 end

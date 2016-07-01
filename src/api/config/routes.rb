@@ -214,7 +214,7 @@ OBSApi::Application.routes.draw do
       get 'project/toggle_watch/:project' => :toggle_watch, constraints: cons, as: 'project_toggle_watch'
       get 'project/meta/:project' => :meta, constraints: cons, as: 'project_meta'
       post 'project/save_meta/:project' => :save_meta, constraints: cons
-      get 'project/prjconf/:project' => :prjconf, constraints: cons
+      get 'project/prjconf/:project' => :prjconf, constraints: cons, as: 'project_prjconf'
       post 'project/save_prjconf/:project' => :save_prjconf, constraints: cons
       post 'project/change_flag/:project' => :change_flag, constraints: cons
       get 'project/clear_failed_comment/:project' => :clear_failed_comment, constraints: cons
