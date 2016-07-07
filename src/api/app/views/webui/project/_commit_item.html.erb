@@ -1,0 +1,51 @@
+<% commit = @project.api_obj.commit(rev.to_s, meta) %>
+<% if commit %>
+    <% if commit['user'] == '_service' %>
+        <%= sprite_tag('cog') %> automatic update by service
+    <% else %>
+        <% user = User.find_by_login commit['user'] %>
+        <% if user %>
+            <% realname = user.realname %>
+            <%= user_icon(user) %>
+            <% unless realname.empty? %>
+                <%= link_to_if(!User.current.is_nobody?, realname + ' (' + user.login + ')', user_show_path(user)) %>
+            <% else %>
+                <%= link_to_if(!User.current.is_nobody?, user.login, user_show_path(user)) %>
+            <% end %>
+        <% else %>
+            <i><%= commit['user'] || '-' %></i>
+        <% end %>
+        <% if commit['requestid'] %>
+            accepted <%= link_to("request #{commit['requestid']}", {:controller => :request, :action => :show, :id => commit['requestid']}) %>
+        <% else %>
+            committed
+        <% end %>
+    <% end %>
+    <%= fuzzy_time(Time.at(commit['time'].to_i)) %> (revision <%= commit['rev'] %>)
+    <% unless commit['user'] == '_service' or commit['comment'].blank? %>
+        <pre class="plain"><%= commit['comment'] %></pre>
+    <% end %>
+    <ul class="horizontal-list" style="margin: 5px 0px 0px 20px;">
+    <% if commit['rev'] != '1' %>
+      <li>
+        <%= link_to(sprite_tag('brick'), {:controller => :project, :action => :rdiff,
+                                          :project => @project,
+                                          :rev => commit['rev'], :meta => meta, :linkrev => 'base'}) %>
+        <%= link_to('Changes', {:controller => :project, :action => :rdiff,
+                                          :project => @project,
+                                          :rev => commit['rev'], :meta => meta, :linkrev => 'base'}) %>
+      </li>
+    <% end -%>
+      <li>
+        <% if meta == '1' %>
+          <%= link_to(image_tag('folder_go.png'), :controller => :project, :action => :meta, :project => @project, :rev => commit['rev']) %>
+          <%= link_to('Browse Project Meta', :controller => :project, :action => :meta, :project => @project, :rev => commit['rev']) %>
+        <% else %>
+          <%= link_to(image_tag('folder_go.png'), :controller => :project, :action => :prjconf, :project => @project, :rev => commit['rev']) %>
+          <%= link_to('Browse Project Config', :controller => :project, :action => :prjconf, :project => @project, :rev => commit['rev']) %>
+        <% end -%>
+      </li>
+    </ul>
+<% else %>
+    <i>Revision <%= rev.to_s %> not found</i>
+<% end %>

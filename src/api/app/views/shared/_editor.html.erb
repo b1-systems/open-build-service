@@ -1,13 +1,15 @@
 <% save ||= {} %>
 <% read_only ||= false %>
+<% force_save ||= false %>
 
 <% uid ||= setup_codemirror_editor(read_only: read_only) %>
 
 <% unless read_only %>
+    <% save_active = force_save ? "active" : "inactive" %>
     <div id="top_<%= uid %>">
       <div class="toolbar">
     <span style="float:left;">
-      <input type="button" class="tools buttons small save inactive" value="Save" id="save_<%= uid %>"/>
+      <input type="button" class="tools buttons small save <%= save_active %>" value="Save" id="save_<%= uid %>"/>
       <input type="button" id="undo_<%= uid %>" value="undo" class="tools
       buttons undo" style="background:transparent;" onclick="editors[<%= uid %>].Undo(this);"/>
       

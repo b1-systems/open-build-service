@@ -162,6 +162,9 @@ OBSApi::Application.routes.draw do
       get 'project/autocomplete_repositories' => :autocomplete_repositories
       get 'project/users/:project' => :users, constraints: cons, as: 'project_users'
       get 'project/subprojects/:project' => :subprojects, constraints: cons, as: 'project_subprojects'
+      get 'project/commit/:project' => :commit, as: 'project_commit', constraints: cons
+      get 'project/revisions/:project' => :revisions, constraints: cons, as: 'project_view_revisions'
+      get 'project/rdiff/:project' => :rdiff, constraints: cons
       get 'project/attributes/:project', to: redirect('/attribs/%{project}')
       get 'project/new' => :new
       post 'project/new_incident' => :new_incident

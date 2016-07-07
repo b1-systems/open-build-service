@@ -1,13 +1,27 @@
 <% @pagetitle = "Project Configuration of #{@project}" %>
 <% @metarobots = 'noindex' %>
+<% @force_save ||= false %>
 <% project_bread_crumb 'Project Configuration' %>
 
 <%= render :partial => 'tabs' %>
 
-<h3><%= @pagetitle %></h3>
+<h3><%= @pagetitle %> <% if @rev %>(Revision <%= @rev %>)<% end %></h3>
+
+<% unless @spider_bot -%>
+  <p>
+  <% if @rev %>
+    <%= link_to(sprite_tag('brick'), :controller => :project, :action => :prjconf, :project => @project, :rev => @rev, :revert => 1) %>
+    <%= link_to("Load Revision #{@rev} into the editor", :controller => :project, :action => :prjconf, :project => @project, :rev => @rev, :revert => 1) %>
+  <% else %>
+    <%= link_to(sprite_tag('brick'), :controller => :project, :action => :revisions, :meta => 0) %>
+    <%= link_to('Show Revisions', :controller => :project, :action => :revisions, :meta => 0) %>
+  <% end %>
+  </p>
+<% end %>
+
 <div style="margin-left: 15px; margin-right: 15px;">
-  <% if User.current.can_modify_project?(@project.api_obj) %>
-    <%= render partial: "shared/editor", locals: {text: @config, mode: 'prjconf', save: {url: url_for(controller: 'project', action: 'save_prjconf'), method: 'POST', data: {project: @project.name, submit: 'config'}}} %>
+  <% if User.current.can_modify_project?(@project.api_obj) && ! @rev %>
+    <%= render partial: "shared/editor", locals: {text: @config, mode: 'prjconf', save: {url: url_for(controller: 'project', action: 'save_prjconf'), method: 'POST', data: {project: @project.name, submit: 'config'}}, force_save: @force_save} %>
   <% else %>
     <%= render partial: "shared/editor", locals: {text: @config, mode: 'prjconf', read_only: true} %>
   <% end %>

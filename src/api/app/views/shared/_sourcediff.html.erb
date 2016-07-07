@@ -1,4 +1,6 @@
 <% editor_width ||= 'auto' %>
+<% nolinks ||= false %>
+<% expand_all ||= false %>
 <% css_class ||= '' %>
 <% css_id ||= nil %>
 <% div_opts = { data: { url: url_for(:controller => 'request', :action => 'sourcediff') } }
@@ -18,7 +20,7 @@
 	   file_diff_text = file_element['diff'] || {}
            file_diff_text = file_diff_text['_content'] || ''
            file_state = file_element['state'].capitalize
-           is_expanded = file_state != 'Deleted' && !filename.include?('/') && (filename == '_patchinfo' || filename.ends_with?('.spec') || filename.ends_with?('.changes')) 
+           is_expanded = file_state != 'Deleted' && !filename.include?('/') && (filename == '_patchinfo' || filename.ends_with?('.spec') || filename.ends_with?('.changes') || expand_all)
         %>
         <tr id="diff_headline_<%= file_id %>">
           <td style="width: 16px"><%# NOTE: Hand-crafted value for both '[+]' and '[-]' %>
@@ -43,7 +45,7 @@
             <% rev = source[:rev] %>
             <% rev = (rev.to_i - 1).to_s if file_element['state'] == 'deleted' %>
             <%# TODO: drop this check for '/' once we can 'view' files inside tarballs: %>
-            <%= link_to_unless(Package.is_binary_file?(filename) || filename.include?('/'), filename, controller: 'package', action: 'view_file', project: source[:project], package: source[:package], filename: filename, rev: rev ) %>
+            <%= link_to_unless(nolinks || Package.is_binary_file?(filename) || filename.include?('/'), filename, controller: 'package', action: 'view_file', project: source[:project], package: source[:package], filename: filename, rev: rev ) %>
           <% else %>
           <%= filename %>
           <% end %>
