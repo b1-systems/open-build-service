@@ -9,7 +9,7 @@
 
 <% unless @spider_bot -%>
   <p>
-  <% if @rev %>
+  <% if User.current.can_modify_project?(@project.api_obj) && @rev %>
     <%= link_to(sprite_tag('brick'), :controller => :project, :action => :meta, :project => @project, :rev => @rev, :revert => 1) %>
     <%= link_to("Load Revision #{@rev} into the editor", :controller => :project, :action => :meta, :project => @project, :rev => @rev, :revert => 1) %>
   <% else %>
