@@ -61,6 +61,6 @@
         <h3>Latest Revision</h3>
     <% end %>
     <div style="margin-left: 1.2em">
-      <%= render :partial => 'commit_item', :locals => {:rev => @revision} %>
+      <%= render :partial => 'commit_item', :locals => {:rev => @revision, :meta => '0' } %>
     </div>
 <% end %>

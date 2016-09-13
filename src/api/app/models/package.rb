@@ -713,8 +713,8 @@ class Package < ActiveRecord::Base
     dir_hash['linkinfo']
   end
 
-  def rev
-    dir_hash['rev']
+  def rev(opts = {})
+    dir_hash(opts)['rev']
   end
 
   def channels
@@ -944,29 +944,30 @@ class Package < ActiveRecord::Base
     @serviceinfo
   end
 
-  def parse_all_history
-    answer = source_file('_history')
-
+  def parse_all_history(opts, hkey)
+    answer = source_file('_history', opts)
     doc = Xmlhash.parse(answer)
     doc.elements('revision') do |s|
-      Rails.cache.write(['history', self, s['rev']], s)
+      Rails.cache.write([hkey, self, s['rev']], s)
     end
   end
 
-  def commit( rev = nil )
+  def commit( rev = nil, meta = '0' )
+    hkey = meta == '1' ? 'mhistory' : 'history'
+    opts = { :meta => meta }
     if rev and rev.to_i < 0
       # going backward from not yet known current revision, find out ...
-      r = self.rev.to_i + rev.to_i + 1
+      r = self.rev(opts).to_i + rev.to_i + 1
       rev = r.to_s
       return nil if rev.to_i < 1
     end
     rev ||= self.rev
 
-    cache_key = ['history', self, rev]
+    cache_key = [hkey, self, rev]
     c = Rails.cache.read(cache_key)
     return c if c
 
-    parse_all_history
+    parse_all_history(opts, hkey)
     # now it has to be in cache
     Rails.cache.read(cache_key)
   end

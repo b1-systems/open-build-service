@@ -1,4 +1,8 @@
-<% @pagetitle = "Revision Log of #{@package}" %>
+<% if params[:meta] == '1' %>
+  <% @pagetitle = "Meta Revision Log of #{@package}" %>
+<% else %>
+  <% @pagetitle = "Revision Log of #{@package}" %>
+<% end %>
 <% package_bread_crumb 'Revisions'%>
 
 <%= render :partial => 'tabs' %>
@@ -8,12 +12,12 @@
   <div id="revisions_view" style="margin-left: 1.2em">
     <% @revisions.each do |rev| %>
       <div id="commit_item_<%= rev %>" class="commit_item">
-        <%= render(:partial => 'commit_item', :locals => {:rev => rev }) %>
+        <%= render(:partial => 'commit_item', :locals => {:rev => rev, :meta => params[:meta] }) %>
       </div>
     <% end %>
   </div>
   <% unless params[:showall] %>
-    <p><%= link_to('Show all', :action  => 'revisions', :project => @project, :package => @package, :showall => 1) %></p>
+    <p><%= link_to('Show all', :action  => 'revisions', :project => @project, :package => @package, :meta => params[:meta], :showall => 1) %></p>
   <% end %>
 <% else %>
   <h3><%= @pagetitle %></h3>

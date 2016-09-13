@@ -1,4 +1,4 @@
-<% commit = @package.commit(rev.to_s) %>
+<% commit = @package.commit(rev.to_s, meta) %>
 <% if commit %>
     <% if commit['user'] == '_service' %>
         <%= sprite_tag('cog') %> automatic update by service
@@ -30,14 +30,24 @@
       <li>
         <%= link_to(sprite_tag('brick'), {:controller => :package, :action => :rdiff,
                                           :package => @package, :project => @project,
-                                          :rev => commit['rev'], :linkrev => 'base'}) %>
-        <%= link_to('Files changed', :controller => :package, :action => :rdiff,
-                    :package => @package, :project => @project, :rev => commit['rev'], :linkrev => 'base') %>
+                                          :rev => commit['rev'], :meta => meta, :linkrev => 'base'}) %>
+        <% if meta == '1' %>
+          <%= link_to('Changes', :controller => :package, :action => :rdiff,
+                      :package => @package, :project => @project, :rev => commit['rev'], :meta => meta, :linkrev => 'base') %>
+        <% else %>
+          <%= link_to('Files changed', :controller => :package, :action => :rdiff,
+                      :package => @package, :project => @project, :rev => commit['rev'], :meta => meta, :linkrev => 'base') %>
+        <% end %>
       </li>
-    <% end -%>
+    <% end %>
       <li>
+      <% if meta == '1' %>
+        <%= link_to(image_tag('folder_go.png'), :controller => :package, :action => :meta, :project => @project, :package => @package, :rev => commit['rev']) %>
+        <%= link_to('Show Meta', :controller => :package, :action => :meta, :project => @project, :package => @package, :rev => commit['rev']) %>
+      <% else %>
         <%= link_to(image_tag('folder_go.png'), :action => 'show', :project => @project, :package => @package, :rev => commit['rev']) %>
         <%= link_to('Browse Source', :action => 'show', :project => @project, :package => @package, :rev => commit['rev']) %>
+      <% end %>
       </li>
     </ul>
 <% else %>

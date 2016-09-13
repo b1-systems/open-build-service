@@ -13,7 +13,7 @@
     <%= tab 'overview', 'Overview', :controller => 'package', :action => 'show' %>
     <% unless @spider_bot -%>
       <%= tab 'repositories', 'Repositories', :controller => 'package', :action => 'repositories' %>
-      <%= tab 'revisions', 'Revisions', :controller => 'package', :action => 'revisions' %>
+      <%= tab 'revisions', 'Revisions', :controller => 'package', :action => 'revisions', :meta => '0' %>
       <%= tab 'requests', "Requests", :controller => 'package', :action => 'requests' %>
       <%= tab 'users', 'Users', :controller => 'package', :action => 'users' %>
     <% end -%>

@@ -179,7 +179,14 @@ class Webui::PackageController < Webui::WebuiController
       flash[:error] = 'Could not access revisions'
       redirect_to :action => :show, :project => @project.name, :package => @package.name and return
     end
-    @lastrev = @package.rev.to_i
+
+    if params[:meta]
+      meta = params[:meta]
+    else
+      meta = '0'
+    end
+
+    @lastrev = @package.rev({ :meta => meta }).to_i
     @lastrev = params[:rev].to_i if params[:rev]
     if params[:showall]
       @revisions = (1..@lastrev).to_a.reverse
@@ -416,7 +423,8 @@ class Webui::PackageController < Webui::WebuiController
 
 
   def rdiff
-    @last_rev = @package.dir_hash['rev']
+    @pmeta = params[:meta]
+    @last_rev = @package.api_obj.rev({ :meta => @pmeta })
     @linkinfo = @package.linkinfo
     if params[:oproject]
       @oproject = Project.find_by_name(params[:oproject])
@@ -428,7 +436,7 @@ class Webui::PackageController < Webui::WebuiController
     @rev = params[:rev] || @last_rev
 
     query = {'cmd' => 'diff', 'view' => 'xml', 'withissues' => 1}
-    [:orev, :opackage, :oproject, :linkrev, :olinkrev].each do |k|
+    [:meta, :orev, :opackage, :oproject, :linkrev, :olinkrev].each do |k|
       query[k] = params[k] unless params[k].blank?
     end
     query[:rev] = @rev if @rev
@@ -974,7 +982,24 @@ class Webui::PackageController < Webui::WebuiController
   end
 
   def meta
-    @meta = @package.render_xml
+    lastrev = @package.api_obj.rev({ :meta => '1' }).to_i
+    @force_save = false
+    if params[:rev] && lastrev != params[:rev].to_i
+      if params[:revert]
+        @force_save = true
+      else
+        @rev = params[:rev]
+      end
+      path = Package.source_path(params[:project], params[:package], '_meta', { :rev => params[:rev] })
+      begin
+        @meta = Suse::Backend.get(path).body
+      rescue ActiveXML::Transport::NotFoundError
+        flash[:error] = "Project _meta revision #{params[:rev]} do not found: #{params[:project]}"
+        redirect_to :controller => 'project', :action => 'list_public', :nextstatus => 404 and return
+      end
+    else
+      @meta = @package.render_xml
+    end
   end
 
   def save_meta
