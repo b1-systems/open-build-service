@@ -39,10 +39,10 @@
       <li>
         <% if meta == '1' %>
           <%= link_to(image_tag('folder_go.png'), :controller => :project, :action => :meta, :project => @project, :rev => commit['rev']) %>
-          <%= link_to('Browse Project Meta', :controller => :project, :action => :meta, :project => @project, :rev => commit['rev']) %>
+          <%= link_to('Show Project Meta', :controller => :project, :action => :meta, :project => @project, :rev => commit['rev']) %>
         <% else %>
           <%= link_to(image_tag('folder_go.png'), :controller => :project, :action => :prjconf, :project => @project, :rev => commit['rev']) %>
-          <%= link_to('Browse Project Config', :controller => :project, :action => :prjconf, :project => @project, :rev => commit['rev']) %>
+          <%= link_to('Show Project Config', :controller => :project, :action => :prjconf, :project => @project, :rev => commit['rev']) %>
         <% end -%>
       </li>
     </ul>
