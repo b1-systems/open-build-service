@@ -1,10 +1,25 @@
 class GroupController < ApplicationController
+  include ValidationHelper
 
-  validate_action :groupinfo => { :method => :get, :response => :group }
-  validate_action :groupinfo => { :method => :put, :request => :group, :response => :status }
-  validate_action :groupinfo => { :method => :delete, :response => :status }
+  validate_action groupinfo: { method: :get, response: :group }
+  validate_action groupinfo: { method: :put, request: :group, response: :status }
+  validate_action groupinfo: { method: :delete, response: :status }
 
-  before_action :require_admin, except: [:index, :show]
+  # raise an exception if authorize has not yet been called.
+  after_action :verify_authorized, except: [:index, :show]
+
+  rescue_from Pundit::NotAuthorizedError do |exception|
+    pundit_action = case exception.query.to_s
+                    when 'index?' then 'list'
+                    when 'show?' then 'view'
+                    when 'create?', 'new?' then 'create'
+                    when 'update?' then 'update'
+                    when 'destroy?' then 'delete'
+                    else exception.query
+                    end
+
+    render_error status: 403, errorcode: "No permission to #{pundit_action} group"
+  end
 
   def index
     if params[:login]
@@ -13,14 +28,13 @@ class GroupController < ApplicationController
     else
       @list = Group.all
     end
-    if params[:prefix]
-      @list = @list.find_all { |group| group.title.match(/^#{params[:prefix]}/) }
-    end
+    @list = @list.where('title LIKE ?', "#{params[:prefix]}%") if params[:prefix].present?
   end
 
   # DELETE for removing it
   def delete
     group = Group.find_by_title!(params[:title])
+    authorize group, :destroy?
     group.destroy
     render_ok
   end
@@ -34,9 +48,15 @@ class GroupController < ApplicationController
   def update
     group = Group.find_by_title(params[:title])
     if group.nil?
-      group = Group.create(:title => params[:title])
+      authorize Group, :create?
+      group = Group.create(title: params[:title])
     end
-    group.update_from_xml(Xmlhash.parse(request.raw_post))
+    authorize group, :update?
+
+    xmlhash = Xmlhash.parse(request.raw_post)
+    raise InvalidParameterError, 'group name from path and xml mismatch' unless group.title == xmlhash.value('title')
+
+    group.update_from_xml(xmlhash)
     group.save!
 
     render_ok
@@ -44,20 +64,22 @@ class GroupController < ApplicationController
 
   # POST for editing it, adding or remove users
   def command
-    group = Group.find_by_title!(URI.unescape(params[:title]))
+    group = Group.find_by_title!(CGI.unescape(params[:title]))
+    authorize group, :update?
+
     user = User.find_by_login!(params[:userid]) if params[:userid]
 
-    if params[:cmd] == "add_user"
-      group.add_user user
-    elsif params[:cmd] == "remove_user"
-      group.remove_user user
-    elsif params[:cmd] == "set_email"
-      group.set_email params[:email]
+    case params[:cmd]
+    when 'add_user'
+      group.add_user(user)
+    when 'remove_user'
+      group.remove_user(user)
+    when 'set_email'
+      group.set_email(params[:email])
     else
-      raise UnknownCommandError.new "cmd must be set to add_user or remove_user"
+      raise UnknownCommandError, 'cmd must be set to add_user or remove_user'
     end
 
     render_ok
   end
-
 end

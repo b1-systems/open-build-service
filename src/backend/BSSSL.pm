@@ -24,55 +24,96 @@
 
 package BSSSL;
 
+use POSIX;
 use Socket;
 use Net::SSLeay;
 
 use strict;
 
 my $sslctx;
+my $ssleay_inited;
 
-sub initctx {
-  my ($keyfile, $certfile) = @_;
+sub initssleay {
   Net::SSLeay::load_error_strings();
   Net::SSLeay::SSLeay_add_ssl_algorithms();
   Net::SSLeay::randomize();
-  $sslctx = Net::SSLeay::CTX_new() or die("CTX_new failed!\n");
-  Net::SSLeay::CTX_set_options($sslctx, &Net::SSLeay::OP_ALL);
-  if ($keyfile) {
-    Net::SSLeay::CTX_use_RSAPrivateKey_file($sslctx, $keyfile, &Net::SSLeay::FILETYPE_PEM) || die("RSAPrivateKey $keyfile failed\n");
+  $ssleay_inited = 1;
+}
+
+sub newctx {
+  my (%opts) = @_;
+  initssleay() unless $ssleay_inited;
+  my $ctx = Net::SSLeay::CTX_new() or die("CTX_new failed!\n");
+  Net::SSLeay::CTX_set_options($ctx, &Net::SSLeay::OP_ALL);
+  if ($opts{'keyfile'}) {
+    Net::SSLeay::CTX_use_PrivateKey_file($ctx, $opts{'keyfile'}, &Net::SSLeay::FILETYPE_PEM) || die("PrivateKey $opts{'keyfile'} failed to load\n");
   }
-  if ($certfile) {
-    Net::SSLeay::CTX_use_certificate_file($sslctx, $certfile, &Net::SSLeay::FILETYPE_PEM) || die("certificate $keyfile failed\n");
+  if ($opts{'certfile'}) {
+    # CTX_use_certificate_chain_file expects PEM format anyway, client cert first, chain certs after that
+    Net::SSLeay::CTX_use_certificate_chain_file($ctx, $opts{'certfile'}) || die("certificate $opts{'certfile'} failed to load\n");
   }
+  if (defined(&Net::SSLeay::CTX_set_tmp_ecdh) && Net::SSLeay::SSLeay() < 0x10100000) {
+    my $curve = Net::SSLeay::OBJ_txt2nid('prime256v1');
+    my $ecdh  = Net::SSLeay::EC_KEY_new_by_curve_name($curve);
+    Net::SSLeay::CTX_set_tmp_ecdh($ctx, $ecdh);
+    Net::SSLeay::EC_KEY_free($ecdh);
+  }
+  if ($opts{'verify_file'} || $opts{'verify_dir'}) {
+    Net::SSLeay::CTX_load_verify_locations($ctx, $opts{'verify_file'} || '', $opts{'verify_dir'} || '') || Net::SSLeay::die_now("CTX_load_verify_locations failed\n");
+  }
+  return $ctx;
 }
 
 sub freectx {
-  Net::SSLeay::CTX_free($sslctx);
-  undef $sslctx;
+  my ($ctx) = @_;
+  Net::SSLeay::CTX_free($ctx) if $ctx;
+  return undef;
+}
+
+sub setdefaultctx {
+  my ($ctx) = @_;
+  freectx($sslctx);
+  $sslctx = $ctx;
+  return $sslctx;
 }
 
 sub tossl {
-  local *S = $_[0];
-  tie(*S, 'BSSSL', @_);
+  local *S = shift @_;
+  tie(*{\*S}, 'BSSSL', \*S, @_);
 }
 
 sub TIEHANDLE {
-  my ($self, $socket, $keyfile, $certfile, $forceconnect) = @_;
+  my ($self, $socket, %opts) = @_;
 
-  initctx() unless $sslctx;
-  my $ssl = Net::SSLeay::new($sslctx) or die("SSL_new failed\n");
+  my $ctx = $opts{'ctx'} || $sslctx || setdefaultctx(newctx());
+  my $ssl = Net::SSLeay::new($ctx) or die("SSL_new failed\n");
   Net::SSLeay::set_fd($ssl, fileno($socket));
-  if ($keyfile) {
-    Net::SSLeay::use_RSAPrivateKey_file($ssl, $keyfile, &Net::SSLeay::FILETYPE_PEM) || die("RSAPrivateKey $keyfile failed\n");
+  if ($opts{'keyfile'}) {
+    Net::SSLeay::use_PrivateKey_file($ssl, $opts{'keyfile'}, &Net::SSLeay::FILETYPE_PEM) || die("PrivateKey $opts{'keyfile'} failed to load\n");
   }
-  if ($certfile) {
-    Net::SSLeay::use_certificate_file($ssl, $certfile, &Net::SSLeay::FILETYPE_PEM) || die("certificate $certfile failed\n");
+  if ($opts{'certfile'}) {
+    Net::SSLeay::use_certificate_chain_file($ssl, $opts{'certfile'}) || die("certificate $opts{'certfile'} failed to load\n");
   }
-  if (defined($keyfile) && !$forceconnect) {
-    Net::SSLeay::accept($ssl) == 1 || die("SSL_accept\n");
+  my $cert_ok;
+  if ($opts{'verify'}) {
+    my $mode = &Net::SSLeay::VERIFY_PEER;
+    $mode |= &Net::SSLeay::VERIFY_FAIL_IF_NO_PEER_CERT if $opts{'verify'} =~ /enforce_cert/;
+    my $cb;
+    if ($opts{'verify'} !~ /fail_unverified/) {
+      $cb = sub { $cert_ok = $_[0] if !$_[0] || !defined($cert_ok); return 1 };
+    } else {
+      $cb = sub { $cert_ok = $_[0] if !$_[0] || !defined($cert_ok); return $_[0] };
+    }
+    Net::SSLeay::set_verify($ssl, $mode, $cb);
+  }
+  my $mode = $opts{'mode'} || ($opts{'keyfile'} ? 'accept' : 'connect');
+  if ($mode eq 'accept') {
+    Net::SSLeay::accept($ssl) == 1 || die("SSL_accept error $!\n");
   } else {
-    Net::SSLeay::connect($ssl) || die("SSL_connect");
+    Net::SSLeay::set_tlsext_host_name($ssl, $opts{'sni'}) if $opts{'sni'} && defined(&Net::SSLeay::set_tlsext_host_name);
+    Net::SSLeay::connect($ssl) || die("SSL_connect error");
   }
+  return bless [$ssl, $socket, \$cert_ok] if $opts{'verify'};
   return bless [$ssl, $socket];
 }
 
@@ -94,7 +135,11 @@ sub READLINE {
 sub READ {
   my ($sslr, undef, $len, $offset) = @_;
   my $buf = \$_[1];
-  my $r = Net::SSLeay::read($sslr->[0], $len);
+  my ($r, $rv)  = Net::SSLeay::read($sslr->[0]);
+  if ($rv && $rv < 0) {
+    my $code = Net::SSLeay::get_error($sslr->[0], $rv);
+    $! = POSIX::EINTR if $code == &Net::SSLeay::ERROR_WANT_READ || $code == &Net::SSLeay::ERROR_WANT_WRITE;
+  }
   return undef unless defined $r;
   return length($$buf = $r) unless defined $offset;
   my $bl = length($$buf);
@@ -135,6 +180,41 @@ sub UNTIE {
 sub DESTROY {
   my ($sslr) = @_;
   UNTIE($sslr) if $sslr && $sslr->[0];
+}
+
+sub data_available {
+  my ($sslr) = @_;
+  my ($r, $rv) = Net::SSLeay::peek($sslr->[0], 1);
+  if ($rv && $rv < 0) {
+    my $code = Net::SSLeay::get_error($sslr->[0], $rv);
+    return 0 if $code == &Net::SSLeay::ERROR_WANT_READ || $code == &Net::SSLeay::ERROR_WANT_WRITE;
+    return undef;
+  }
+  return defined($r) ? 1 : 0;
+}
+
+sub peerfingerprint {
+  my ($sslr, $type) = @_;
+  my $cert = Net::SSLeay::get_peer_certificate($sslr->[0]);
+  return undef unless $cert;
+  my $fp = Net::SSLeay::X509_get_fingerprint($cert, lc($type));
+  Net::SSLeay::X509_free($cert);
+  return undef unless $fp;
+  $fp =~ s/://g;
+  return lc($fp);
+}
+
+sub subjectdn {
+  my ($sslr, $ignoreverify) = @_;
+  if (!$ignoreverify) {
+    my $cert_ok = @$sslr >= 3 ? ${$sslr->[2]} : 0;
+    return undef unless $cert_ok;
+  }
+  my $cert = Net::SSLeay::get_peer_certificate($sslr->[0]);
+  return undef unless $cert;
+  my $subject = Net::SSLeay::X509_get_subject_name($cert);
+  return undef unless $subject;
+  return Net::SSLeay::X509_NAME_print_ex($subject, &Net::SSLeay::XN_FLAG_RFC2253);
 }
 
 1;

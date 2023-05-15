@@ -1,0 +1,19 @@
+%hr
+.d-flex
+  .flex-shrink-0
+    = image_tag_for(comment.user, size: 35, custom_class: 'me-3 d-none d-sm-block')
+  .comment.flex-grow-1.text-break
+    %p
+      = link_to(comment.user, user_path(comment.user))
+      wrote
+      = link_to("#comment-#{comment.id}", title: I18n.l(comment.created_at.utc), name: "comment-#{comment.id}") do
+        = render TimeComponent.new(time: comment.created_at)
+    = render_as_markdown(comment)
+    = render partial: 'webui/comment/reply', locals: { comment: comment, level: 0, commentable: commentable }
+    - if level <= 3
+      - comment.children.includes(:user).each do |children|
+        = render partial: 'webui/comment/content', locals: { comment: children, commentable: commentable, level: level + 1 }
+
+- if level > 3
+  - comment.children.includes(:user).each do |children|
+    = render partial: 'webui/comment/content', locals: { comment: children, commentable: commentable, level: level + 1 }

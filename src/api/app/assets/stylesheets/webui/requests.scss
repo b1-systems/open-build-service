@@ -1,0 +1,69 @@
+.badge-added {
+  color: $white;
+  background-color: $green;
+}
+
+.badge-deleted {
+  color: $white;
+  background-color: $red;
+}
+
+.badge-changed, .badge-renamed {
+  color: $white;
+  background-color: $cyan;
+}
+
+.bg-staging {
+  background-color: $pink-300;
+  > a {
+    color: $white;
+  }
+}
+
+.req-description-box {
+  word-break: break-all;
+  white-space: pre-line;
+  font-size: 14px;
+  padding-right: 1em;
+}
+
+.request-flag-new {
+  @extend .text-success;
+}
+
+.request-flag-review {
+  @extend .text-warning;
+}
+
+.request-flag-declined {
+  @extend .text-danger;
+}
+
+.scrollable-dropdown {
+  overflow-y: scroll;
+  height: 400px;
+}
+
+.fa-stack-slash {
+  left: -2px;
+}
+
+@include media-breakpoint-up(sm) {
+  .order-sm-1 {
+    order: 1;
+  }
+
+  .order-sm-2 {
+    order: 2;
+  }
+}
+
+@include media-breakpoint-up(md) {
+  .order-md-1 {
+    order: 1;
+  }
+
+  .order-md-2 {
+    order: 2;
+  }
+}

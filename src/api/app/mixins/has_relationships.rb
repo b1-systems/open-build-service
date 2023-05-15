@@ -1,74 +1,61 @@
 # a model that has relationships - e.g. a project and a package
 module HasRelationships
-
-  class SaveError < APIException
+  class SaveError < APIError
   end
 
-  def add_user(user, role, ignoreLock=nil)
-    Relationship.add_user(self, user, role, ignoreLock)
+  def add_user(user, role, ignore_lock = nil)
+    Relationship.add_user(self, user, role, ignore_lock)
   end
 
-  def add_group(group, role, ignoreLock=nil)
-    Relationship.add_group(self, group, role, ignoreLock)
-  end
-
-  def users_and_roles
-    relationships.joins(:role, :user).order('role_name, login').
-        pluck('users.login as login, roles.title AS role_name')
-  end
-
-  def groups_and_roles
-    relationships.joins(:role, :group).order('role_name, title').
-        pluck('groups.title as title', 'roles.title as role_name')
+  def add_group(group, role, ignore_lock = nil)
+    Relationship.add_group(self, group, role, ignore_lock)
   end
 
   # webui code is a huge table - TODO to optimize
   def users
-    relationships.users.includes(:user).map { |r| r.user }.uniq
+    relationships.users.includes(:user).map(&:user).uniq
   end
 
   def groups
-    relationships.groups.includes(:group).map { |r| r.group }.uniq
+    relationships.groups.includes(:group).map(&:group).uniq
   end
 
   def bugowner_emails
-    ret = []
-    relationships.where(role: Role.rolecache['bugowner']).joins(:user).each do |bugowner|
-     mail = bugowner.user.email
-     ret.push(mail.to_s) if mail
-    end
-    ret
+    # TODO: why on User.rb we accept email blank?
+    relationships.bugowners_with_email.pluck(:email)
   end
 
   def render_relationships(xml)
-    users_and_roles.each do |user, role|
+    relationships.with_users_and_roles.each do |user, role|
       xml.person(userid: user, role: role)
     end
 
-    groups_and_roles.each do |group, role|
+    relationships.with_groups_and_roles.each do |group, role|
       xml.group(groupid: group, role: role)
     end
   end
 
   def user_has_role?(user, role)
-    return true if self.relationships.where(role_id: role.id, user_id: user.id).exists?
-    self.relationships.where(role_id: role).joins(:groups_users).where(groups_users: { user_id: user.id }).exists?
+    return true if relationships.exists?(role_id: role.id, user_id: user.id)
+
+    relationships.where(role_id: role).joins(:groups_users).exists?(groups_users: { user_id: user.id })
   end
 
   def group_has_role?(group, role)
-    self.relationships.where(role_id: role.id, group_id: group.id).exists?
+    relationships.exists?(role_id: role.id, group_id: group.id)
   end
 
   def remove_role(what, role)
     check_write_access!
 
-    if what.kind_of? Group
-      rel = self.relationships.where(group_id: what.id)
-    else
-      rel = self.relationships.where(user_id: what.id)
-    end
+    rel = if what.is_a?(Group)
+            relationships.where(group_id: what.id)
+          else
+            relationships.where(user_id: what.id)
+          end
     rel = rel.where(role_id: role.id) if role
-    self.transaction do
+    transaction do
+      rel.map(&:create_relationship_delete_event)
       rel.delete_all
       write_to_backend
     end
@@ -77,31 +64,39 @@ module HasRelationships
   def add_role(what, role)
     check_write_access!
 
-    self.transaction do
-      if what.kind_of? Group
-        self.relationships.create!(role: role, group: what)
+    transaction do
+      if what.is_a?(Group)
+        relationships.create!(role: role, group: what)
       else
-        self.relationships.create!(role: role, user: what)
+        relationships.create!(role: role, user: what)
       end
       write_to_backend
     end
   end
 
+  def maintainers
+    direct_users = relationships.with_users_and_roles_query.maintainers.pluck('users.login').map! { |user| User.find_by_login(user) }
+    users_in_groups = relationships.with_groups_and_roles_query.maintainers.pluck('groups.title')
+                                   .map! { |title| Group.find_by_title!(title).users }.flatten
+    (direct_users + users_in_groups).uniq
+  end
+
   def remove_all_persons
     check_write_access!
-    self.relationships.users.delete_all
+    relationships.users.delete_all
   end
 
   def remove_all_groups
     check_write_access!
-    self.relationships.groups.delete_all
+    relationships.groups.delete_all
   end
 
   def remove_all_old_relationships(cache)
     # delete all roles that weren't found in the uploaded xml
-    cache.each do |user, roles|
-      roles.each do |role, object|
-        next if [:keep, :new].include? object
+    cache.each do |_, roles|
+      roles.each do |_, object|
+        next if [:keep, :new].include?(object)
+
         object.destroy
       end
     end
@@ -162,58 +157,50 @@ module HasRelationships
       return group if group
 
       # check with LDAP
-      if CONFIG['ldap_mode'] == :on && CONFIG['ldap_group_support'] == :on
-        if User.find_group_with_ldap(id)
-          logger.debug "Find and Create group '#{id}' from LDAP"
-          return Group.create!(title: id)
-        else
-          raise SaveError, "unknown group '#{id}' on LDAP server"
-        end
-      else
-        raise SaveError, "unknown group '#{id}'"
-      end
+      raise SaveError, "unknown group '#{id}'" unless CONFIG['ldap_mode'] == :on && CONFIG['ldap_group_support'] == :on
+      raise SaveError, "unknown group '#{id}' on LDAP server" unless UserLdapStrategy.find_group_with_ldap(id)
+
+      logger.debug "Find and Create group '#{id}' from LDAP"
+      Group.create!(title: id)
     end
   end
 
   def update_generic_relationships(xmlhash)
-
     # we remember the current relationships in a hash
-    cache = Hash.new
-    self.relationships.each do |purr|
+    cache = {}
+    relationships.each do |purr|
       next if @updater.ignore?(purr)
-      h = cache[@updater.name_for_relationship(purr)] ||= Hash.new
+
+      h = cache[@updater.name_for_relationship(purr)] ||= {}
       h[purr.role.title] = purr
     end
 
     # in a second step we parse the XML and track in the hash if
     # we keep the relationships
     xmlhash.elements(@updater.xml_element) do |node|
-
-      unless role = Role.rolecache[node['role']]
-        raise SaveError, "illegal role name '#{node['role']}'"
-      end
+      role = Role.hashed[node['role']]
+      raise SaveError, "illegal role name '#{node['role']}'" unless role
 
       id = @updater.id(node)
       item = @updater.find!(id)
 
-      if cache.has_key? id
+      if cache.key?(id)
         # item has already a role in this model
         pcache = cache[id]
-        if pcache.has_key? role.title
-          #role already defined, only remove from cache
+        if pcache.key?(role.title)
+          # role already defined, only remove from cache
           pcache[role.title] = :keep
         else
-          #new role
-          record = self.relationships.build(role: role)
+          # new role
+          record = relationships.new(role: role)
           @updater.set_item(record, item)
           pcache[role.title] = :new
         end
       else
-        record = self.relationships.build(role: role)
+        record = relationships.new(role: role)
         @updater.set_item(record, item)
         cache[id] = { role.title => :new }
       end
-
     end
 
     # all relationships left in cache are to be deleted

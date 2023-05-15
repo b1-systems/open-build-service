@@ -26,3 +26,11 @@ record_6:
   parent_id: 83
   repository_id: 82
   position: 1
+UseRemoteInstance_pop_path:
+  repository: BaseDistro_repo
+  link: UseRemoteInstance_pop
+  position: 1
+kde4_repo:
+  parent_id: 98
+  repository_id: 86
+  position: 1

@@ -35,6 +35,11 @@
 	</attribute>
       </optional>
       <optional>
+	<attribute name="created">
+          <data type="string" />
+	</attribute>
+      </optional>
+      <optional>
 	<attribute name="superseded_by">
           <data type="integer" />
 	</attribute>
@@ -43,6 +48,11 @@
         <element name="comment">
           <text/>
         </element>
+      </optional>
+      <optional>
+	<attribute name="approver">
+          <data type="string" />
+	</attribute>
       </optional>
       <empty/>
     </element>
@@ -59,7 +69,8 @@
           <value>set_bugowner</value>
           <value>maintenance_incident</value>
           <value>maintenance_release</value>
-          <value>group</value>
+          <value>release</value>
+          <value>group</value> <!-- should not be used anymore -->
         </choice>
       </attribute>
       <interleave>
@@ -159,6 +170,14 @@
                 </choice>
               </element>
             </optional>
+            <optional>
+              <element name="makeoriginolder">
+                <choice>
+                  <value>true</value>
+                  <value>false</value>
+                </choice>
+              </element>
+            </optional>
             <empty/>
           </element>
         </optional>
@@ -168,7 +187,15 @@
 	    <attribute name="srcmd5"/>
 	    <attribute name="osrcmd5"/>
 	    <optional>
+	      <attribute name="oproject"/>
+	    </optional>
+	    <optional>
+	      <attribute name="opackage"/>
+	    </optional>
+	    <optional>
 	      <attribute name="xsrcmd5"/>
+	    </optional>
+	    <optional>
 	      <attribute name="oxsrcmd5"/>
 	    </optional>
 	    <empty/>
@@ -186,6 +213,11 @@
           <data type="string" />
         </attribute>
       </optional>
+      <optional>
+        <attribute name="creator">
+          <data type="string" />
+        </attribute>
+      </optional>
       <interleave>
         <oneOrMore>
           <ref name="request-action-element" />
@@ -198,6 +230,11 @@
             <optional>
               <text/>
             </optional>
+          </element>
+        </optional>
+        <optional>
+          <element name="priority">
+            <ref name="obs-ratings" />
           </element>
         </optional>
        <zeroOrMore>
@@ -240,24 +277,39 @@
                 <text/>
               </element>
             </optional>
+            <zeroOrMore>
+              <element name="history">
+                <attribute name="who">
+                  <data type="string" />
+                </attribute>
+                <attribute name="when">
+                  <data type="string" />
+                </attribute>
+                <element name="description">
+                  <text/>
+                </element>
+                <optional>
+                  <element name="comment">
+                    <text/>
+                  </element>
+                </optional>
+                <empty/>
+              </element>
+            </zeroOrMore>
             <empty/>
           </element>
         </zeroOrMore>
         <zeroOrMore>
           <element name="history">
-            <attribute name="name">
-              <ref name="request-states" />
+            <attribute name="who">
+              <data type="string" />
             </attribute>
-            <optional>
-              <attribute name="who">
-                <data type="string" />
-              </attribute>
-            </optional>
-            <optional>
-              <attribute name="when">
-                <data type="string" />
-              </attribute>
-            </optional>
+            <attribute name="when">
+              <data type="string" />
+            </attribute>
+            <element name="description">
+              <text/>
+            </element>
             <optional>
               <element name="comment">
                 <text/>

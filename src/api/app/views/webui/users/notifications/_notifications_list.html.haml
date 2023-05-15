@@ -1,0 +1,32 @@
+- if notifications.empty?
+  .card
+    .card-body
+      %p
+        - case selected_filter[:type]
+        - when 'reviews', 'comments', 'requests'
+          There are no notifications for this filter
+        - when 'read'
+          Mark notifications as "Read" and they'll appear here
+        - else
+          There are no notifications, but there's a world of opportunities!
+- else
+  :ruby
+    update_path = my_notifications_path(type: selected_filter[:type], project: selected_filter[:project], group: selected_filter[:group],
+                                        page: params[:page], show_more: params[:show_more])
+  = form_tag(update_path, method: :put, remote: true) do
+    = render(NotificationActionBarComponent.new(type: selected_filter[:type], update_path: update_path, show_read_all_button: show_read_all_button))
+    .card
+      .card-body
+        .text-center
+          %span.ms-3= page_entries_info notifications, entry_name: ''
+          = link_to_show_less_or_more unless notifications.total_pages == 1 && params[:show_more].nil?
+        .list-group.list-group-flush.mt-3
+          = render NotificationComponent.with_collection(notifications, selected_filter: selected_filter,
+                                                                        page: params[:page],
+                                                                        show_more: params[:show_more])
+  = paginate notifications, views_prefix: 'webui', window: 2, params: { action: 'index', id: nil }
+
+- content_for :ready_function do
+  handleNotificationCheckboxSelection();
+  applySmartOverflow();
+  window.onresize = applySmartOverflow;

@@ -28,12 +28,16 @@ repository_architectures_170149496:
   position: 1
   id: 170149496
   architecture: x86_64
-repository_architectures_252146842:
+BaseDistro2.0_repo_i586:
   repository_id: 92
   position: 0
   id: 252146842
   architecture: i586
-repository_architectures_291758395:
+BaseDistro2.0_repo_x86_64:
+  repository_id: 92
+  position: 1
+  architecture: x86_64
+BaseDistro3_BaseDistro3_repo:
   repository_id: 93
   position: 0
   id: 291758395
@@ -113,3 +117,13 @@ repository_architectures_940713210:
   position: 0
   id: 940713210
   architecture: i586
+repository_architectures_broken_publishing:
+  repository_id: 97
+  position: 0
+  id: 940713216
+  architecture: i586
+kde4_repo_arch:
+  repository_id: 98
+  position: 0
+  id: 940713217
+  architecture: s390

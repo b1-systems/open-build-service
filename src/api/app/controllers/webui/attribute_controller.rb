@@ -1,100 +1,123 @@
 class Webui::AttributeController < Webui::WebuiController
   helper :all
-  before_filter :requires
+  before_action :set_container, only: [:index, :new, :edit]
+  before_action :set_attribute, only: [:update, :destroy]
+
+  # raise an exception if authorize has not yet been called.
+  after_action :verify_authorized, except: :index
 
   helper 'webui/project'
 
+  def index
+    @attributes = @container.attribs.includes(:issues, :values, attrib_type: [:attrib_namespace]).sort_by(&:fullname)
+  end
+
+  def new
+    @attribute = if @package
+                   Attrib.new(package_id: @package.id)
+                 else
+                   Attrib.new(project_id: @project.id)
+                 end
+
+    authorize @attribute, :create?
+
+    @attribute_types = AttribType.includes(:attrib_namespace).all.sort_by(&:fullname)
+  end
+
   def edit
-    if @attributes.nil? # fails if package does not exist in project anymore
-      redirect_to :controller => :project, :action => :attributes, :project => params[:project] and return
-    end
-    if params[:namespace] and params[:name]
-      selected_attribute = nil
-      atype = AttribType.find_by_namespace_and_name(params[:namespace], params[:name])
-      selected_attribute = @attributes.where(attrib_type: atype).first
-      unless selected_attribute
-        redirect_to :back and return
+    @attribute = Attrib.find_by_container_and_fullname(@container, params[:attribute])
+    raise ActiveRecord::RecordNotFound unless @attribute
+
+    authorize @attribute
+
+    value_count = @attribute.attrib_type.value_count
+    values_length = @attribute.values.length
+    (value_count - values_length).times { @attribute.values.build(attrib: @attribute) } if value_count && (value_count > values_length)
+
+    @issue_trackers = IssueTracker.order(:name).all if @attribute.attrib_type.issue_list
+
+    @allowed_values = @attribute.attrib_type.allowed_values.map(&:value)
+  end
+
+  def create
+    @attribute = Attrib.new(attrib_params)
+
+    authorize @attribute
+
+    # build the default values
+    if @attribute.attrib_type.value_count
+      @attribute.attrib_type.value_count.times do
+        @attribute.values.build(attrib: @attribute)
       end
-      @selected_attribute_name = '%s:%s' % [params[:namespace], params[:name]]
-      @selected_attribute_value = selected_attribute.values 
+    end
+
+    if @attribute.save
+      if @attribute.values_editable?
+        redirect_to edit_attribs_path(project: @attribute.project.to_s, package: @attribute.package.to_s,
+                                      attribute: @attribute.fullname),
+                    success: 'Attribute was successfully created.'
+      else
+        redirect_to index_attribs_path(project: @attribute.project.to_s, package: @attribute.package.to_s),
+                    success: 'Attribute was successfully created.'
+      end
     else
-      @attribute_list = []
-      AttribType.all.each do |d|
-        @attribute_list << "#{d.attrib_namespace.name}:#{d.name}"
-      end
-      @attribute_list.sort!
+      redirect_back(fallback_location: root_path, error: "Saving attribute failed: #{@attribute.errors.full_messages.join(', ')}")
     end
   end
 
-  def save
-    values = params[:values].split(',')
-    namespace, name = params[:attribute].split(/:/)
+  def update
+    authorize @attribute
 
-    opt = { :action => :edit, :project => @project.name, package: params[:package] }
-
-    unless User.current.can_create_attribute_in? @attribute_container, namespace: namespace, name: name
-      redirect_to opt, error: 'No permission to save attribute'
-      return
+    if @attribute.update(attrib_params)
+      redirect_to edit_attribs_path(project: @attribute.project.to_s, package: @attribute.package.to_s, attribute: @attribute.fullname),
+                  success: 'Attribute was successfully updated.'
+    else
+      redirect_back(fallback_location: root_path, error: "Updating attribute failed: #{@attribute.errors.full_messages.join(', ')}")
     end
-
-    begin
-      Attrib.transaction do
-        @attribute_container.store_attribute(namespace, name, values, [])
-        @attribute_container.write_attributes # save to backend
-      end
-    rescue APIException => e
-      redirect_to opt, error: "Saving attribute failed: #{e.message}"
-      return
-    end
-
-    if params[:package]
-      opt = {:controller => :package, :action => :attributes, :project => @project.name, package: params[:package] }
-    elsif params[:project]
-      opt = {:controller => :project, :action => :attributes, :project => @project.name }
-    end
-
-    redirect_to opt, notice: 'Attribute sucessfully added!'
   end
 
-  def delete
-    required_parameters :namespace, :name
+  def destroy
+    authorize @attribute
 
-    if params[:package]
-      opt = { :controller => :package, :action => :attributes, :project => @project.name, package: params[:package] }
-    elsif params[:project]
-      opt = { :controller => :project, :action => :attributes, :project => @project.name }
-    end
-
-    unless User.current.can_create_attribute_in? @attribute_container, namespace: params[:namespace], name: params[:name]
-      redirect_to opt, error: 'Deleting attribute failed: no permission to change attribute'
-      return
-    end
-
-    atype = AttribType.find_by_namespace_and_name(params[:namespace], params[:name]) 
-    @attributes.where(attrib_type: atype).destroy_all
-    redirect_to opt, notice: 'Attribute sucessfully deleted!'
+    @attribute.destroy
+    redirect_back(fallback_location: root_path, success: 'Attribute sucessfully deleted!')
   end
 
   private
 
-  def requires
-    required_parameters :project
-    @project = WebuiProject.find(params[:project])
-    unless @project && !@project.is_remote?
-      flash[:error] = "Project not found: #{params[:project]}"
-      redirect_to :controller => 'project', :action => 'list_public' and return
+  def set_container
+    begin
+      @project = Project.get_by_name(params[:project])
+    rescue APIError
+      flash[:error] = "Project not found: #{elide(params[:project])}"
+      redirect_to(controller: 'project') && return
     end
-    @is_maintenance_project = false
-    @is_maintenance_project = true if @project.project_type and @project.project_type == 'maintenance'
     if params[:package]
-      @package = @project.api_obj.find_package(params[:package])
-      unless @package
-        redirect_to project_show_path(@project.api_obj.name), error: "Package #{params[:package]} not found" and return
+      begin
+        @package = Package.get_by_project_and_name(params[:project], params[:package], use_source: false)
+      rescue APIError
+        redirect_to(project_show_path(@project.to_s), error: "Package #{params[:package]} not found") && (return)
       end
-      @attribute_container = @package
+      @container = @package
     else
-      @attribute_container = @project.api_obj
+      @container = @project
     end
-    @attributes = @attribute_container.attribs
+  end
+
+  def set_attribute
+    @attribute = Attrib.find(params[:id])
+    if @attribute.container.instance_of?(Package)
+      @package = @attribute.container
+      @project = @package.project
+    elsif @attribute.container.instance_of?(Project)
+      @project = @attribute.container
+    end
+  end
+
+  # Never trust parameters from the scary internet, only allow the white list through.
+  def attrib_params
+    params.require(:attrib).permit(:attrib_type_id, :project_id, :package_id,
+                                   values_attributes: [:id, :value, :position, :_destroy],
+                                   issues_attributes: [:id, :name, :issue_tracker_id, :_destroy])
   end
 end

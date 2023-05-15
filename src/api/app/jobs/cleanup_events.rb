@@ -1,5 +1,5 @@
-class CleanupEvents
+class CleanupEvents < ApplicationJob
   def perform
-    Event::Base.where(project_logged: true, queued: true).delete_all
+    Event::Base.where(mails_sent: true, undone_jobs: 0).delete_all
   end
 end

@@ -1,44 +1,72 @@
 class TriggerController < ApplicationController
+  include Triggerable
 
-  validate_action :runservice => {:method => :post, :response => :status}
+  ALLOWED_GITLAB_EVENTS = ['Push Hook', 'Tag Push Hook', 'Merge Request Hook'].freeze
+
+  # Authentication happens with tokens, so extracting the user is not required
   skip_before_action :extract_user
+  # Authentication happens with tokens, so no login is required
+  skip_before_action :require_login
+  # SCMs like GitLab/GitHub send data as parameters which are not strings (e.g.: GitHub - PR number is a integer, GitLab - project is a hash)
+  # Other SCMs might also do this, so we're not validating parameters.
+  skip_before_action :validate_params
+  after_action :verify_authorized
 
-  # github.com sends a hash payload
-  skip_filter :validate_params, :only => [:runservice]
+  before_action :validate_gitlab_event, if: :gitlab_webhook?
+  before_action :set_token
+  before_action :set_project_name
+  before_action :set_package_name
+  # From Triggerable
+  before_action :set_project
+  before_action :set_package
+  before_action :set_object_to_authorize
+  # set_multibuild_flavor needs to run after the set_object_to_authorize callback
+  append_before_action :set_multibuild_flavor
 
-  def runservice
-    auth = request.env['HTTP_AUTHORIZATION']
-    unless auth and auth[0..4] == "Token" and auth[6..-1].match(/^[A-Za-z0-9+\/]+$/)
-      render_error errorcode: 'permission_denied',
-                   message: "No valid token found 'Authorization' header",
-                   status: 403
-      return
+  include Trigger::Errors
+
+  def create
+    authorize @token, :trigger?
+
+    @token.executor.run_as do
+      opts = { project: @project, package: @package, repository: params[:repository], arch: params[:arch] }
+      opts[:multibuild_flavor] = @multibuild_container if @multibuild_container.present?
+      @token.call(opts)
+      render_ok
     end
-
-    token = Token.find_by_string auth[6..-1]
-
-    unless token
-      render_error  message: "Token not found", :status => 404
-      return
-    end
-
-    pkg = token.package
-    unless pkg
-      # token is not bound to a package, but event may have specified it
-      pkg = Package.get_by_project_and_name(params[:project].to_s, params[:package].to_s, use_source: true)
-      unless token.user.can_modify_package? pkg
-	raise NoPermission.new "no permission for package #{pkg.name} in project #{pkg.project.name}"
-      end
-    end
-
-    # execute the service in backend
-    path = pkg.source_path
-    params = { :cmd => "runservice", :comment => "runservice via trigger", :user => token.user.login }
-    path << build_query_from_hash(params, [:cmd, :comment, :user])
-    pass_to_backend path
-
-    pkg.sources_changed
-
+  rescue ArgumentError => e
+    render_error status: 400, message: e
   end
-  
+
+  private
+
+  def gitlab_webhook?
+    request.env['HTTP_X_GITLAB_EVENT'].present?
+  end
+
+  def github_webhook?
+    request.env['HTTP_X_GITHUB_EVENT'].present?
+  end
+
+  def validate_gitlab_event
+    raise InvalidToken unless request.env['HTTP_X_GITLAB_EVENT'].in?(ALLOWED_GITLAB_EVENTS)
+  end
+
+  # AUTHENTICATION
+  def set_token
+    @token = ::TriggerControllerService::TokenExtractor.new(request).call
+    raise InvalidToken, 'No valid token found' unless @token
+  end
+
+  def pundit_user
+    @token.executor
+  end
+
+  def set_project_name
+    @project_name = params[:project]
+  end
+
+  def set_package_name
+    @package_name = params[:package]
+  end
 end

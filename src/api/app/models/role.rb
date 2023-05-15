@@ -1,4 +1,4 @@
-require 'api_exception'
+require 'api_error'
 
 # The Role class represents a role in the database. Roles can have permissions
 # associated with themselves. Roles can assigned be to roles and groups.
@@ -7,87 +7,95 @@ require 'api_exception'
 # These modules contain the actual implementation. It is kept there so
 # you can easily provide your own model files without having to all lines
 # from the engine's directory
-class Role < ActiveRecord::Base
-
-  class NotFound < APIException
+class Role < ApplicationRecord
+  class NotFound < APIError
     setup 404
   end
 
-  validates_format_of :title,
-                      :with => %r{\A\w*\z},
-                      :message => 'must not contain invalid characters.'
-  validates_length_of :title,
-                      :in => 2..100, :allow_nil => true,
-                      :too_long => 'must have less than 100 characters.',
-                      :too_short => 'must have more than two characters.',
-                      :allow_nil => false
+  validates :title,
+            format: { with: /\A\w*\z/,
+                      message: 'must not contain invalid characters' }
+  validates :title,
+            length: { in: 2..100,
+                      too_long: 'must have less than 100 characters',
+                      too_short: 'must have more than two characters',
+                      allow_nil: false }
 
   # We want to validate a role's title pretty thoroughly.
-  validates_uniqueness_of :title, 
-                          :message => 'is the name of an already existing role.'
+  validates :title, uniqueness: { case_sensitive: true,
+                                  message: 'is the name of an already existing role' }
 
-  belongs_to :groups_roles
-  belongs_to :attrib_type_modifiable_bies
-  belongs_to :relationships
-  belongs_to :roles_static_permissions
-  belongs_to :roles_users
+  belongs_to :groups_roles, optional: true
+  belongs_to :attrib_type_modifiable_bies, class_name: 'AttribTypeModifiableBy', optional: true
+  belongs_to :relationships, class_name: 'Relationship', optional: true
+  belongs_to :roles_static_permissions, optional: true
+  belongs_to :roles_users, optional: true
 
   # roles have n:m relations for users
-  has_and_belongs_to_many :users, -> { uniq() }
+  has_and_belongs_to_many :users, -> { distinct }
   # roles have n:m relations to groups
-  has_and_belongs_to_many :groups, -> { uniq() }
+  has_and_belongs_to_many :groups, -> { distinct }
   # roles have n:m relations to permissions
-  has_and_belongs_to_many :static_permissions, -> { uniq() }
+  has_and_belongs_to_many :static_permissions, -> { distinct }
 
   scope :global, -> { where(global: true) }
 
-  class << self
-    def discard_cache
-      @cache = nil
-    end
+  after_destroy :delete_hashed_cache
+  after_save :delete_hashed_cache
 
-    def rolecache
-      return @cache if @cache
-      @cache = Hash.new
-      all.each do |role|
-        @cache[role.title] = role
-      end
-      return @cache
-    end
-
-    def find_by_title!(title)
-      find_by_title(title) or raise NotFound.new("Couldn't find Role '#{title}'")
-    end
-    def local_roles
-      %w(maintainer bugowner reviewer downloader reader).map { |r| Role.rolecache[r] }
-    end
-
-    def global_roles
-      %w(Admin User)
+  # Fetches all roles and stores them as a hash. Uses title attribute as hash key.
+  #
+  # {"Admin" => #<Role id:1>, "downloader" => #<Role id:2>, ... }
+  def self.hashed
+    Rails.cache.fetch('hashed_roles') do
+      Role.all.index_by(&:title)
     end
   end
 
-  def rolecache
-    self.class.rolecache
+  def delete_hashed_cache
+    Rails.cache.delete('hashed_roles')
   end
 
-  def discard_cache
-    self.class.discard_cache
+  def self.find_by_title!(title)
+    find_by_title(title) || raise(NotFound, "Couldn't find Role '#{title}'")
   end
 
-  def to_param
-    title
+  def self.local_roles
+    ['maintainer', 'bugowner', 'reviewer', 'downloader', 'reader'].map { |r| Role.hashed[r] }
+  end
+
+  def self.global_roles
+    ['Admin']
+  end
+
+  def self.ids_with_permission(perm_string)
+    RolesStaticPermission.joins(:static_permission)
+                         .where(static_permissions: { title: perm_string })
+                         .select('role_id').pluck(:role_id)
   end
 
   def to_s
     title
   end
-
-  after_save :discard_cache
-  after_destroy :discard_cache
-
-  def self.ids_with_permission(perm_string)
-    RolesStaticPermission.joins(:static_permission).where(:static_permissions => { :title => perm_string } ).select('role_id').map { |rs| rs.role_id }
-  end
-
+  alias to_param to_s
 end
+
+# == Schema Information
+#
+# Table name: roles
+#
+#  id         :integer          not null, primary key
+#  global     :boolean          default(FALSE)
+#  title      :string(100)      default(""), not null
+#  created_at :datetime         not null
+#  updated_at :datetime         not null
+#  parent_id  :integer          indexed
+#
+# Indexes
+#
+#  roles_parent_id_index  (parent_id)
+#
+# Foreign Keys
+#
+#  roles_ibfk_1  (parent_id => roles.id)
+#

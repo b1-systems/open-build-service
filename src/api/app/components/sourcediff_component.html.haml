@@ -1,0 +1,31 @@
+.row
+  .col
+    - if @action[:diff_not_cached]
+      .clearfix.mb-2.text-center
+        .btn.btn-outline-primary.cache-refresh{ title: 'Refresh results', onclick: "loadChanges(#{@bs_request.number}, #{@action[:id]});" }
+          Crunching the latest data. Refresh again in a few seconds
+          %i.fas.fa-sync-alt{ id: "cache#{@index}-reload" }
+    - else
+      - (@action[:sourcediff] || []).each do |sourcediff|
+        .clearfix.mb-2
+          .btn-group.float-end
+            %button.btn.btn-outline-secondary.expand-diffs{ data: { object: @action[:spkg] } }
+              Expand all
+            %button.btn.btn-outline-secondary.collapse-diffs{ data: { object: @action[:spkg] } }
+              Collapse all
+
+        - if sourcediff[:error]
+          %p
+            %i.error
+              = sourcediff[:error]
+        - else
+          - if @action[:sourcediff].length > 1
+            %h4
+              #{diff_label(sourcediff['new'])} – #{diff_label(sourcediff['old'])}
+          - if sourcediff['filenames'].present?
+            - diff_list = sourcediff['files'].sort_by { |k, _v| sourcediff['filenames'].find_index(k) }.to_h
+            = render(DiffListComponent.new(diff_list:, view_id: @action[:spkg], commentable:))
+          - else
+            .mb-2
+              %p.lead
+                No source changes.

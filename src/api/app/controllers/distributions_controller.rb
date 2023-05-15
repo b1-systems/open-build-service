@@ -1,84 +1,110 @@
 class DistributionsController < ApplicationController
-  # Distribution list is insensitive information, no login needed therefore
-  skip_before_filter :extract_user, :only => [:index, :show, :include_remotes]
-  before_filter :require_admin, :except => [:index, :show, :include_remotes]
+  before_action :require_admin, except: [:index, :show, :include_remotes]
+  before_action :set_body_xml, except: [:index, :show, :include_remotes]
 
-  validate_action :index => {:method => :get, :response => :distributions}
-  validate_action :upload => {:method => :put, :request => :distributions, :response => :status}
+  validate_action bulk_replace: { method: :put, request: :distributions }
+  validate_action bulk_replace: { method: :post, request: :distributions }
 
-  respond_to :xml, :json
+  validate_action create: { method: :put, request: :distribution }
+  validate_action create: { method: :post, request: :distribution }
+
+  validate_action update: { method: :put, request: :distribution }
+  validate_action update: { method: :post, request: :distribution }
 
   # GET /distributions
-  # GET /distributions.xml
   def index
-    @distributions = Distribution.all_as_hash
+    @distributions = Distribution.local
 
     respond_to do |format|
       format.xml
-      format.json { render :json => @distributions }
+      format.json { render json: @distributions }
     end
   end
 
-  # GET /distributions/include_remotes
-  # GET /distributions/include_remotes.xml
-  def include_remotes
-    @distributions = Distribution.all_including_remotes 
- 
-    respond_to do |format|
-      format.xml { render "index" }
-      format.json { render :json => @distributions }
-     end
-  end
-
-  # GET /distributions/opensuse-11.4
-  # GET /distributions/opensuse-11.4.xml
+  # GET /distributions/1234
   def show
-    @distribution = Distribution.find(params[:id]).to_hash
+    @distribution = Distribution.find(params[:id])
 
     respond_to do |format|
-      format.xml  { render :xml => @distribution }
-      format.json { render :json => @distribution }
+      format.xml
+      format.json { render json: @distribution }
     end
-  end
-
-  # basically what the other parts of our API would look like
-  def upload 
-    raise 'routes broken' unless request.put?
-    req = Xmlhash.parse(request.body.read)
-    unless req
-      render_error :message => "Invalid XML",
-                   :status => 400, :errorcode => "invalid_xml"
-      return
-    end
-    @distributions = Distribution.parse(req)
-    render_ok
   end
 
   # POST /distributions
-  # POST /distributions.xml
   def create
-    @distribution = Distribution.new(params[:distribution])
+    distribution = Distribution.new_from_xmlhash(@body_xml)
 
-    respond_to do |format|
-      if @distribution.save
-        format.xml  { render xml: @distribution, :status => :created, :location => @distribution }
-        format.json { render json: @distribution, :status => :created, :location => @distribution }
-      else
-        format.xml  { render :xml => @distribution.errors, :status => :unprocessable_entity }
-        format.json { render :json => @distribution.errors, :status => :unprocessable_entity }
-      end
+    if distribution.save
+      render_ok
+    else
+      render_error message: distribution.errors.full_messages,
+                   status: 400, errorcode: 'invalid_distribution'
     end
   end
 
-  # DELETE /distributions/opensuse-11.4
-  # DELETE /distributions/opensuse-11.4.xml
+  # PATCH/PUT /distributions/1234
+  def update
+    distribution = Distribution.find(params[:id])
+    # We don't allow updating remote distributions
+    distribution.readonly! if distribution.remote
+
+    if distribution.update_from_xmlhash(@body_xml)
+      render_ok
+    else
+      render_error message: distribution.errors.full_messages,
+                   status: 400, errorcode: 'invalid_distribution'
+    end
+  end
+
+  # DELETE /distributions/1234
   def destroy
-    @distribution = Distribution.find(params[:id])
-    @distribution.destroy
+    distribution = Distribution.find(params[:id])
+    # We don't allow deleting remote distributions
+    distribution.readonly! if distribution.remote
+    distribution.destroy
+
+    render_ok
+  end
+
+  # GET /distributions/include_remotes
+  def include_remotes
+    @distributions = Distribution.all
 
     respond_to do |format|
-      format.xml  { head :ok }
-      format.json { head :ok }
+      format.xml { render :index }
+      format.json { render json: @distributions }
     end
+  end
+
+  # PUT /distributions/bulk_replace
+  # and compatibility route: PUT /distributions/
+  def bulk_replace
+    errors = []
+    distributions = []
+
+    @body_xml.elements('distribution') do |distribution_xmlhash|
+      distribution = Distribution.new_from_xmlhash(distribution_xmlhash)
+      distributions << distribution
+      errors << distributions.errors unless distribution.valid?
+    end
+
+    if errors.any?
+      render_error message: errors.map(&:full_messages),
+                   status: 400, errorcode: 'invalid_distributions'
+    elsif distributions.empty?
+      render_error message: 'No distributions found in body',
+                   status: 400, errorcode: 'invalid_distributions'
+    else
+      Distribution.local.destroy_all
+      distributions.map(&:save!)
+      render_ok
+    end
+  end
+
+  private
+
+  def set_body_xml
+    @body_xml = Xmlhash.parse(request.body.read)
   end
 end

@@ -11,11 +11,11 @@
       <value>noarch</value>
 
       <value>aarch64</value>
+      <value>aarch64_ilp32</value>
 
       <value>armv4l</value>
       <value>armv5l</value>
       <value>armv6l</value>
-      <value>armv7l</value>
       <value>armv7l</value>
       <value>armv5el</value> <!-- not existing officially -->
       <value>armv6el</value>
@@ -35,6 +35,8 @@
 
       <value>ia64</value>
 
+      <value>k1om</value>
+
       <value>mips</value>
       <value>mipsel</value>
       <value>mips32</value>
@@ -45,6 +47,8 @@
       <value>ppc64</value>
       <value>ppc64p7</value>
       <value>ppc64le</value>
+
+      <value>riscv64</value>
 
       <value>s390</value>
       <value>s390x</value>
@@ -82,11 +86,13 @@
 
   <define ns="" name="service-modes">
     <choice>
-                                   <!-- DEFAULT: the attribute is not used, service running on server and locally on build time -->
+                                   <!-- DEFAULT: the attribute is not used, service running on server and locally before starting a build -->
       <value>trylocal</value>      <!-- try on local clients and merge result, but run also on server side -->
-      <value>localonly</value>     <!-- never run on server side, but on the clients (not enforced) -->
+      <value>localonly</value>     <!-- never run on server side, but on the clients before commit or build -->
       <value>serveronly</value>    <!-- run on server side, but not on the clients by default -->
-      <value>disabled</value>      <!-- never run, except user explicit starts it locally -->
+      <value>buildtime</value>     <!-- run during build time inside build env, pulls in services as build dependencies -->
+      <value>manual</value>        <!-- never run, except user explicit starts it locally -->
+      <value>disabled</value>      <!-- never run, except user explicit starts it locally (old termonology) -->
     </choice>
   </define>
 
@@ -94,7 +100,8 @@
     <choice>
       <value>off</value>       <!-- DEFAULT: do not build packages from project links -->
       <value>localdep</value>  <!-- only build project linked packages if they depend on a local package -->
-      <value>all</value>       <!-- treat packages from project links like local packages -->
+      <value>alldirect</value> <!-- treat packages from project links like local packages, only direct linked projects -->
+      <value>all</value>       <!-- treat packages from project links like local packages, includes also indirect linked projects -->
     </choice>
   </define>
 
@@ -104,6 +111,17 @@
       <value>manual</value>        <!-- only on manual commands the release gets started -->
  <!-- no yet supported <value>allsucceeded</value> -->  <!-- Release when the repository has finished building and all jobs were successfull -->
       <value>maintenance</value>   <!-- Release just once on maintenance release event. This attribute get removed at the same time -->
+      <value>obsgendiff</value>    <!-- Define the release target to generate the diff against -->
+    </choice>
+  </define>
+
+  <define ns="" name="supportstatus-choices">
+    <choice>
+      <value>l3</value>
+      <value>l2</value>
+      <value>l1</value>
+      <value>acc</value>
+      <value>unsupported</value>
     </choice>
   </define>
 
@@ -212,7 +230,75 @@
         </attribute>
       </optional>
       <interleave>
-        <optional> <!-- limited to one currently. Could be extended later -->
+        <zeroOrMore>
+          <element name="download">
+            <!-- Download On Demand section. Can be used to integrate content from
+                 external package repositories -->
+            <attribute name="arch">
+              <!-- Valid for this scheduler architecture only -->
+              <data type="string" />
+            </attribute>
+            <attribute name="url">
+              <!--
+              Url to a repository. For rpm-md repositories it is just the URL. 
+              For Debian it can be an URL to a "flat repo". But usually it is
+              a distribution URL following the <baseurl>/<dist>/[components] 
+              schema (Note: this is not a working URL).
+              -->
+              <data type="string" />
+            </attribute>
+            <attribute name="repotype">
+              <choice>
+                <value>rpmmd</value>
+                <value>susetags</value>
+                <value>deb</value>
+                <value>arch</value>
+                <value>mdk</value>
+                <value>registry</value>
+              </choice>
+              <!--
+              Type of the repository meta data.
+              -->
+            </attribute>
+            <interleave>
+              <optional>
+                <element name="archfilter">
+                  <!--
+                  A coma seperated list of binary architectures to import.
+                  By default all of them are made available.
+                  -->
+                  <text/>
+                </element>
+              </optional>
+              <optional>
+                <element name="master">
+                  <!--
+                  Verify meta data from this specific host.
+                  The SSL certificate is *not* checked via CA on purpose, but requires the fingerprint.
+                  -->
+                  <attribute name="url">
+                    <data type="string" />
+                  </attribute>
+                  <optional>
+                    <attribute name="sslfingerprint">
+                      <data type="string" />
+                    </attribute>
+                  </optional>
+                </element>
+              </optional>
+              <optional>
+                <element name="pubkey">
+                  <!--
+                  gpg pubkeys to verify meta data signatures.
+                  -->
+                  <text/>
+                </element>
+              </optional>
+            </interleave>
+          </element>
+        </zeroOrMore>
+
+        <zeroOrMore>
             <element name="releasetarget">
               <attribute name="project">
                 <data type="string" />
@@ -226,7 +312,17 @@
                 </attribute>
               </optional>
             </element>
-        </optional>
+        </zeroOrMore>
+        <zeroOrMore>
+          <element name="hostsystem">
+            <attribute name="repository">
+              <data type="string" />
+            </attribute>
+            <attribute name="project">
+              <data type="string" />
+            </attribute>
+          </element>
+        </zeroOrMore>
         <zeroOrMore>
             <element name="path">
               <attribute name="repository">
@@ -237,16 +333,6 @@
               </attribute>
             </element>
         </zeroOrMore>
-        <optional>
-          <element name="hostsystem">
-            <attribute name="repository">
-              <data type="string" />
-            </attribute>
-            <attribute name="project">
-              <data type="string" />
-            </attribute>
-          </element>
-        </optional>
         <zeroOrMore>
           <element name="arch">
             <ref name="build-arch" />
@@ -274,6 +360,11 @@
         </element>
         <optional>
           <element name="enable-fetch">
+            <text/>
+          </element>
+        </optional>
+        <optional>
+          <element name="publish-issues">
             <text/>
           </element>
         </optional>
@@ -316,15 +407,6 @@
     </choice>
   </define>
 
-  <define ns="" name="cpu-flags">
-    <choice>
-      <value>fpu</value>
-      <value>mmx</value>
-      <value>sse</value>
-      <value>sse2</value>
-    </choice>
-  </define>
-
   <define ns="" name="size-unit">
     <element name="size">
       <attribute name="unit">
@@ -337,6 +419,67 @@
       </attribute>
       <data type="float"/>
     </element>
+  </define>
+
+  <!-- OBS rating values, used in patchinfos and requests -->
+  <define ns="" name="obs-ratings">
+    <choice>
+      <value>low</value>       <!-- work on it when nothing else needs to be done -->
+      <value>moderate</value>  <!-- default: normal priority -->
+      <value>important</value> <!-- prefer this over the others, but finish your current task first -->
+      <value>critical</value>  <!-- everything and work only on this -->
+    </choice>
+  </define>
+
+  <!-- Possible states of a repository -->
+  <define ns="" name="repository-code">
+    <choice>
+      <value>unknown</value>
+      <value>broken</value>
+      <value>scheduling</value>
+      <value>blocked</value>
+      <value>building</value>
+      <value>finished</value>
+      <value>publishing</value>
+      <value>published</value>
+      <value>unpublished</value>
+    </choice>
+  </define>
+
+  <!-- Possible states of a package -->
+  <define ns="" name="package-code">
+    <choice>
+      <value>unresolvable</value>
+      <value>succeeded</value>
+      <value>failed</value>
+      <value>broken</value>
+      <value>disabled</value>
+      <value>excluded</value>
+      <value>blocked</value>
+      <value>locked</value>
+      <value>unknown</value>
+      <value>scheduled</value>
+      <value>building</value>
+      <value>finished</value>
+    </choice>
+  </define>
+
+  <!-- Possible states  of a package -->
+  <define ns="" name="jobstatus-result">
+    <choice>
+      <value>succeeded</value>
+      <value>failed</value>
+      <value>unchanged</value>
+    </choice>
+  </define>
+
+  <define ns="" name="token-kind">
+    <choice>
+      <value>rss</value>
+      <value>rebuild</value>
+      <value>release</value>
+      <value>runservice</value>
+    </choice>
   </define>
 
 </grammar>

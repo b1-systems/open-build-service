@@ -1,41 +1,51 @@
+require 'statistics_calculations'
+
 class Webui::FeedsController < Webui::WebuiController
-
-  include Webui::WebuiHelper
-  include StatisticsCalculations
-
   layout false
+  before_action :set_project, only: [:commits]
+  before_action :set_timerange, only: [:commits]
 
   def news
-    @news = StatusMessage.alive.limit(5)
-    raise ActionController::RoutingError.new('expected application/rss') unless request.format == Mime::RSS
+    @news = StatusMessage.newest.for_current_user.includes(:user).limit(5)
   end
 
   def latest_updates
-    raise ActionController::RoutingError.new('expected application/rss') unless request.format == Mime::RSS
-    @latest_updates = get_latest_updated(10)
+    @latest_updates = StatisticsCalculations.get_latest_updated(10)
   end
 
   def commits
-    @project = Project.find_by_name(params[:project])
-    if @project.nil?
-      render(file: Rails.root.join('public/404'), status: 404, layout: false, formats: [:html])
-      return
+    authorize @project, :source_access?
+
+    @terse = params[:terse].present?
+
+    commits = @project.project_log_entries.where(event_type: 'commit').where(['datetime >= ?', @start])
+    commits = commits.where(['datetime <= ?', @finish]) if @finish.present?
+    @commits = commits.order('datetime desc')
+  end
+
+  def notifications
+    token = Token::Rss.find_by_string(params[:token])
+    if token
+      @configuration = ::Configuration.first
+      @user = token.executor
+      @notifications = token.executor.combined_rss_feed_items
+      @host = ::Configuration.obs_url
+    else
+      flash[:error] = 'Unknown Token for RSS feed'
+      redirect_back(fallback_location: root_path)
     end
-    # The sourceaccess flag is checked for the project, but not for every package
-    if !User.current.is_admin? && @project.disabled_for?('sourceaccess', nil, nil)
-      render file: Rails.root.join('public/403'), formats: [:html], status: :forbidden, layout: false
-      return
-    end
-    unless params[:starting_at].blank?
-      @start = (Time.zone.parse(params[:starting_at]) rescue nil)
-    end
-    @start ||= 7.days.ago
+  end
+
+  private
+
+  def set_timerange
+    start = params.fetch(:starting_at, 7.days.ago.to_s)
+    @start = Time.zone.parse(start)
+    finish = params['ending_at']
+    @finish = Time.zone.parse(finish) if finish
+  # Ignore params if the date string is invalid...
+  rescue ArgumentError
+    @start = 7.days.ago
     @finish = nil
-    unless params[:ending_at].blank?
-      @finish = (Time.zone.parse(params[:ending_at]) rescue nil)
-    end
-    @commits = @project.project_log_entries.where(event_type: 'commit').where(["datetime >= ?", @start])
-    @commits = @commits.where(["datetime <= ?", @finish]) unless @finish.nil?
-    @commits = @commits.order("datetime desc")
   end
 end

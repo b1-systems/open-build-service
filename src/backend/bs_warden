@@ -33,27 +33,65 @@ use Data::Dumper;
 use Digest::MD5 ();
 use Fcntl qw(:DEFAULT :flock);
 use XML::Structured ':bytes';
+use Getopt::Long ();
 
-use BSConfig;
-use BSRPC;
+use BSConfiguration;
+use BSRPC ':https';
 use BSUtil;
 use BSXML;
+use BSRedisnotify;
 
 use strict;
 
 my $bsdir = $BSConfig::bsdir || "/srv/obs";
-
-BSUtil::mkdir_p_chown($bsdir, $BSConfig::bsuser, $BSConfig::bsgroup);
-BSUtil::drop_privs_to($BSConfig::bsuser, $BSConfig::bsgroup);
-
 my $rundir = $BSConfig::rundir || "$BSConfig::bsdir/run";
 my $workersdir = "$BSConfig::bsdir/workers";
 my $jobsdir = "$BSConfig::bsdir/jobs";
 
+sub parse_options {
+  my %opts;
+  if (!Getopt::Long::GetOptionsFromArray(\@_, \%opts,
+    'stop|exit',
+    'restart',
+    'logfile=s',
+  )) {
+    print_usage();
+    die("Invalid option(s)\n");
+  }
+  return \%opts;
+}
+
+sub print_usage {
+  $0 =~ /([^\/]+$)/;
+  print "Usage: $1 [options]
+
+Options:
+  --stop|--exit          - graceful shutdown daemon
+  --restart              - restart daemon
+  --logfile file         - redirect output to logfile
+
+";
+}
+
+sub updateredisjobstatus {
+  my ($arch, $job, $info, $details) = @_;
+  return unless $BSConfig::redisserver;
+  $info ||= readxml("$jobsdir/$arch/$job", $BSXML::buildinfo, 1);
+  BSRedisnotify::updatejobstatus("$info->{'project'}/$info->{'repository'}/$info->{'arch'}", $job, $details) if $info;
+}
+
+# copy @ARGV to keep it untouched in case of restart
+my $options = parse_options(@ARGV);
+
+BSUtil::mkdir_p_chown($bsdir, $BSConfig::bsuser, $BSConfig::bsgroup) || die("unable to create $bsdir\n");
+# Open logfile if requested
+BSUtil::openlog($options->{'logfile'}, $BSConfig::logdir, $BSConfig::bsuser, $BSConfig::bsgroup);
+BSUtil::drop_privs_to($BSConfig::bsuser, $BSConfig::bsgroup);
+
 $| = 1;
 $SIG{'PIPE'} = 'IGNORE';
-BSUtil::restartexit($ARGV[0], 'warden', "$rundir/bs_warden");
-print BSUtil::isotime().": starting build service worker warden\n";
+BSUtil::restartexit($options, 'warden', "$rundir/bs_warden");
+BSUtil::printlog("starting build service worker warden");
 
 # get lock
 mkdir_p($rundir);
@@ -112,8 +150,9 @@ while (1) {
     };
     if ($@) {
       warn($@);
+      # worker is down or doing something weird.
       if ($worker->{'reposerver'}) {
-	print BSUtil::isotime().": restarting build of $arch/$job building on $js->{'workerid'}\n";
+	BSUtil::printlog("restarting build of $arch/$job building on $js->{'workerid'}");
 	my $param = {
 	  'uri' => "$worker->{'reposerver'}/jobs/$arch/$job",
 	  'request' => 'POST',
@@ -121,7 +160,8 @@ while (1) {
 	};
 	eval {
 	  BSRPC::rpc($param, undef, 'cmd=idleworker', "workerid=$worker->{'workerid'}", "jobid=$js->{'jobid'}");
-	  unlink("$workersdir/building/$wname");
+	  mkdir_p("$workersdir/down");
+	  rename("$workersdir/building/$wname", "$workersdir/down/$wname");
 	  delete $building{$wname};
 	};
 	warn($@) if $@;
@@ -133,9 +173,11 @@ while (1) {
 	  close F;
 	  next;
 	}
-	print BSUtil::isotime().": restarting build of $arch/$job building on $js->{'workerid'}\n";
+	BSUtil::printlog("restarting build of $arch/$job building on $js->{'workerid'}");
+	updateredisjobstatus($arch, $job);
 	unlink("$jobsdir/$arch/$job:status");
-        unlink("$workersdir/building/$wname");
+	mkdir_p("$workersdir/down");
+	rename("$workersdir/building/$wname", "$workersdir/down/$wname");
         delete $building{$wname};
         close F;
       }
@@ -166,15 +208,33 @@ while (1) {
 	next if $norphanchecks{$job}++ < 30;	# check every 30 minutes
 	$norphanchecks{$job} = 1;
 	my $js = readxml("$jobsdir/$arch/$job:status", $BSXML::jobstatus, 1);
-	if ($js && $js->{'code'} ne 'building') {
+	if (!$js) {
 	  my @s = stat("$jobsdir/$arch/$job:status");
-	  if (@s && $s[9] + 86400 < $now) {
-	    print BSUtil::isotime().": restarting build of $arch/$job stuck in code $js->{'code'}\n";
+	  if (@s && $s[9] + 3600 < $now) {
+	    BSUtil::printlog("removing bad $arch/$job:status file");
 	    unlink("$jobsdir/$arch/$job:status");
 	  }
 	  next;
 	}
-        next unless $js && $js->{'code'} eq 'building';
+	if ($js->{'code'} ne 'building') {
+	  my @s = stat("$jobsdir/$arch/$job:status");
+	  next if !@s || $s[9] + 86400 > $now;
+	  if (($js->{'code'} || '') eq 'finished' && !$js->{'endtime'}) {
+	    # no endtime, the is probably a fake job we cannot restart. also remove job.
+	    BSUtil::printlog("removing stuck fake job $arch/$job");
+	    unlink("$jobsdir/$arch/$job");
+	    BSUtil::cleandir("$jobsdir/$arch/$job:dir");
+	    rmdir("$jobsdir/$arch/$job:dir");
+	    updateredisjobstatus($arch, $job);
+	    unlink("$jobsdir/$arch/$job:status");
+	    next;
+	  }
+	  BSUtil::printlog("restarting build of $arch/$job stuck in code $js->{'code'}");
+	  updateredisjobstatus($arch, $job);
+	  unlink("$jobsdir/$arch/$job:status");
+	  next;
+	}
+        next unless $js->{'code'} eq 'building';
 	#print "orphan check for $arch/$job...\n";
 	my $param = {
 	  'uri' => "$js->{'uri'}/worker",
@@ -192,7 +252,8 @@ while (1) {
 	    close F;
 	    next;
 	  }
-	  print BSUtil::isotime().": restarting orphaned build of $arch/$job building on $js->{'workerid'}\n";
+	  BSUtil::printlog("restarting orphaned build of $arch/$job building on $js->{'workerid'}");
+	  updateredisjobstatus($arch, $job);
 	  unlink("$jobsdir/$arch/$job:status");
           close F;
 	}
@@ -205,7 +266,7 @@ while (1) {
 	  next if $jobs{$job};
 	  my @s = stat("$jobsdir/$arch/$job:dir");
 	  if (@s && $s[9] + 86400 < $now) {
-	    print BSUtil::isotime().": removing orphaned $arch/$job result directory\n";
+	    BSUtil::printlog("removing orphaned $arch/$job result directory");
 	    BSUtil::cleandir("$jobsdir/$arch/$job:dir");
 	    rmdir("$jobsdir/$arch/$job:dir");
 	  }
@@ -214,8 +275,8 @@ while (1) {
 	  next if $jobs{$job};
 	  my @s = stat("$jobsdir/$arch/$job:status");
 	  if (@s && $s[9] + 86400 < $now) {
-	    print BSUtil::isotime().": removing orphaned $arch/$job status file\n";
-	    rmdir("$jobsdir/$arch/$job:status");
+	    BSUtil::printlog("removing orphaned $arch/$job status file");
+	    unlink("$jobsdir/$arch/$job:status");
 	  }
 	}
       }
@@ -225,14 +286,16 @@ while (1) {
   #print "sleeping\n";
   for my $i (qw{1 2 3 4 5}) {
     if (-e "$rundir/bs_warden.exit") {
+      close(RUNLOCK);
       unlink("$rundir/bs_warden.exit");
-      print BSUtil::isotime().": exiting...\n";
+      BSUtil::printlog("exiting...");
       exit(0);
     }
     if (-e "$rundir/bs_warden.restart") {
+      close(RUNLOCK);
       unlink("$rundir/bs_warden.restart");
-      print BSUtil::isotime().": restarting...\n";
-      exec($0);
+      BSUtil::printlog("restarting...");
+      exec($0, @ARGV);
       die("$0: $!\n");
     }
     sleep(1);

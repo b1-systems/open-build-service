@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <definition name="attr_name" namespace="OBS">
+  <description>A long description
+of this attribute.
+</description>
   <default>
     <value>A</value>
     <value>B</value>
@@ -13,5 +16,5 @@
   <issue_list/>
   <modifiable_by user="demouser"/>
   <modifiable_by group="attribute_maintainers"/>
-  <modifiable_by role="demorole"/>
+  <modifiable_by role="bugowner"/>
 </definition>

@@ -29,7 +29,7 @@ To REVIEW against the previous version:
 
 To ACCEPT the request:
    osc request accept REQUESTID --message="reviewed ok."
-   
+
 To DECLINE the request:
    osc request decline REQUESTID --message="declined for reason xyz (see ... for background / policy / ...)."
 
@@ -37,5 +37,5 @@ To REVOKE the request:
    osc request revoke REQUESTID --message="retracted because ..., sorry / thx / see better version ..."
 
 -- 
-Configure notifications at http://localhost/user/notifications
+Configure notifications at http://localhost/my/subscriptions
 Open Build Service (http://localhost/)

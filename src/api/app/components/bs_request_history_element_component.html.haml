@@ -1,0 +1,22 @@
+.d-inline-flex
+  = icon
+  = render(AvatarComponent.new(name: element.user.name, email: element.user.email, size: 36, shape: :circle, custom_css: 'avatars-counter'))
+  %p
+    = link_to(helpers.realname_with_login(element.user), user_path(element.user))
+    - if element.instance_of?(HistoryElement::RequestSuperseded)
+      superseded this request with
+      = link_to("request ##{element.description_extension}", request_show_path(element.description_extension))
+    - elsif element.instance_of?(HistoryElement::RequestReviewAdded) && element.review
+      = element.user_action_prefix
+      %strong
+        = element.action_target
+      = element.user_action_suffix
+    - elsif element.instance_of?(HistoryElement::RequestAccepted) && pending_reviews?
+      #{element.user_action} and dismissed pending reviews
+    - else
+      = element.user_action
+    = link_to("#status-history-#{element.id}", title: l(element.created_at.utc), name: "status-history-#{element.id}") do
+      = render TimeComponent.new(time: element.created_at)
+
+.timeline-item-comment.mb-4
+  = render partial: 'webui/shared/collapsible_text', locals: { text: element.comment, extra_css_classes: css_for_comment }

@@ -1,22 +1,29 @@
 module Webui::PatchinfoHelper
-  include Webui::ProjectHelper
-  def patchinfo_bread_crumb( *args )
-    args.insert(0, link_to( @package, :action => :show, :project => @project, :package => @package ))
-    project_bread_crumb( *args )
+  def patchinfo_header(patchinfo, package_names)
+    list = package_names.to_sentence
+    text = "Update for #{truncate(list, length: 40)}"
+    capture_haml do
+      header_title(patchinfo, text, list)
+      header_subtitle(patchinfo.summary)
+    end
   end
 
-  def issue_link( issue )
+  def patchinfo_issue_link(tracker, number, url)
+    link_text = tracker == 'cve' ? "#{tracker.upcase}-#{number}" : "#{tracker}##{number}"
+    link_to(link_text, url, target: :_blank, rel: 'noopener')
+  end
 
-    # list issue-names with urls and summary from the patchinfo-file
-    # issue[0] = tracker-name
-    # issue[1] = issueid
-    # issue[2] = issue-url
-    # issue[3] = issue-summary
+  private
 
-    if issue[0] == "CVE"
-      content_tag(:li, link_to("#{issue[1]}", issue[2]) + ": #{issue[3]}")
-    else
-      content_tag(:li, link_to("#{issue[0]}##{issue[1]}", issue[2]) +  ": #{issue[3]}")
+  def header_title(patchinfo, text, list)
+    content_tag(:h3) do
+      content_tag(:span, text, title: list)
+      content_tag(:span, patchinfo.category, class: "badge badge-category #{patchinfo.category}", title: 'Category of this patchinfo')
+      content_tag(:span, patchinfo.rating, class: "badge badge-rating #{patchinfo.rating}", title: 'Rating of this patchinfo')
     end
+  end
+
+  def header_subtitle(summary)
+    content_tag(:div, summary, class: 'mb-3 text-muted') if summary.present?
   end
 end

@@ -1,9 +1,16 @@
 module Webui::MainHelper
-
-  def proceed_link(_image, _text, link_opts)
-    content_tag(:li, 
-      (link_to(sprite_tag(_image, title: _text), link_opts) + tag(:br) +
-       content_tag(:span, link_to(_text, link_opts), class: 'proceed_text')), id: "proceed-#{_image}")
+  def icon_for_severity(severity)
+    case severity.to_sym
+    when :green
+      { class: 'fa-check-circle text-success', title: 'Success' }
+    when :yellow
+      { class: 'fa-exclamation-triangle text-warning', title: 'Warning' }
+    when :red
+      { class: 'fa-exclamation-circle text-danger', title: 'Alert' }
+    when :announcement
+      { class: 'fa-bullhorn text-info', title: 'Announcement' }
+    else
+      { class: 'fa-info-circle text-info', title: 'Info' }
+    end
   end
-
 end

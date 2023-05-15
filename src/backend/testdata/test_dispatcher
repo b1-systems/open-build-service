@@ -23,9 +23,9 @@ function td()
 
   [ -n "$TEST_CASE" -a "${testname#$TEST_CASE}" == "$testname" ] && return
 
-  if ./bs_dispatch --test-constraints "$package" "$arch" $worker "$srcconstraint" "$prjconfconstraint"; then
+  if ./bs_dispatch --test-constraints "$package" "$arch" "$worker" "$srcconstraint" "$prjconfconstraint"; then
     if [ $expected != "true" ]; then
-      echo "Failed for $package $arch $worker $srcconstraint $prjconfconstraint"
+      echo "Failed $testname for $package $arch $worker $srcconstraint $prjconfconstraint"
       FAILS="$FAILS $testname"
     fi
     echo -n .
@@ -35,7 +35,7 @@ function td()
       exit 2
     fi
     if [ $expected != "false" ]; then
-      echo "Failed for $package $arch $worker $srcconstraint $prjconfconstraint"
+      echo "Failed $testname for $package $arch $worker $srcconstraint $prjconfconstraint"
       FAILS="$FAILS $testname"
     fi
     echo -n .
@@ -51,6 +51,22 @@ td simple05 false "kernel-default" armv7l small kernel
 td simple06 false "kernel-default" aarch64 small kernel
 td simple07 true "kernel-default" aarch64 medium kernel
 td simple08 true "kernel-default" aarch64 large kernel
+td simple09 false "kernel-default" armv7l large kernel # requires native kernel support (EL0)
+
+# simple source constraints like used by suse kernel
+td sandbox31 false "kernel-obs-qa" i586 medium kernel
+td sandbox32 true  "kernel-obs-qa" i586 large  kernel
+td sandbox33 false "kernel-obs-qa" i586 medium kernel
+td sandbox34 true  "kernel-obs-qa" i586 large  kernel
+td sandbox35 true  "kernel-obs-qa-xen" i586 medium kernel
+td sandbox36 false "kernel-obs-qa-xen" i586 large  kernel
+td sandbox37 true  "kernel-obs-qa-xen" i586 medium kernel
+td sandbox38 false "kernel-obs-qa-xen" i586 large  kernel
+# overwrite works also for maintenance incidents
+td sandbox35 true  "kernel-obs-qa-xen.openSUSE_13.2" i586 medium kernel
+td sandbox36 false "kernel-obs-qa-xen.openSUSE_13.2" i586 large  kernel
+td sandbox37 true  "kernel-obs-qa-xen.openSUSE_13.2" i586 medium kernel
+td sandbox38 false "kernel-obs-qa-xen.openSUSE_13.2" i586 large  kernel
 
 # simple prjconf constraints for processor numbers and disk storage
 td simple11 true "kernel" i586 large "" kernel-default
@@ -110,11 +126,18 @@ td sandbox16 true  "kernel" i586 large  ""  enforce_kvm
 # combined constraints for sandbox
 td sandbox21 false "kernel" i586 small  sandbox         enforce_kvm
 td sandbox22 false "kernel" i586 small  sandbox_secure  enforce_kvm
-# package constraints are more important here
-td sandbox23 true  "kernel" i586 medium sandbox         enforce_kvm
-td sandbox24 true  "kernel" i586 medium sandbox_secure  enforce_kvm
+td sandbox23 false "kernel" i586 medium sandbox         enforce_kvm
+td sandbox24 false "kernel" i586 medium sandbox_secure  enforce_kvm
 td sandbox25 true  "kernel" i586 large  sandbox         enforce_kvm
 td sandbox26 true  "kernel" i586 large  sandbox_secure  enforce_kvm
+td sandbox27 false "kernel" i586 medium sandbox_xen     enforce_secure
+td sandbox28 true  "kernel" i586 large  sandbox_xen     enforce_secure
+
+# combined constraints for sandbox
+td perjob21 false "chromium" i586 small  tensorflow
+td perjob22 true  "chromium" i586 medium tensorflow
+td perjob23 false "chromium" i586 large  tensorflow
+
 
 echo
 

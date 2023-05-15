@@ -9,6 +9,14 @@
 
   <define ns="" name="channel-element">
     <element name="channel">
+      <optional>
+        <element ns="" name="disabled">
+          <empty/>
+          <a:documentation>
+             For disabling the entire channel. The channel source won't be branched by default
+          </a:documentation>
+        </element>
+      </optional>
       <zeroOrMore>
         <ref name="channel-product-element"/>
       </zeroOrMore>
@@ -34,9 +42,19 @@
        <attribute name="project"/>
        <attribute name="repository"/>
        <optional>
-         <attribute name="tag"/>
+         <attribute name="id_template"/>
        </optional>
-       <empty/>
+       <optional>
+         <attribute name="requires_issue"/>
+       </optional>
+       <optional>
+         <element ns="" name="disabled">
+           <empty/>
+           <a:documentation>
+              For disabling the repository. The channel source will be branched but not build enabled by default
+           </a:documentation>
+         </element>
+       </optional>
      </element>
   </define>
 
@@ -83,12 +101,7 @@
        </optional>
        <optional>
          <attribute name="supportstatus">
-           <choice>
-             <value>l3</value>
-             <value>l2</value>
-             <value>acc</value>
-             <value>unsupported</value>
-           </choice>
+           <ref name="supportstatus-choices" />
          </attribute>
        </optional>
        <empty/>

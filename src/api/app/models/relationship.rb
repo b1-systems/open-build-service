@@ -1,161 +1,230 @@
-class Relationship < ActiveRecord::Base
+class Relationship < ApplicationRecord
   belongs_to :role
 
   # only one is true
-  belongs_to :user, inverse_of: :relationships
-  belongs_to :group, inverse_of: :relationships
+  belongs_to :user, inverse_of: :relationships, optional: true
+  belongs_to :group, inverse_of: :relationships, optional: true
   has_many :groups_users, through: :group
 
-  belongs_to :project, inverse_of: :relationships
-  belongs_to :package, inverse_of: :relationships
+  belongs_to :project, inverse_of: :relationships, optional: true
+  belongs_to :package, inverse_of: :relationships, optional: true
 
-  validates :role, presence: true
+  validate :check_global_role
 
-  validate :check_sanity
+  validates :project_id, uniqueness: {
+    scope: [:role_id, :group_id, :user_id], allow_nil: true,
+    message: 'Project has non unique id'
+  }
+  validates :package_id, uniqueness: {
+    scope: [:role_id, :group_id, :user_id], allow_nil: true,
+    message: 'Package has non unique id'
+  }
+
+  validates :package, presence: {
+    message: 'Neither package nor project exists'
+  }, unless: proc { |relationship| relationship.project.present? }
+
+  validates :package, absence: {
+    message: 'Package and project can not exist at the same time'
+  }, if: proc { |relationship| relationship.project.present? }
+
+  validates :user, presence: {
+    message: 'Neither user nor group exists'
+  }, unless: proc { |relationship| relationship.group.present? }
+
+  validates :user, absence: {
+    message: 'User and group can not exist at the same time'
+  }, if: proc { |relationship| relationship.group.present? }
+
+  validate :allowed_user
 
   # don't use "is not null" - it won't be in index
-  scope :projects, -> { where("project_id is not null") }
-  scope :packages, -> { where("package_id is not null") }
-  scope :groups, -> { where("group_id is not null") }
-  scope :users, -> { where("user_id is not null") }
+  scope :projects, -> { where.not(project_id: nil) }
+  scope :packages, -> { where.not(package_id: nil) }
+  scope :groups, -> { where.not(group_id: nil) }
+  scope :users, -> { where.not(user_id: nil) }
+  scope :with_users_and_roles_query, lambda {
+    joins(:role, :user).order('roles.title, users.login')
+  }
+  scope :with_groups_and_roles_query, lambda {
+    joins(:role, :group).order('roles.title, groups.title')
+  }
+  scope :maintainers, lambda {
+    where(role: Role.hashed['maintainer'])
+  }
+  # FIXME: This probably can be refactored to avoid instantiation inside the `map`
+  scope :user_with_maintainer_role, lambda {
+    where(role: Role.hashed['maintainer'])
+      .map { |relation| relation.user || relation.group.users }
+      .flatten.uniq
+  }
+  scope :for_package, ->(package) { where(package: package) }
+  scope :for_project, ->(project) { where(project: project) }
 
-  protected
-  def check_sanity
-    if self.package && self.project
-      errors.add(:package_id, "Relationships are either for project or package")
-    end
-    if self.group && self.user
-      errors.add(:user_id, "Relationships are either for groups or users")
-    end
-    if !self.package && !self.project
-      errors.add(:package_id, "Relationships need either a project or a package")
-    end
-    if !self.group && !self.user
-      errors.add(:user_id, "Relationships need either a group or a user")
-    end
-    check_duplicates if errors.empty?
-  end
+  scope :bugowners, lambda {
+    where(role: Role.hashed['bugowner'])
+  }
 
-  def check_duplicates
-    relation=Relationship.where(role_id: self.role_id)
-    if self.group_id
-      relation=relation.where(group_id: self.group_id)
-    else
-      return unless self.user_id # nothing to check
-      relation=relation.where(user_id: self.user_id)
-    end
-    if self.project_id
-      relation=relation.where(project_id: self.project_id)
-    else
-      return unless self.package_id # nothing to check
-      relation=relation.where(package_id: self.package_id)
-    end
-    if self.id
-      relation = relation.where("id <> #{self.id}")
-    end
-    if relation.exists?
-      errors.add(:role, "Relationship already exists")
-    end
-  end
+  scope :bugowners_with_email, lambda {
+    bugowners.joins(:user).merge(User.with_email)
+  }
 
-  class SaveError < APIException;
-  end
-
-  def self.add_user(obj, user, role, ignoreLock=nil)
-    obj.check_write_access!(ignoreLock)
-
-    unless role.kind_of? Role
-      role = Role.find_by_title!(role)
-    end
-    if role.global
-      #only nonglobal roles may be set in a project
-      raise SaveError, "tried to set global role '#{role.title}' for user '#{user}' in #{obj.class} '#{self.name}'"
-    end
-
-    unless user.kind_of? User
-      user = User.find_by_login!(user)
-    end
-
-    obj.relationships.each do |r|
-      if r.user_id == user.id && r.role_id == role.id
-        logger.debug "ignore user #{user.login} - already has role #{role.title}"
-        return
-      end
-    end
-
-    logger.debug "adding user: #{user.login}, #{role.title}"
-    r = obj.relationships.build(user: user, role: role)
-    if r.invalid?
-      logger.debug "invalid: #{r.errors.inspect}"
-      r.delete
-    end
-  end
-
-  def self.add_group(obj, group, role, ignoreLock=nil)
-    obj.check_write_access!(ignoreLock)
-
-    unless role.kind_of? Role
-      role = Role.find_by_title!(role)
-    end
-
-    if role.global
-      #only nonglobal roles may be set in a project
-      raise SaveError, "tried to set global role '#{role_title}' for group '#{group}' in #{obj.class} '#{self.name}'"
-    end
-
-    unless group.kind_of? Group
-      group = Group.find_by_title(group.to_s)
-    end
-
-    r = obj.relationships.build(group: group, role: role)
-    r.delete if r.invalid?
-  end
-
-  FORBIDDEN_PROJECT_IDS_CACHE_KEY="forbidden_project_ids"
-
-  # this is to speed up secure Project.find
-  def self.forbidden_project_ids
-    if User.current
-      return User.current.forbidden_project_ids
-    end
-    # mainly for scripts
-    forbidden_project_ids_for_user(nil)
-  end
-
-  def self.forbidden_project_ids_for_user(user)
-    project_user_cache = Rails.cache.fetch(FORBIDDEN_PROJECT_IDS_CACHE_KEY) do
-      puc = Hash.new
-      Relationship.find_by_sql("SELECT ur.project_id, ur.user_id from flags f,
-                relationships ur where f.flag = 'access' and f.status = 'disable' and ur.project_id = f.project_id").each do |r|
-        puc[r.project_id] ||= Hash.new
-        puc[r.project_id][r.user_id] = 1
-      end
-      puc
-    end
-    ret = [0]
-    if user
-      return ret if user.is_admin?
-      userid = user.id
-    else
-      userid = User.nobodyID
-    end
-    project_user_cache.each do |project_id, users|
-      ret << project_id unless users[userid]
-    end
-    # we always put a 0 in there to avoid having to check for NULL
-    ret << 0 if ret.blank?
-    ret
-  end
-
-  def self.discard_cache
-    Rails.cache.delete(FORBIDDEN_PROJECT_IDS_CACHE_KEY)
-    User.current.discard_cache if User.current
-  end
+  after_create :create_relationship_create_event
 
   # we only care for project<->user relationships, but the cache is not *that* expensive
   # to recalculate
-  after_create 'Relationship.discard_cache'
-  after_rollback 'Relationship.discard_cache'
-  after_destroy 'Relationship.discard_cache'
+  after_create :discard_cache
+  after_destroy :discard_cache
+  after_rollback :discard_cache
 
+  RELATIONSHIP_CACHE_SEQUENCE = 'cache_sequence_for_forbidden_projects'.freeze
+
+  def self.add_user(obj, user, role, ignore_lock = nil, check = nil)
+    add_role(obj, role, user: user, ignore_lock: ignore_lock, check: check)
+  end
+
+  def self.add_group(obj, group, role, ignore_lock = nil, check = nil)
+    add_role(obj, role, group: group, ignore_lock: ignore_lock, check: check)
+  end
+
+  # calculate and cache forbidden_project_ids for users
+  def self.forbidden_project_ids
+    # Admins don't have forbidden projects
+    return [0] if User.admin_session?
+
+    # This will cache and return a hash like this:
+    # {projecs: [p1,p2], whitelist: { u1: [p1], u2: [p1,p2], u3: [p2] } }
+    forbidden_projects = Rails.cache.fetch('forbidden_projects') do
+      forbidden_projects_hash = { projects: [], whitelist: {} }
+      RelationshipsFinder.new.disabled_projects.each do |r|
+        forbidden_projects_hash[:projects] << r.project_id
+        user_id = r.user_id || r.groups_user_id
+        if user_id
+          forbidden_projects_hash[:whitelist][user_id] ||= []
+          forbidden_projects_hash[:whitelist][user_id] << r.project_id
+        end
+      end
+      forbidden_projects_hash[:projects].uniq!
+      forbidden_projects_hash[:projects] << 0 if forbidden_projects_hash[:projects].empty?
+
+      forbidden_projects_hash
+    end
+    # We don't need to check the relationships if we don't have a User
+    return forbidden_projects[:projects] unless User.session
+
+    # The cache sequence is for invalidating user centric cache entries for all users
+    Rails.cache.fetch(cache_user_centric_key) do
+      # Normal users can be in the whitelist let's substract allowed projects
+      whitelistened_projects_for_user = forbidden_projects[:whitelist][User.possibly_nobody.id] || []
+      result = forbidden_projects[:projects] - whitelistened_projects_for_user
+      result = [0] if result.empty?
+      result
+    end
+  end
+
+  def self.discard_cache
+    # Increasing the cache sequence will 'discard' all user centric forbidden_projects caches
+    Rails.cache.write(RELATIONSHIP_CACHE_SEQUENCE, cache_sequence + 1)
+    Rails.cache.delete('forbidden_projects')
+  end
+
+  def self.with_users_and_roles
+    with_users_and_roles_query.pluck(:login, :title)
+  end
+
+  def self.with_groups_and_roles
+    with_groups_and_roles_query.pluck('groups.title', 'roles.title')
+  end
+
+  def create_relationship_delete_event
+    return unless User.session
+
+    Event::RelationshipDelete.create(event_parameters)
+  end
+
+  private
+
+  class << self
+    def add_role(obj, role, opts = {})
+      Relationship::AddRole.new(obj, role, opts).add_role
+    end
+
+    def cache_sequence
+      Rails.cache.fetch(RELATIONSHIP_CACHE_SEQUENCE) { 0 }
+    end
+
+    def cache_user_centric_key
+      "users/#{User.possibly_nobody.id}-forbidden_projects-#{cache_sequence}"
+    end
+  end
+
+  def discard_cache
+    Relationship.discard_cache
+  end
+
+  def check_global_role
+    return unless role && role.global
+
+    errors.add(:base,
+               "global role #{role.title} is not allowed.")
+  end
+
+  # NOTE: Adding a normal validation, the error doesn't reach the view due to
+  # Relationship::AddRole#add_role handling.
+  # We could also check other banned users, not only nobody.
+  def allowed_user
+    raise NotFoundError, "Couldn't find user #{user.login}" if user && user.is_nobody?
+  end
+
+  def create_relationship_create_event
+    return unless User.session
+
+    Event::RelationshipCreate.create(event_parameters)
+  end
+
+  def event_parameters
+    parameters = { who: User.session.login,
+                   user: user&.login,
+                   group: group&.title,
+                   role: role.title,
+                   notifiable_id: id }
+    if package
+      parameters[:project] = package.project.name
+      parameters[:package] = package.name
+    else
+      parameters[:project] = project.name
+    end
+
+    parameters
+  end
 end
+
+# == Schema Information
+#
+# Table name: relationships
+#
+#  id         :integer          not null, primary key
+#  group_id   :integer          indexed, indexed => [package_id, role_id], indexed => [project_id, role_id]
+#  package_id :integer          indexed => [role_id, group_id], indexed => [role_id, user_id]
+#  project_id :integer          indexed => [role_id, group_id], indexed => [role_id, user_id]
+#  role_id    :integer          not null, indexed => [package_id, group_id], indexed => [package_id, user_id], indexed => [project_id, group_id], indexed => [project_id, user_id], indexed
+#  user_id    :integer          indexed => [package_id, role_id], indexed => [project_id, role_id], indexed
+#
+# Indexes
+#
+#  group_id                                                    (group_id)
+#  index_relationships_on_package_id_and_role_id_and_group_id  (package_id,role_id,group_id) UNIQUE
+#  index_relationships_on_package_id_and_role_id_and_user_id   (package_id,role_id,user_id) UNIQUE
+#  index_relationships_on_project_id_and_role_id_and_group_id  (project_id,role_id,group_id) UNIQUE
+#  index_relationships_on_project_id_and_role_id_and_user_id   (project_id,role_id,user_id) UNIQUE
+#  role_id                                                     (role_id)
+#  user_id                                                     (user_id)
+#
+# Foreign Keys
+#
+#  relationships_ibfk_1  (role_id => roles.id)
+#  relationships_ibfk_2  (user_id => users.id)
+#  relationships_ibfk_3  (group_id => groups.id)
+#  relationships_ibfk_4  (project_id => projects.id)
+#  relationships_ibfk_5  (package_id => packages.id)
+#

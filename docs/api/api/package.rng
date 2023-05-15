@@ -7,6 +7,8 @@
     Developer informations
   devel
     if present, this element defines a devel package location
+  releasename
+    this defines the target package container name on release
   person
     An optional list of persons
   group
@@ -35,20 +37,12 @@
   </start>
 
   <define name="package-element">
-    <element>
-      <name ns="">package</name>
-
+    <element ns="" name="package">
       <optional>
         <attribute name="name"/>
       </optional>
       <optional>
         <attribute name="project"/>
-      </optional>
-      <optional>
-        <attribute name="created"/>
-      </optional>
-      <optional>
-        <attribute name="updated"/>
       </optional>
 
       <element ns="" name="title">
@@ -70,6 +64,11 @@
               <attribute name="package"/>
           </optional>
           <empty/>
+        </element>
+      </optional>
+      <optional>
+        <element ns="" name="releasename">
+          <text/>
         </element>
       </optional>
       <zeroOrMore>
@@ -115,6 +114,11 @@
       </optional>
       <optional>
         <element ns="" name="url">
+          <text/>
+        </element>
+      </optional>
+      <optional>
+        <element ns="" name="scmsync">
           <text/>
         </element>
       </optional>

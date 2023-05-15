@@ -23,24 +23,23 @@
 package BSRPC;
 
 use Socket;
+use POSIX;
 use XML::Structured;
 use Symbol;
 use MIME::Base64;
-use Data::Dumper;
 
 use BSHTTP;
-use BSConfig;
 
 use strict;
 
 our $useragent = 'BSRPC 0.9.1';
+our $noproxy;
+our $logtimeout;
+our $autoheaders;
 
 my %hostlookupcache;
 my %cookiestore;	# our session store to keep iChain fast
 my $tossl;
-
-my $noproxy;
-$noproxy = $BSConfig::noproxy if defined($BSConfig::noproxy);
 
 sub import {
   if (grep {$_ eq ':https'} @_) {
@@ -53,43 +52,52 @@ sub import {
 my $tcpproto = getprotobyname('tcp');
 
 sub urlencode {
-  my $url = $_[0];
-  $url =~ s/([\000-\040<>;\"#\?&\+=%[\177-\377])/sprintf("%%%02X",ord($1))/sge;
-  return $url;
+  return BSHTTP::urlencode($_[0]);
 }
 
 sub createuri {
   my ($param, @args) = @_;
   my $uri = $param->{'uri'};
-  if (!$param->{'verbatim_uri'} && $uri =~ /^(https?:\/\/[^\/]*\/)(.*)$/s) {
-    $uri = $1; 
-    $uri .= BSRPC::urlencode($2);
-  }
-  if (@args) {
-    for (@args) {
-      $_ = urlencode($_);
-      s/%3D/=/;	# convert first now escaped '=' back
-    }   
-    if ($uri =~ /\?/) {
-      $uri .= '&'.join('&', @args); 
+  if (!$param->{'verbatim_uri'}) {
+    # encode uri, but do not encode the host part
+    if ($uri =~ /^(https?:\/\/[^\/]*\/)(.*)$/s) {
+      $uri = $1; 
+      $uri .= BSHTTP::urlencode($2);
     } else {
-      $uri .= '?'.join('&', @args); 
-    }   
+      $uri = BSHTTP::urlencode($uri);
+    }
   }
+  $uri .= (($uri =~ /\?/) ? '&' : '?') . BSHTTP::queryencode(@args) if @args;
+  $uri .= "#".BSHTTP::urlencode($param->{'fragment'}) if defined $param->{'fragment'};
   return $uri;
 }
 
 sub useproxy {
-  my ($host, $noproxy) = @_;
+  my ($param, $host) = @_;
 
+  my $nop = $noproxy;
+  if (!defined($nop)) {
+    # XXX: should not get stuff from BSConfig, but compatibility...
+    $nop = $BSConfig::noproxy if defined($BSConfig::noproxy);
+  }
+  return 1 if !defined $nop;
   # strip leading and tailing whitespace
-  $noproxy =~ s/^\s+//;
-  $noproxy =~ s/\s+$//;
+  $nop =~ s/^\s+//;
+  $nop =~ s/\s+$//;
   # noproxy is a list separated by commas and optional whitespace
-  for (split(/\s*,\s*/, $noproxy)) {
-    return 0 if $host =~ m/(^|\.)$_$/;
+  for (split(/\s*,\s*/, $nop)) {
+    s/^\.?/./s; 
+    return 0 if ".$host" =~ /\Q$_\E$/s;
   }
   return 1;
+}
+
+sub addautoheaders {
+  my ($hdrs, $aheaders) = @_;
+  for (@{$aheaders || $autoheaders || []}) {
+    my $k = (split(':', $_, 2))[0];
+    push @$hdrs, $_ unless grep {/^\Q$k\E:/i} @$hdrs;
+  }
 }
 
 sub createreq {
@@ -104,14 +112,20 @@ sub createreq {
   die("bad uri: $uri\n") unless $uri =~ /^(https?):\/\/(?:([^\/\@]*)\@)?([^\/:]+)(:\d+)?(\/.*)$/;
   my ($proto, $auth, $host, $port, $path) = ($1, $2, $3, $4, $5);
   my $hostport = $port ? "$host$port" : $host;
-  undef $proxy if $proxy && defined($noproxy) && !useproxy($host, $noproxy);
+  undef $proxy if $proxy && !useproxy($param, $host);
   if ($proxy) {
     die("bad proxy uri: $proxy\n") unless "$proxy/" =~ /^(https?):\/\/(?:([^\/\@]*)\@)?([^\/:]+)(:\d+)?(\/.*)$/;
     ($proto, $proxyauth, $host, $port) = ($1, $2, $3, $4);
     $path = $uri unless $uri =~ /^https:/;
   }
   $port = substr($port || ($proto eq 'http' ? ":80" : ":443"), 1);
-  unshift @xhdrs, "Connection: close" unless $param->{'noclose'};
+  if ($param->{'_stripauthhost'} && $host ne $param->{'_stripauthhost'}) {
+    @xhdrs = grep {!/^authorization:/i} @xhdrs;
+    delete $param->{'authenticator'};
+  }
+  if (!$param->{'keepalive'} || ($act ne 'GET' && $act ne 'HEAD')) {
+    unshift @xhdrs, "Connection: close" unless $param->{'noclose'};
+  }
   unshift @xhdrs, "User-Agent: $useragent" unless !defined($useragent) || grep {/^user-agent:/si} @xhdrs;
   unshift @xhdrs, "Host: $hostport" unless grep {/^host:/si} @xhdrs;
   if (defined $auth) {
@@ -140,11 +154,100 @@ sub createreq {
   return ($proto, $host, $port, $req, $proxytunnel);
 }
 
+sub updatecookies {
+  my ($cookiestore, $uri, $setcookie) = @_;
+  return unless $cookiestore && $uri && $setcookie;
+  my @cookie = split(',', $setcookie);
+  s/;.*// for @cookie;
+  if ($uri =~ /((:?https?):\/\/(?:([^\/]*)\@)?(?:[^\/:]+)(?::\d+)?)(?:\/.*)$/) {
+    my %cookie = map {$_ => 1} @cookie;
+    push @cookie, grep {!$cookie{$_}} @{$cookiestore->{$1} || []};
+    splice(@cookie, 10) if @cookie > 10;
+    $cookiestore->{$1} = \@cookie;
+  }
+}
+
+sub args {
+  my ($h, @k) = @_;
+  return map {
+    my ($v, $k) = ($h->{$_}, $_);
+    !defined($v) ? () : ref($v) eq 'ARRAY' ? map {"$k=$_"} @$v : "$k=$v";
+  } @k;
+}
+
+sub readanswerheaderblock {
+  my ($sock, $ans) = @_;
+  $ans = '' unless defined $ans;
+  do {
+    my $r = sysread($sock, $ans, 1024, length($ans));
+    if (!$r) {
+      die("received truncated answer: $!\n") if !defined($r) && $! != POSIX::EINTR && $! != POSIX::EWOULDBLOCK;
+      die("received truncated answer\n") if defined $r;
+    }
+  } while ($ans !~ /\n\r?\n/s);
+  die("bad HTTP answer\n") unless $ans =~ s/^HTTP\/\d+?\.\d+?\s+?(\d+[^\r\n]*)/Status: $1/s;
+  return ($1, $ans);
+}
+
+my $ai_addrconfig = eval { Socket::AI_ADDRCONFIG() } || 0;
+
+sub lookuphost {
+  my ($host, $port, $cache) = @_;
+  my $hostaddr;
+  if ($cache && $cache->{$host} && $cache->{$host}->[1] > time()) {
+    $hostaddr = $cache->{$host}->[0];
+  } else {
+    if (defined &Socket::getaddrinfo) {
+      my $hints = { 'socktype' => SOCK_STREAM, 'flags' => $ai_addrconfig };
+      my ($err, @ai) = Socket::getaddrinfo($host, undef, $hints);
+      return undef if $err;
+      my @aif = grep {$_->{'family'} == AF_INET} @ai;
+      @aif = grep {$_->{'family'} == AF_INET6} @ai unless @aif;
+      $hostaddr = $aif[0]->{'addr'} if @aif;
+    } else {
+      $hostaddr = inet_aton($host);
+      $hostaddr = sockaddr_in(0, $hostaddr) if $hostaddr;
+    }
+    return undef unless $hostaddr;
+    $cache->{$host} = [ $hostaddr, time() + 24 * 3600 ] if $cache;
+  }
+  if (defined($port)) {
+    if (sockaddr_family($hostaddr) == AF_INET6) {
+      (undef, $hostaddr) = sockaddr_in6($hostaddr);
+      $hostaddr = sockaddr_in6($port, $hostaddr);
+    } else {
+      (undef, $hostaddr) = sockaddr_in($hostaddr);
+      $hostaddr = sockaddr_in($port, $hostaddr);
+    }
+  }
+  return $hostaddr;
+}
+
+sub opensocket {
+  my ($hostaddr) = @_;
+  my $sock;
+  if (sockaddr_family($hostaddr) == AF_INET6) {
+    socket($sock, PF_INET6, SOCK_STREAM, $tcpproto) || die("socket: $!\n");
+  } else {
+    socket($sock, PF_INET, SOCK_STREAM, $tcpproto) || die("socket: $!\n");
+  }
+  setsockopt($sock, SOL_SOCKET, SO_KEEPALIVE, pack("l",1));
+  return $sock;
+}
+
+sub verify_sslpeerfingerprint {
+  my ($sock, $sslfingerprint) = @_;
+  die("bad sslpeerfingerprint '$sslfingerprint'\n") unless $sslfingerprint =~ /^(.*?):(.*)$/s;
+  my $pfp =  tied(*{$sock})->peerfingerprint($1);
+  die("peer fingerprint does not match: $2 != $pfp\n") if $2 ne $pfp;
+}
+
 #
 # handled paramters:
 # timeout
 # uri
 # data
+# datafmt
 # headers (array)
 # chunked
 # request
@@ -161,125 +264,170 @@ sub createreq {
 # receiverarg
 # maxredirects
 # proxy
+# formurlencode
 #
 
 sub rpc {
-  my ($uri, $xmlargs, @args) = @_;
+  my ($param, $xmlargs, @args) = @_;
 
-  my $data = '';
-  my @xhdrs;
-  my $chunked;
-  my $param = {'uri' => $uri};
+  $param = {'uri' => $param} if ref($param) ne 'HASH';
 
-  if (ref($uri) eq 'HASH') {
-    $param = $uri;
-    my $timeout = $param->{'timeout'};
-    if ($timeout) {
-      my %paramcopy = %$param;
-      delete $paramcopy{'timeout'};
-      my $ans;
-      local $SIG{'ALRM'} = sub {alarm(0); die("rpc timeout\n");};
+  # process timeout setup
+  if ($param->{'timeout'}) {
+    my %paramcopy = %$param;
+    my $timeout = delete $paramcopy{'timeout'};
+    $paramcopy{'running_timeout'} = $timeout;
+    my $ans;
+    local $SIG{'ALRM'} = sub {
+      alarm(0);
+      print "rpc timeout($timeout sec), uri: '$param->{uri}'\n" if $logtimeout;
+      die("rpc timeout\n");
+    };
+    eval {
       eval {
-        eval {
-          alarm($timeout);
-          $ans = rpc(\%paramcopy, $xmlargs, @args);
-        };
-        alarm(0);
-        die($@) if $@;
+        alarm($timeout);
+        $ans = rpc(\%paramcopy, $xmlargs, @args);
       };
+      alarm(0);
       die($@) if $@;
-      return $ans;
+    };
+    die($@) if $@;
+    return $ans;
+  }
+
+  my @xhdrs = @{$param->{'headers'} || []};
+  my $chunked = $param->{'chunked'} ? 1 : undef;
+
+  # do data conversion
+  my $data = $param->{'data'};
+  if ($param->{'datafmt'} && defined($data)) {
+    my $datafmt = $param->{'datafmt'};
+    if (ref($datafmt) eq 'CODE') {
+      $data = $datafmt->($data);
+    } else {
+      $data = XMLout($datafmt, $data);
     }
-    $uri = $param->{'uri'};
-    $data = $param->{'data'};
-    @xhdrs = @{$param->{'headers'} || []};
-    $chunked = 1 if $param->{'chunked'};
-    if (!defined($data) && $param->{'request'} && $param->{'request'} eq 'POST' && @args && grep {/^content-type:\sapplication\/x-www-form-urlencoded$/i} @xhdrs) {
-      for (@args) {
-	$_ = urlencode($_);
-        s/%3D/=/;	# convert now escaped = back
-      }
-      $data = join('&', @args);
+  }
+
+  # do from urlencoding if requested
+  my $formurlencode = $param->{'formurlencode'};
+  if (!defined($data) && ($param->{'request'} || '') eq 'POST' && @args) {
+    if (grep {/^content-type:\sapplication\/x-www-form-urlencoded$/i} @xhdrs) {
+      $formurlencode = 1;		# compat
+    } elsif ($formurlencode) {
+      push @xhdrs, 'Content-Type: application/x-www-form-urlencoded';
+    }
+    if ($formurlencode) {
+      $data = BSHTTP::queryencode(@args);
       @args = ();
     }
-    push @xhdrs, "Content-Length: ".length($data) if defined($data) && !ref($data) && !$chunked && !grep {/^content-length:/i} @xhdrs;
-    push @xhdrs, "Transfer-Encoding: chunked" if $chunked;
-    $data = '' unless defined $data;
   }
-  $uri = createuri($param, @args);
+
+  push @xhdrs, "Content-Length: ".length($data) if defined($data) && !ref($data) && !$chunked && !grep {/^content-length:/i} @xhdrs;
+  push @xhdrs, "Transfer-Encoding: chunked" if $chunked;
+  if ($param->{'authenticator'} && !grep {/^authorization:/i} @xhdrs) {
+    # ask authenticator for cached authorization
+    my $auth = $param->{'authenticator'}->($param);
+    push @xhdrs, "Authorization: $auth" if $auth;
+  }
+  my $uri = createuri($param, @args);
   my $proxy = $param->{'proxy'};
+  addautoheaders(\@xhdrs);
   my ($proto, $host, $port, $req, $proxytunnel) = createreq($param, $uri, $proxy, \%cookiestore, @xhdrs);
   if ($proto eq 'https' || $proxytunnel) {
     die("https not supported\n") unless $tossl || $param->{'https'};
   }
-  local *S;
+
+  # connect to server
+  my $keepalive;
+  my $keepalivecookie;
+  my $sock;
+  my $is_ssl;
   if (exists($param->{'socket'})) {
-    *S = $param->{'socket'};
+    $sock = $param->{'socket'};
   } else {
-    if (!$hostlookupcache{$host}) {
-      my $hostaddr = inet_aton($host);
-      die("unknown host '$host'\n") unless $hostaddr;
-      $hostlookupcache{$host} = $hostaddr;
+    my $hostaddr = lookuphost($host, $port, \%hostlookupcache);
+    die("unknown host '$host'\n") unless $hostaddr;
+    $keepalive = $param->{'keepalive'};
+    $keepalivecookie = "$hostaddr/".($proxytunnel || '');
+    if (!$param->{'continuation'} && $keepalive && $keepalive->{'socket'}) {
+      my $request = $param->{'request'} || 'GET';
+      if ($keepalive->{'cookie'} eq $keepalivecookie && ($request eq 'GET' || $request eq 'HEAD')) {
+	$sock = $keepalive->{'socket'};
+        verify_sslpeerfingerprint($sock, $param->{'sslpeerfingerprint'}) if $param->{'sslpeerfingerprint'} && ($proto eq 'https' || $proxytunnel);
+      } else {
+	close($keepalive->{'socket'});
+	%$keepalive = ();
+      }
     }
-    socket(S, PF_INET, SOCK_STREAM, $tcpproto) || die("socket: $!\n");
-    setsockopt(S, SOL_SOCKET, SO_KEEPALIVE, pack("l",1));
-    connect(S, sockaddr_in($port, $hostlookupcache{$host})) || die("connect to $host:$port: $!\n");
-    if ($proxytunnel) {
-      BSHTTP::swrite(\*S, $proxytunnel);
-      my $ans = '';
-      do {
-	die("received truncated answer\n") if !sysread(S, $ans, 1024, length($ans));
-      } while ($ans !~ /\n\r?\n/s);
-      die("bad answer\n") unless $ans =~ s/^HTTP\/\d+?\.\d+?\s+?(\d+[^\r\n]*)/Status: $1/s;
-      my $status = $1;
-      die("proxy tunnel: CONNECT method failed: $status\n") unless $status =~ /^200[^\d]/;
+    if (!$sock) {
+      $sock = opensocket($hostaddr);
+      connect($sock, $hostaddr) || die("connect to $host:$port: $!\n");
+      if ($proxytunnel) {
+        BSHTTP::swrite($sock, $proxytunnel);
+        my ($status, $ans) = readanswerheaderblock($sock);
+        die("proxy tunnel: CONNECT method failed: $status\n") unless $status =~ /^200[^\d]/;
+      }
+      if ($proto eq 'https' || $proxytunnel) {
+	($param->{'https'} || $tossl)->($sock, 'mode' => 'connect', 'keyfile' => $param->{'ssl_keyfile'}, 'certfile' => $param->{'ssl_certfile'}, 'sni' => $host);
+	$is_ssl = 1;
+	verify_sslpeerfingerprint($sock, $param->{'sslpeerfingerprint'}) if $param->{'sslpeerfingerprint'};
+      }
     }
-    ($param->{'https'} || $tossl)->(\*S, $param->{'ssl_keyfile'}, $param->{'ssl_certfile'}, 1) if $proto eq 'https' || $proxytunnel;
   }
+
+  # send request
   if (!$param->{'continuation'}) {
+    $data = '' unless defined $data;
     if ($param->{'verbose'}) {
       print "> $_\n" for split("\r\n", $req);
       #print "> $data\n" unless ref($data);
     }
-    $req .= "$data" unless ref($data);
-    if ($param->{'sender'}) {
-      $param->{'sender'}->($param, \*S, $req);
-    } else {
-      while(1) {
-	BSHTTP::swrite(\*S, $req);
-	last unless ref $data;
-	$req = &$data($param, \*S);
-	if (!defined($req) || !length($req)) {
-	  $req = $data = '';
-	  $req = "0\r\n\r\n" if $chunked;
-	  next;
-	}
-	$req = sprintf("%X\r\n", length($req)).$req."\r\n" if $chunked;
+    if (!ref($data)) {
+      # append body to request (chunk encoded if requested)
+      if ($chunked) {
+	$data = sprintf("%X\r\n", length($data)).$data."\r\n" if $data ne '';
+	$data .= "0\r\n\r\n";
       }
+      $req .= $data;
+      undef $data;
     }
-    if ($param->{'async'}) {
-      my $ret = {};
-      $ret->{'uri'} = $uri;
-      my $fd = gensym;
-      *$fd = \*S;
-      $ret->{'socket'} = $fd;
-      $ret->{'async'} = 1;
-      $ret->{'continuation'} = 1;
-      $ret->{'request'} = $param->{'request'} || 'GET';
-      $ret->{'verbose'} = $param->{'verbose'} if $param->{'verbose'};
-      $ret->{'replyheaders'} = $param->{'replyheaders'} if $param->{'replyheaders'};
-      $ret->{'receiver'} = $param->{'receiver'} if $param->{'receiver'};
-      $ret->{$_} = $param->{$_} for grep {/^receiver:/} keys %$param;
-      $ret->{'receiverarg'} = $xmlargs if $xmlargs;
-      return $ret;
+    if ($param->{'sender'}) {
+      $param->{'sender'}->($param, $sock, $req, $data);
+    } elsif (!ref($data)) {
+      BSHTTP::swrite($sock, $req);
+    } else {
+      BSHTTP::swrite($sock, $req);
+      while(1) {
+	$req = $data->($param, $sock);
+	last if !defined($req) || !length($req);
+        BSHTTP::swrite($sock, $req, $chunked);
+      }
+      BSHTTP::swrite($sock, "0\r\n\r\n") if $chunked;
     }
   }
-  my $ans = '';
-  do {
-    die("received truncated answer\n") if !sysread(S, $ans, 1024, length($ans));
-  } while ($ans !~ /\n\r?\n/s);
-  die("bad answer\n") unless $ans =~ s/^HTTP\/\d+?\.\d+?\s+?(\d+[^\r\n]*)/Status: $1/s;
-  my $status = $1;
+
+  # return here if in async mode
+  if ($param->{'async'} && !$param->{'continuation'}) {
+    my $ret = {};
+    $ret->{'uri'} = $uri;
+    $ret->{'socket'} = $sock;
+    $ret->{'async'} = 1;
+    $ret->{'continuation'} = 1;
+    $ret->{'request'} = $param->{'request'} || 'GET';
+    $ret->{'verbose'} = $param->{'verbose'} if $param->{'verbose'};
+    $ret->{'replyheaders'} = $param->{'replyheaders'} if $param->{'replyheaders'};
+    $ret->{'receiver'} = $param->{'receiver'} if $param->{'receiver'};
+    $ret->{'receiverarg'} = $xmlargs if $xmlargs;
+    $ret->{'is_ssl'} = 1 if $is_ssl;
+    fcntl($sock, F_SETFL, O_NONBLOCK);
+    return $ret;
+  }
+
+  fcntl($sock, F_SETFL, 0) if $param->{'continuation'};
+
+  # read answer from server, first the header block
+  my ($status, $ans) = readanswerheaderblock($sock);
   $ans =~ /^(.*?)\n\r?\n(.*)$/s;
   my $headers = $1;
   $ans = $2;
@@ -288,69 +436,119 @@ sub rpc {
   }
   my %headers;
   BSHTTP::gethead(\%headers, $headers);
-  if ($status =~ /^200[^\d]/) {
+
+  # no keepalive if the server says so
+  %$keepalive = () if $keepalive;
+  undef $keepalive if lc($headers{'connection'} || '') eq 'close';
+  undef $keepalive if !defined($headers{'content-length'}) && lc($headers{'transfer-encoding'} || '') ne 'chunked';
+
+  # process header
+  #
+  # HTTP Status Code Definitions
+  # Successful 2xx
+  # https://www.w3.org/Protocols/rfc2616/rfc2616-sec10.html
+  #
+  updatecookies(\%cookiestore, $param->{'uri'}, $headers{'set-cookie'}) if $headers{'set-cookie'};
+  if ($status =~ /^2\d\d[^\d]/) {
     undef $status;
-  } elsif ($status =~ /^302[^\d]/) {
-    # XXX: should we do the redirect if $param->{'ignorestatus'} is defined?
-    close S;
-    die("error: no redirects allowed\n") unless defined $param->{'maxredirects'};
-    die("error: status 302 but no 'location' header found\n") unless exists $headers{'location'};
-    die("error: max number of redirects reached\n") if $param->{'maxredirects'} < 1;
-    my %myparam = %$param;
-    $myparam{'uri'} = $headers{'location'};
-    $myparam{'maxredirects'} = $param->{'maxredirects'} - 1;
-    return rpc(\%myparam, $xmlargs, @args);
   } else {
     #if ($param->{'verbose'}) {
-    #  1 while sysread(S, $ans, 1024, length($ans));
+    #  1 while sysread($sock, $ans, 1024, length($ans));
     #  print "< $ans\n";
     #}
-    if ($status =~ /^(\d+) +(.*?)$/) {
-      die("$1 remote error: $2\n") unless $param->{'ignorestatus'};
+    if ($status =~ /^30[27][^\d]/ && ($param->{'ignorestatus'} || 0) != 2) {
+      close $sock;
+      %$keepalive = () if $keepalive;
+      die("error: no redirects allowed\n") unless defined $param->{'maxredirects'};
+      die("error: status 302 but no 'location' header found\n") unless exists $headers{'location'};
+      die("error: max number of redirects reached\n") if $param->{'maxredirects'} < 1;
+      my %myparam = %$param;
+      $myparam{'uri'} = $headers{'location'};
+      $myparam{'maxredirects'} = $param->{'maxredirects'} - 1;
+      $myparam{'_stripauthhost'} = $host;	# strip authentication on redirect to different domain
+      $myparam{'verbatim_uri'} = 1;
+      return rpc(\%myparam, $xmlargs, @args);
+    }
+    if ($status =~ /^401[^\d]/ && $param->{'authenticator'} && $headers{'www-authenticate'}) {
+      # unauthorized, ask callback for authorization
+      my $auth = $param->{'authenticator'}->($param, $headers{'www-authenticate'}, \%headers);
+      if ($auth) {
+        close $sock;
+        %$keepalive = () if $keepalive;
+        my %myparam = %$param;
+        delete $myparam{'authenticator'};
+        $myparam{'headers'} = [ grep {!/^authorization:/i} @{$myparam{'headers'} || []} ];
+        push @{$myparam{'headers'}}, "Authorization: $auth";
+        return rpc(\%myparam, $xmlargs, @args);
+      }
+    }
+    if (!$param->{'ignorestatus'}) {
+      close $sock;
+      %$keepalive = () if $keepalive;
+      die("$1 remote error: $2 ($uri)\n") if $status =~ /^(\d+) +(.*?)$/;
+      die("remote error: $status\n");
+    }
+  }
+  ${$param->{'replyheaders'}} = \%headers if $param->{'replyheaders'};
+
+  # read and process rest of answer
+  my $ansreq = {
+    'headers' => \%headers,
+    'rawheaders' => $headers,
+    '__socket' => $sock,
+    '__data' => $ans,
+  };
+  if (($param->{'request'} || 'GET') eq 'HEAD') {
+    if ($keepalive) {
+      $keepalive->{'socket'} = $sock;
+      $keepalive->{'cookie'} = $keepalivecookie;
     } else {
-      die("remote error: $status\n") unless $param->{'ignorestatus'};
+      close $sock;
+      undef $sock;
     }
+    return \%headers unless $param->{'receiver'};
+    delete $ansreq->{'__socket'};
+    delete $ansreq->{'__data'};
+    $ansreq->{'__cl'} = -1;	# eof
   }
-  if ($headers{'set-cookie'} && $param->{'uri'}) {
-    my @cookie = split(',', $headers{'set-cookie'});
-    s/;.*// for @cookie;
-    if ($param->{'uri'} =~ /((:?https?):\/\/(?:([^\/]*)\@)?(?:[^\/:]+)(?::\d+)?)(?:\/.*)$/) {
-      my %cookie = map {$_ => 1} @cookie;
-      push @cookie, grep {!$cookie{$_}} @{$cookiestore{$1} || []};
-      splice(@cookie, 10) if @cookie > 10;
-      $cookiestore{$1} = \@cookie;
-    }
-  }
-  if (($param->{'request'} || '') eq 'HEAD') {
-    close S;
-    ${$param->{'replyheaders'}} = \%headers if $param->{'replyheaders'};
-    return \%headers;
-  }
-  $headers{'__socket'} = \*S;
-  $headers{'__data'} = $ans;
-  my $receiver;
-  $receiver = $param->{'receiver:'.lc($headers{'content-type'} || '')};
-  $receiver ||= $param->{'receiver'};
+  my $receiver = $param->{'receiver'};
   $xmlargs ||= $param->{'receiverarg'};
   if ($receiver) {
-    $ans = $receiver->(\%headers, $param, $xmlargs);
+    $ans = $receiver->($ansreq, $param, $xmlargs);
     $xmlargs = undef;
   } else {
-    $ans = BSHTTP::read_data(\%headers, undef, 1);
+    $ans = BSHTTP::read_data($ansreq, undef, 1);
   }
-  close S;
-  delete $headers{'__socket'};
-  delete $headers{'__data'};
-  ${$param->{'replyheaders'}} = \%headers if $param->{'replyheaders'};
+  if ($keepalive && $sock) {
+    $keepalive->{'socket'} = $sock;
+    $keepalive->{'cookie'} = $keepalivecookie;
+  } else {
+    close $sock if $sock;
+  }
+
   #if ($param->{'verbose'}) {
   #  print "< $ans\n";
   #}
   if ($xmlargs) {
-    die("answer is not xml\n") if $ans !~ /<.*?>/s;
-    my $res = XMLin($xmlargs, $ans);
-    return $res;
+    if (ref($xmlargs) eq 'CODE') {
+      $ans = $xmlargs->($ans);
+    } else {
+      die("answer is not xml\n") if $ans !~ /<.*?>/s;
+      $ans = XMLin($xmlargs, $ans);
+    }
   }
   return $ans;
+}
+
+sub rpc_isfinished {
+  my ($param) = @_;
+  die("not an async request\n") unless $param->{'continuation'};
+  my $sock = $param->{'socket'};
+  if ($param->{'is_ssl'}) {
+    my $d = tied(*{$sock})->data_available();
+    return 0 if defined($d) && !$d;
+  }
+  return 1;
 }
 
 1;

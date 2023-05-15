@@ -2,8 +2,17 @@
 en:
   views:
     pagination:
-      first: "&lt;&lt;First"
-      last: "Last&gt;&gt;"
-      previous: "&lt;Prev"
-      next: "Next&gt;"
+      first: "First"
+      last: "Last"
+      previous: "Previous"
+      next: "Next"
       truncate: "..."
+  helpers:
+    page_entries_info:
+      one_page:
+        display_entries:
+          zero: "No %{entry_name} found"
+          one: "Displaying <b>1</b> %{entry_name}"
+          other: "Displaying <b>all %{count} %{entry_name}</b>"
+      more_pages:
+        display_entries: "Displaying %{entry_name} <b>%{first}&nbsp;-&nbsp;%{last}</b> of <b>%{total}</b>"

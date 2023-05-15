@@ -1,0 +1,12 @@
+version: "2.1"
+services:
+  minitest:
+    image: openbuildservice/minitest
+    build:
+      dockerfile: docker-files/Dockerfile.minitest
+      context: src/api
+    volumes:
+      - .:/obs:z
+    depends_on:
+      - db
+      - cache

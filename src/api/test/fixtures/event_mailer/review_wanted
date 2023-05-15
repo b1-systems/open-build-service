@@ -45,11 +45,11 @@ other changes:
 ++++++ myfile (new)
 --- myfile
 +++ myfile
-@@ -0,0 +1 @@
+@@ -0,0 +1,1 @@
 +DummyContent
 \ No newline at end of file
 
 
 -- 
-Configure notifications at http://localhost/user/notifications
+Configure notifications at http://localhost/my/subscriptions
 Open Build Service (http://localhost/)

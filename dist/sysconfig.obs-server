@@ -76,6 +76,17 @@ OBS_SRC_SERVER=""
 OBS_REPO_SERVERS=""
 
 ## Path:        Applications/OBS
+## Description: define a malloc wrapper for scheduler
+## Type:        string
+## Default:     ""
+## Config:      OBS
+#
+# Define a wrapper script for preloading libs for scheduler startup
+# "jemalloc.sh" is a possibility here after installing jemalloc package.
+#
+OBS_SCHEDULER_WRAPPER=""
+
+## Path:        Applications/OBS
 ## Description: define number of build instances
 ## Type:        integer
 ## Default:     0
@@ -148,6 +159,17 @@ OBS_WORKER_TEST_MODE=""
 OBS_WORKER_HOSTLABELS=""
 
 ## Path:        Applications/OBS
+## Description: can be used to define a security level of the worker
+## Type:        string
+## Default:     ""
+## Config:      OBS
+#
+# This will extend the hostlabels and can be used to limit the workers
+# to the hosts which have all security fixes deployed.
+#
+OBS_WORKER_SECURITY_LEVEL=""
+
+## Path:        Applications/OBS
 ## Description: Register in SLP server
 ## Type:        ("yes" | "no")
 ## Default:     "yes"
@@ -193,7 +215,7 @@ OBS_WORKER_NICE_LEVEL=18
 
 ## Path:        Applications/OBS
 ## Description: Set used VM type by worker
-## Type:        ("auto" | "xen" | "kvm" | "lxc" | "zvm" | "emulator:$arch" | "emulator:$arch:$script" | "none")
+## Type:        ("auto" | "xen" | "kvm" | "lxc" | "zvm" | "emulator:$arch" | "emulator:$arch:$script" | "qemu:$arch" | "none" | "openstack")
 ## Default:     "auto"
 ## Config:      OBS
 #
@@ -247,12 +269,13 @@ OBS_VM_DISK_AUTOSETUP_ROOT_FILESIZE="4096"
 OBS_VM_DISK_AUTOSETUP_SWAP_FILESIZE="1024"
 
 ## Path:        Applications/OBS
-## Description: Filesystem to use for autosetup {none,ext4}=ext4, ext3=ext3
-## Type:        string
+## Description: Default filesystem to use for autosetup.
+## Type:        ("ext2" | "ext3" | "ext4" | "reiserfs" | "btrfs" | "xfs")
 ## Default:     "ext3"
 ## Config:      OBS
 #
 #
+# Buildflag vmfstype may overwrite this for a specific job.
 OBS_VM_DISK_AUTOSETUP_FILESYSTEM="ext3"
 
 ## Path:        Applications/OBS
@@ -265,6 +288,16 @@ OBS_VM_DISK_AUTOSETUP_FILESYSTEM="ext3"
 OBS_VM_DISK_AUTOSETUP_MOUNT_OPTIONS=""
 
 ## Path:        Applications/OBS
+## Description: Enable copyin functionality during VM setup
+## Type:        ("yes" | "")
+## Default:     ""
+## Config:      OBS
+#
+# This enables mkfs copyin functionality support for some filesystems
+#
+OBS_WORKER_USE_MKFS_COPYIN=""
+
+## Path:        Applications/OBS
 ## Description: Enable build in memory
 ## Type:        ("yes" | "")
 ## Default:     ""
@@ -275,7 +308,27 @@ OBS_VM_DISK_AUTOSETUP_MOUNT_OPTIONS=""
 OBS_VM_USE_TMPFS=""
 
 ## Path:        Applications/OBS
-## Description: Memory allocated for each VM (256) if not set
+## Description: Specify custom options for VM handler
+## Type:        string
+## Default:     ""
+## Config:      OBS
+#
+# Can be used to workaround problems with VM handler and should not be needed usually
+#
+OBS_VM_CUSTOM_OPTION=""
+
+## Path:        Applications/OBS
+## Description: Allow VMs to access the internet.
+## Type:        ("yes" | "")
+## Default:     ""
+## Config:      OBS
+#
+# yes: WARNING: this may not be safe and may prevent build reproductibility.
+#
+OBS_VM_ENABLE_NET=""
+
+## Path:        Applications/OBS
+## Description: Memory allocated for each VM (512) if not set
 ## Type:        integer
 ## Default:     ""
 ## Config:      OBS
@@ -333,6 +386,15 @@ OBS_WORKER_ROOT_SIZE=""
 OBS_WORKER_SWAP_SIZE=""
 
 ## Path:        Applications/OBS
+## Description: URL to a proxy service for caching binaries used by worker
+## Type:        string
+## Default:     ""
+## Config:      OBS
+#
+#
+OBS_WORKER_BINARIES_PROXY=""
+
+## Path:        Applications/OBS
 ## Description: URL to a ssh pub key to allow root user login
 ## Type:        string
 ## Default:     ""
@@ -352,3 +414,60 @@ OBS_ROOT_SSHD_KEY_URL=""
 #
 OBS_WORKER_SCRIPT_URL=""
 
+## Path:        Applications/OBS
+## Description: If chroot/lxc is used for build, empty it after build is finished
+## Type:        ("yes" | "")
+## Default:     ""
+## Config:      OBS
+#
+#
+OBS_WORKER_CLEANUP_CHROOT=""
+
+##Path:         Application/OBS
+## Description: wipes the build environment of the worker after the build
+## Type:        ("yes" | "")
+## Default:     ""
+## Config:      OBS
+#
+#
+OBS_WORKER_WIPE_AFTER_BUILD=""
+
+##Path:         Application/OBS
+## Description: name or id of openstack instance that controls the worker (building) instances
+## Type:        ("yes" | "")
+## Default:     ""
+## Config:      OBS
+#
+#
+OBS_WORKER_CONTROL_INSTANCE=""
+
+##Path:         Application/OBS
+## Description: name or id flavor to create openstack worker (building) instance
+## Type:        ("yes" | "")
+## Default:     ""
+## Config:      OBS
+#
+#
+OBS_WORKER_OS_FLAVOR=""
+
+##Path:         Application/OBS
+## Description: openstack environment variables. Only used when OBS_VM_TYPE=openstack
+## Type:        ("yes" | "")
+## Default:     ""
+## Config:      OBS
+#
+#
+OS_AUTH_URL=""
+
+OS_PROJECT_ID=""
+OS_PROJECT_NAME=""
+OS_USER_DOMAIN_NAME=""
+OS_USERNAME=""
+OS_PASSWORD=""
+OS_REGION_NAME=""
+
+OBS_WORKER_PREFIX=""
+
+OBS_OPENSTACK_DISK_SIZE=""
+OBS_OPENSTACK_SWAP_SIZE=""
+OBS_OPENSTACK_MEMORY_SIZE=""

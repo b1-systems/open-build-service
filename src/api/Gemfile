@@ -1,100 +1,235 @@
+# next? was generated with `next --init`
+# src/api/Gemfile.next.lock was generated with `next bundle install`
+def next?
+  File.basename(__FILE__) == 'Gemfile.next'
+end
+
 # Edit this Gemfile to bundle your application's dependencies.
-# This preamble is the current preamble for Rails 3 apps; edit as needed.
 source 'https://rubygems.org'
 
-gem 'rails', '~> 4.0'
-gem 'actionmailer'
+# Start the Rails application using src/api/Gemfile.next with `next rails s`
+if next?
+  gem 'rails', '~> 8.0'
+else
+  gem 'rails', '~> 7.0'
+end
 
+# as our database
 gem 'mysql2'
-
-# activexml require
-gem 'nokogiri', '~>1.6.0'
-
-gem 'tilt', '>= 1.4.1'
-
-# make sure we can delay tasks
-gem 'delayed_job_active_record', '>= 4.0.0'
-# to have the delayed job daemon
-gem 'daemons'
-
+# for XML handling
+gem 'nokogiri'
+# for delayed tasks
+gem 'delayed_job_active_record'
 # to fill errbit
-gem 'hoptoad_notifier', "~> 2.3"
-
-gem 'rdoc'
-gem 'xmlhash', '>=1.3.6'
-gem 'ruby-ldap', require: false
-
-# memcache client
-gem 'dalli', require: false
-
-# JSON library - the default json conflicts with activerecord (by means of vice-versa monkey patching)
-gem 'yajl-ruby'
-
-# for searching in webui - 3.0.5 shows some regressions not yet debugged
+gem 'airbrake'
+gem 'airbrake-ruby'
+# as JSON library - the default json conflicts with activerecord (by means of vice-versa monkey patching)
+gem 'yajl-ruby', require: 'yajl/json_gem'
+# to search the database
 gem 'thinking-sphinx'
-
-# don't rely on cron+rake 
-gem 'clockwork', '>= 0.7'
-
-# used to paginate search results
+# to paginate search results
 gem 'kaminari'
-
-gem 'escape_utils'
+# for abstract HTML
 gem 'haml'
+# streamline HAML's integration in Rails
+gem 'haml-rails'
+# to use markdown in the comment system
+gem 'redcarpet'
+# for nested attribute forms
+gem 'cocoon'
+# for activerecord lists. Used for AttribValues
+gem 'acts_as_list'
+# to parse a XML string into a ruby hash
+gem 'xmlhash'
+# as authorization system
+gem 'pundit'
+# for password hashing
+gem 'bcrypt'
+# for threaded comments
+gem 'acts_as_tree'
+# js plotting (OBS monitor)
+gem 'flot-rails'
+# XML Serialization got moved here
+gem 'activemodel-serializers-xml'
+# Spider Identification
+gem 'voight_kampff', require: 'voight_kampff/rails'
+# for issue tracker communication
+gem 'xmlrpc'
+# Multiple feature switch
+gem 'flipper'
+gem 'flipper-active_record'
+gem 'flipper-ui'
+# for kerberos authentication
+gem 'gssapi', require: false
+# for sending events to rabbitmq
+gem 'bunny'
+# for making changes to existing data
+gem 'data_migrate'
+# for URI encoding
+gem 'addressable'
+# for XML builder
+gem 'builder'
+# to write the rails metrics directly into InfluxDB.
+gem 'influxdb-rails'
+# for copying objects with their relations
+gem 'deep_cloneable'
+# Server-side datatables
+gem 'ajax-datatables-rails'
+# Add syntax highlight in ruby
+gem 'coderay'
+# required by rails
+gem 'bigdecimal'
+# Catch unsafe migrations in development
+gem 'strong_migrations'
+# for some rails console fancy
+gem 'pry-rails'
+gem 'awesome_print'
+# flexible and safe downloading of remote files
+gem 'down'
+# Simple wrapper for the GitHub API
+gem 'octokit'
+# Ruby wrapper and CLI for the GitLab REST API
+gem 'gitlab'
+# Build reusable, testable & encapsulated view components in Ruby on Rails
+gem 'view_component'
+# Abstraction layer for HTTP requests in custom API wrapper
+gem 'faraday'
+# Asset packaging system that concatenates and serves JavaScript, CoffeeScript, CSS, Sass, and SCSS
+# This cannot be in the assets group since Sprockets is loaded in config/application.rb
+gem 'sprockets-rails'
+
+# FIXME: Required by the mail gem
+# See https://github.com/rails/rails/pull/44083
+gem 'net-smtp', require: false
+gem 'net-pop', require: false
+gem 'net-imap', require: false
+
+# Used in Package and XpathEngine
+gem 'rexml'
+# FIXME: for prawn, matrix isn't in the default set of Ruby 3.1 anymore
+# see https://github.com/prawnpdf/prawn/commit/3658d5125c3b20eb11484c3b039ca6b89dc7d1b7
+gem 'matrix', '~> 0.4'
+
+# until we have a fix for https://github.com/rubygems/rubygems/pull/5529
+gem 'strscan', '3.0.1'
+
+group :development, :production do
+  # to have the delayed job daemon
+  gem 'daemons'
+  # as memcache client
+  gem 'dalli'
+  # to document ruby code
+  gem 'rdoc'
+  # to not rely on cron+rake
+  gem 'clockwork'
+  # as interface to LDAP
+  gem 'ruby-ldap', require: false
+  # to have better logs
+  gem 'lograge'
+end
 
 group :production do
   # if you have an account, it can be configured by
   # placing a config/newrelic.yml
-  gem 'newrelic_rpm'
+  # be aware about the non-OSS license
+  #  gem 'newrelic_rpm'
 end
 
+# Gems used only for testing the application and not required in production environments by default.
 group :test do
-  gem 'database_cleaner', '>= 1.0.1'
-  gem 'ci_reporter'
+  # as testing frameworks
+  gem 'minitest'
+  gem 'test-unit'
+  # to ensure a clean state for testing
+  gem 'database_cleaner-active_record'
+  # for test coverage reports
   gem 'simplecov', require: false
-  gem 'minitest', '< 5.0'
-  # colorize minitest output
-  gem 'minitest-colorize'
-  # generate random long strings
-  gem 'faker'
-  # freeze time
-  gem 'timecop'
-  # to fake backend replies
-  gem 'webmock', '>= 1.9.0'
-  # for code quality checks
-  gem 'flog', '> 4.1.0'
-
+  gem 'simplecov-cobertura', require: false
+  # for failing fast
+  gem 'minitest-fail-fast'
+  # for spec like reporting
+  gem 'minitest-reporters'
+  # for integration testing
+  gem 'capybara'
+  # for rspec like matchers
   gem 'capybara_minitest_spec'
+  # to fake backend replies
+  gem 'webmock'
+  # for mocking and stubbing
+  gem 'mocha', require: false
+  # for testing common Rails functionality with simple one-liners
+  gem 'shoulda-matchers'
+  # assigns has been extracted to a gem
+  gem 'rails-controller-testing'
+  # To generate random data
+  gem 'rantly'
+  # for test analysis in CircleCI
+  gem 'minitest-ci'
+  gem 'rspec_junit_formatter'
+  # to test rabbitmq support
+  gem 'bunny-mock'
+end
 
-  # See test/test_helper.rb for details:
-  gem 'poltergeist', '>= 1.4'
-
-  gem 'mocha', '> 0.13.0', require: false
-
+group :development, :test do
+  # as testing framework
+  gem 'rspec'
+  gem 'rspec-rails'
+  # as rspec formatter
+  gem 'fuubar'
+  # for fixtures
+  gem 'factory_bot_rails'
+  # for mocking the backend
+  gem 'vcr'
+  # as alternative to the standard IRB shell
+  gem 'pry'
+  # add step-by-step debugging and stack navigation capabilities to pry
+  gem 'pry-byebug'
+  # for style checks
+  gem 'rubocop', require: false
+  # for rails style checks
+  gem 'rubocop-rails', require: false
+  # for rspec style checks
+  gem 'rubocop-rspec', require: false
+  # for performance checks
+  gem 'rubocop-performance'
+  # integrates with RuboCop to analyse HAML files
+  gem 'haml_lint'
+  # to generate random long strings
+  gem 'faker'
+  # to launch browser in test
+  gem 'launchy'
+  # for calling single testd
+  gem 'single_test'
+  # to find n+1 queries
+  gem 'bullet'
+  # Use Puma as the app server
+  gem 'puma'
+  # to drive headless chrome
+  gem 'selenium-webdriver'
 end
 
 group :development do
-  gem 'pry', '>= 0.9.12'
-  gem 'unicorn-rails' # webrick won't work
-  gem 'rack-mini-profiler'
+  # add a comment summarizing the current schema
+  gem 'annotate'
+  # toolkit to upgrade your Rails application
+  gem 'next_rails'
+  gem 'database_consistency', require: false
 end
 
 # Gems used only for assets and not required in production environments by default.
 group :assets do
-  gem 'cssmin', '>= 1.0.2'
-  gem 'uglifier', '>= 1.2.2'
-  gem 'sass-rails'
-  gem 'jquery-datatables-rails'
-  gem 'codemirror-rails', '>= 3.13'
-  gem 'rails_tokeninput', '>= 1.6.1.rc1'
-  gem 'sprite-factory', '>= 1.5.2'
-  gem 'chunky_png'
-
+  # for minifying JavaScript
+  gem 'terser'
+  # to use sass in the asset pipeline
+  gem 'sassc-rails'
+  # assets for jQuery DataTables
+  gem 'jquery-datatables'
+  # assets for jQuery and jQuery-ujs
   gem 'jquery-rails'
-  gem 'jquery-ui-rails'
-  # Use bootstrap as the front-end framework
-  gem 'bootstrap-sass-rails'
-  # Use font-awesome as scalable vector icons
-  gem "font-awesome-rails"
+  # assets for jQuery-ui
+  gem 'jquery-ui-rails', '~> 4.2.1'
+  # assets for the bootstrap front-end framework
+  gem 'bootstrap'
+  # assets for font-awesome vector icons
+  gem 'font-awesome-sass'
 end
-

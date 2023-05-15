@@ -2,13 +2,12 @@ require 'configuration'
 
 class ConfigurationsController < ApplicationController
   # Site-specific configuration is insensitive information, no login needed therefore
-  skip_before_filter :extract_user, :only => [:show]
-  before_filter :require_admin, :only => [:update]
-  skip_filter :validate_params, :only => [:update] # we use an array for archs here
+  before_action :require_admin, only: [:update]
+  skip_before_action :validate_params, only: [:update] # we use an array for archs here
 
-  validate_action :show => {:method => :get, :response => :configuration}
-# webui is using this route with parameters instead of content
-#  validate_action :update => {:method => :put, :request => :configuration}
+  validate_action show: { method: :get, response: :configuration }
+  # webui is using this route with parameters instead of content
+  #  validate_action :update => {:method => :put, :request => :configuration}
 
   # GET /configuration
   # GET /configuration.xml
@@ -17,8 +16,8 @@ class ConfigurationsController < ApplicationController
     @configuration = ::Configuration.first
 
     respond_to do |format|
-      format.xml  { render :xml => @configuration.render_xml }
-      format.json { render :json => @configuration.to_json }
+      format.xml  { render xml: @configuration.render_xml }
+      format.json { render json: @configuration.to_json }
     end
   end
 
@@ -30,13 +29,9 @@ class ConfigurationsController < ApplicationController
     xml = Xmlhash.parse(request.raw_post) || {}
     attribs = {}
     # scheduler architecture list
-    archs=nil
-    if xml["schedulers"] and xml["schedulers"]["arch"].class == Array
-      archs=Hash[xml["schedulers"]["arch"].map{|a| [a, 1]}]
-    end
-    if params["arch"].class == Array
-      archs=Hash[params["arch"].map{|a| [a, 1]}]
-    end
+    archs = nil
+    archs = xml['schedulers']['arch'].index_with { |_a| 1 } if xml.dig('schedulers', 'arch').instance_of?(Array)
+    archs = params['arch'].index_with { |_a| 1 } if params['arch'].instance_of?(Array)
     if archs
       Architecture.all.each do |arch|
         if arch.available != (archs[arch.name] == 1)
@@ -53,24 +48,24 @@ class ConfigurationsController < ApplicationController
       value = xml[key.to_s] || params[key.to_s]
 
       # is it defined in options.yml
-      if value and not value.blank?
-        v = ::Configuration::map_value( key, value )
-        ov = ::Configuration::map_value( key, ::Configuration::OPTIONS_YML[key] )
-        if ov != v and not ov.blank?
-          render_error :status => 403, :errorcode => 'no_permission_to_change',
-                       :message => "The api has a different value for #{key.to_s} configured in options.yml file. Remove it there first."
-          return
-        end
-        attribs[key] = value
+      next unless value && value.present?
+
+      v = ::Configuration.map_value(key, value)
+      ov = ::Configuration.map_value(key, ::Configuration::OPTIONS_YML[key])
+      if ov != v && ov.present?
+        render_error status: 403, errorcode: 'no_permission_to_change',
+                     message: "The api has a different value for #{key} configured in options.yml file. Remove it there first."
+        return
       end
+      attribs[key] = value
     end
 
-    ret = @configuration.update_attributes(attribs)
+    ret = @configuration.update(attribs)
     if ret
       @configuration.save!
       head :ok
     else
-      render :xml => @configuration.errors, :status => :unprocessable_entity
+      render xml: @configuration.errors, status: :unprocessable_entity
     end
   end
 end

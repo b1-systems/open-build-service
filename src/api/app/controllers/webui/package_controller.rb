@@ -1,163 +1,262 @@
-require 'open-uri'
-require 'project'
-
 class Webui::PackageController < Webui::WebuiController
-
-  include Webui::HasComments
   include ParsePackageDiff
-  include Webui::WebuiHelper
   include Webui::PackageHelper
-  include Escaper
-  include Webui::LoadBuildresults
-  include Webui::RequiresProject
+  include Webui::Packages::BinariesHelper
   include Webui::ManageRelationships
   include BuildLogSupport
 
-  helper 'webui/comment'
+  # TODO: Keep in sync with Build::query in backend/build/Build.pm.
+  #       Regexp.new('\.iso$') would be Build::Kiwi::queryiso which isn't implemented yet...
+  QUERYABLE_BUILD_RESULTS = [Regexp.new('\.rpm$'),
+                             Regexp.new('\.deb$'),
+                             Regexp.new('\.pkg\.tar(?:\.gz|\.xz|\.zst)?$'),
+                             Regexp.new('\.arch$')].freeze
 
-  before_filter :require_project, :except => [:submit_request, :devel_project]
-  before_filter :require_package, :except => [:submit_request, :save_new_link, :save_new, :devel_project ]
+  before_action :set_project, only: [:show, :edit, :update, :index, :users, :dependency, :binary, :binaries, :requests, :statistics, :revisions,
+                                     :new, :branch_diff_info, :rdiff, :create, :save, :remove,
+                                     :remove_file, :save_person, :save_group, :remove_role, :view_file, :abort_build, :trigger_rebuild,
+                                     :trigger_services, :wipe_binaries, :buildresult, :rpmlint_result, :rpmlint_log, :meta, :save_meta, :files]
+
+  before_action :require_package, only: [:edit, :update, :show, :dependency, :binary, :binaries, :requests, :statistics, :revisions,
+                                         :branch_diff_info, :rdiff, :save, :save_meta, :remove,
+                                         :remove_file, :save_person, :save_group, :remove_role, :view_file, :abort_build, :trigger_rebuild,
+                                         :trigger_services, :wipe_binaries, :buildresult, :rpmlint_result, :rpmlint_log, :meta, :files, :users]
+
+  before_action :validate_xml, only: [:save_meta]
+
+  before_action :require_repository, only: [:binary, :binaries]
+  before_action :require_architecture, only: [:binary]
+  before_action :check_ajax, only: [:update_build_log, :devel_project, :buildresult, :rpmlint_result]
   # make sure it's after the require_, it requires both
-  before_filter :require_login, :only => [:branch]
-  prepend_before_filter :lockout_spiders, :only => [:revisions, :dependency, :rdiff, :binary, :binaries, :requests]
+  before_action :require_login, except: [:show, :index, :branch_diff_info, :binaries,
+                                         :users, :requests, :statistics, :revisions, :view_file, :live_build_log,
+                                         :update_build_log, :devel_project, :buildresult, :rpmlint_result, :rpmlint_log, :meta, :files]
+
+  before_action :check_build_log_access, only: [:live_build_log, :update_build_log]
+
+  # FIXME: Remove this before_action, it's doing validation and authorization at the same time
+  before_action :check_package_name_for_new, only: [:create]
+
+  before_action :handle_parameters_for_rpmlint_log, only: [:rpmlint_log]
+
+  prepend_before_action :lockout_spiders, only: [:revisions, :dependency, :rdiff, :binary, :binaries, :requests]
+
+  after_action :verify_authorized, only: [:new, :create, :remove_file, :remove, :abort_build, :trigger_rebuild, :wipe_binaries, :save_meta, :save, :abort_build]
+
+  def index
+    render json: PackageDatatable.new(params, view_context: view_context, project: @project)
+  end
 
   def show
-    if lockout_spiders
-      params.delete(:rev)
-      params.delete(:srcmd5)
+    # FIXME: Remove this statement when scmsync is fully supported
+    if @project.scmsync.present?
+      flash[:error] = "Package sources for project #{@project.name} are received through scmsync.
+                       This is not yet fully supported by the OBS frontend"
+      redirect_back(fallback_location: project_show_path(@project))
+      return
     end
 
-    @srcmd5   = params[:srcmd5]
+    if @spider_bot
+      params.delete(:rev)
+      params.delete(:srcmd5)
+      @expand = 0
+    elsif params[:expand]
+      @expand = params[:expand].to_i
+    else
+      @expand = 1
+    end
+
+    @srcmd5 = params[:srcmd5]
     @revision_parameter = params[:rev]
 
-    @bugowners_mail = (@package.bugowner_emails + @project.api_obj.bugowner_emails).uniq
+    @bugowners_mail = (@package.bugowner_emails + @project.bugowner_emails).uniq
     @revision = params[:rev]
     @failures = 0
-    load_buildresults
-    set_linking_packages
-    @expand = 1
-    @expand = begin Integer(params[:expand]) rescue 1 end if params[:expand]
-    @expand = 0 if @spider_bot
+
     @is_current_rev = false
     if set_file_details
-      if @forced_unexpand.blank?
-        @is_current_rev = !@revision || (@revision == @current_rev)
+      if @forced_unexpand.blank? && @service_running.blank?
+        @is_current_rev = (@revision == @current_rev)
+      elsif @service_running
+        flash.clear
+        flash.now[:notice] = "Service currently running (<a href='#{package_show_path(project: @project, package: @package)}'>reload page</a>)."
       else
-        flash[:error] = "Files could not be expanded: #{@forced_unexpand}"
+        @more_info = @package.service_error
+        flash.now[:error] = "Files could not be expanded: #{@forced_unexpand}"
       end
     elsif @revision_parameter
       flash[:error] = "No such revision: #{@revision_parameter}"
-      redirect_back_or_to :controller => 'package', :action => 'show', :project => @project, :package => @package and return
+      redirect_back(fallback_location: { controller: :package, action: :show, project: @project, package: @package })
+      return
     end
 
-    sort_comments(@package.comments)
+    @comments = @package.comments.includes(:user)
+    @comment = Comment.new
 
-    @requests = []
-    # TODO!!!
-    #BsRequest.list({:states => %w(review), :reviewstates => %w(new), :roles => %w(reviewer), :project => @project.name, :package => @package.name}) +
-    #BsRequest.list({:states => %w(new), :roles => %w(target), :project => @project.name, :package => @package.name})
+    if User.session && params[:notification_id]
+      @current_notification = Notification.find(params[:notification_id])
+      authorize @current_notification, :update?, policy_class: NotificationPolicy
+    end
+
+    @services = @files.any? { |file| file[:name] == '_service' }
+
+    @package.cache_revisions(@revision)
+
+    respond_to do |format|
+      format.html
+      format.js
+      format.json { render template: 'webui/package/show', formats: [:html] }
+    end
+  end
+
+  def new
+    authorize Package.new(project: @project), :create?
+  end
+
+  def edit
+    authorize @package, :update?
+    respond_to do |format|
+      format.js
+    end
+  end
+
+  def create
+    @package = @project.packages.build(package_params)
+    authorize @package, :create?
+
+    @package.flags.build(flag: :sourceaccess, status: :disable) if params[:source_protection]
+    @package.flags.build(flag: :publish, status: :disable) if params[:disable_publishing]
+
+    if @package.save
+      flash[:success] = "Package '#{elide(@package.name)}' was created successfully"
+      redirect_to action: :show, project: params[:project], package: @package.name
+    else
+      flash[:error] = "Failed to create package: #{@package.errors.full_messages.join(', ')}"
+      redirect_to controller: :project, action: :show, project: params[:project]
+    end
+  end
+
+  def update
+    authorize @package, :update?
+    respond_to do |format|
+      if @package.update(package_details_params)
+        format.html do
+          flash[:success] = 'Package was successfully updated.'
+          redirect_to package_show_path(@package)
+        end
+        format.js { flash.now[:success] = 'Package was successfully updated.' }
+      else
+        format.html do
+          flash[:error] = 'Failed to update package'
+          redirect_to package_show_path(@package)
+        end
+        format.js
+      end
+    end
   end
 
   def main_object
     @package # used by mixins
   end
 
-  def set_linking_packages
-    @linking_packages = @package.linking_packages
-  end
-
-  def linking_packages
-    set_linking_packages
-    render_dialog
-  end
-
+  # rubocop:disable Lint/NonLocalExitFromIterator
   def dependency
+    dependant_project = Project.find_by_name(params[:dependant_project]) || Project.find_remote_project(params[:dependant_project]).try(:first)
+    unless dependant_project
+      flash[:error] = "Project '#{elide(params[:dependant_project])}' is invalid."
+      redirect_back(fallback_location: root_path)
+      return
+    end
+
+    unless Architecture.archcache.include?(params[:arch])
+      flash[:error] = "Architecture '#{params[:arch]}' is invalid."
+      redirect_back(fallback_location: project_show_path(project: @project.name))
+      return
+    end
+
+    # FIXME: It can't check repositories of remote projects
+    project_repositories = dependant_project.remoteurl.blank? ? dependant_project.repositories.pluck(:name) : []
+    [:repository, :dependant_repository].each do |repo_key|
+      next if project_repositories.include?(params[repo_key])
+
+      flash[:error] = "Repository '#{params[repo_key]}' is invalid."
+      redirect_back(fallback_location: project_show_path(project: @project.name))
+      return
+    end
+
     @arch = params[:arch]
     @repository = params[:repository]
-    @drepository = params[:drepository]
-    @dproject = params[:dproject]
-    @filename = params[:filename]
-    @fileinfo = Fileinfo.find(:project => params[:dproject], :package => '_repository', :repository => params[:drepository], :arch => @arch,
-      :filename => params[:dname], :view => 'fileinfo_ext')
-    @durl = nil
-    unless @fileinfo # avoid displaying an error for non-existing packages
-      redirect_back_or_to(:action => 'binary', :project => params[:project], :package => params[:package], :repository => @repository, :arch => @arch, :filename => @filename)
-    end
+    @dependant_repository = params[:dependant_repository]
+    @dependant_project = params[:dependant_project]
+    @package_name = "#{params[:package]}:#{params[:dependant_name]}"
+    # Ensure it really is just a file name, no '/..', etc.
+    @filename = File.basename(params[:filename])
+    @fileinfo = Backend::Api::BuildResults::Binaries.fileinfo_ext(params[:dependant_project], '_repository', params[:dependant_repository],
+                                                                  @arch, params[:dependant_name])
+    return if @fileinfo # avoid displaying an error for non-existing packages
+
+    redirect_back(fallback_location: { action: :binary, project: params[:project], package: params[:package],
+                                       repository: @repository, arch: @arch, filename: @filename })
   end
+  # rubocop:enable Lint/NonLocalExitFromIterator
 
   def statistics
-    required_parameters :arch, :repository
-    @arch = params[:arch]
     @repository = params[:repository]
-    @statistics = nil
-    begin
-      @statistics = Statistic.find_hashed( project: @project, package: @package, repository: @repository, arch: @arch )
-    rescue ActiveXML::Transport::ForbiddenError
-    end
-    logger.debug "Statis #{@statistics.inspect}"
-    unless @statistics
-      flash[:error] = "No statistics of a successful build could be found in #{@repository}/#{@arch}"
-      redirect_to controller: 'package', action: :binaries, project: @project,
-        package: @package, repository: @repository, nextstatus: 404
-      return
-    end
+    @package_name = params[:package]
+
+    @statistics = LocalBuildStatistic::ForPackage.new(package: @package_name,
+                                                      project: @project.name,
+                                                      repository: @repository,
+                                                      architecture: params[:arch]).results
   end
 
+  # FIXME: This is Webui::Packages::BinariesController#show
   def binary
-    required_parameters :arch, :repository, :filename
-    @arch = params[:arch]
-    @repository = params[:repository]
-    @filename = params[:filename]
-    begin
-      @fileinfo = Fileinfo.find(:project => @project, :package => @package, :repository => @repository, :arch => @arch,
-        :filename => @filename, :view => 'fileinfo_ext')
-    rescue ActiveXML::Transport::ForbiddenError => e
-      flash[:error] = "File #{@filename} can not be downloaded from #{@project}: #{e.summary}"
-    end
-    unless @fileinfo
-      flash[:error] = "File \"#{@filename}\" could not be found in #{@repository}/#{@arch}"
-      redirect_to :controller => 'package', :action => :binaries, :project => @project,
-        :package => @package, :repository => @repository, :nextstatus => 404
-      return
-    end
-    @durl = "#{repo_url( @project, @repository )}/#{@fileinfo.value(:arch)}/#{@filename}" if @fileinfo.value :arch
-    @durl = "#{repo_url( @project, @repository )}/iso/#{@filename}" if (@fileinfo.value :filename) =~ /\.iso$/
-    if @durl and not file_available?( @durl )
-      # ignore files not available
-      @durl = nil
-    end
-    unless User.current.is_nobody? or @durl
-      # only use API for logged in users if the mirror is not available
-      @durl = rpm_url( @project, @package, @repository, @arch, @filename )
-    end
-    logger.debug "accepting #{request.accepts.join(',')} format:#{request.format}"
-    # little trick to give users eager to download binaries a single click
-    if request.format != Mime::HTML and @durl
-      redirect_to @durl
-      return
-    end
+    # Ensure it really is just a file name, no '/..', etc.
+    @filename = File.basename(params[:filename])
+
+    @fileinfo = Backend::Api::BuildResults::Binaries.fileinfo_ext(@project, params[:package], @repository.name, @architecture.name, @filename)
+    raise ActiveRecord::RecordNotFound, 'Not Found' unless @fileinfo
+
+    @download_url = download_url_for_binary(architecture_name: @architecture.name, file_name: @filename)
   end
 
+  # FIXME: This is Webui::Packages::BinariesController#index
   def binaries
-    required_parameters :repository
-    @repository = params[:repository]
-    begin
-    @buildresult = Buildresult.find_hashed(:project => @project, :package => @package,
-      :repository => @repository, :view => %w(binarylist status))
-    rescue ActiveXML::Transport::Error => e
-      flash[:error] = e.message
-      redirect_back_or_to :controller => 'package', :action => 'show', :project => @project, :package => @package and return
+    results_from_backend = Buildresult.find_hashed(project: @project.name, package: params[:package], repository: @repository.name, view: ['binarylist', 'status'])
+    raise ActiveRecord::RecordNotFound, 'Not Found' if results_from_backend.empty?
+
+    @buildresults = []
+    results_from_backend.elements('result') do |result|
+      build_results_set = { arch: result['arch'], statistics: false, repocode: result['state'], binaries: [] }
+
+      result.get('binarylist').try(:elements, 'binary') do |binary|
+        if binary['filename'] == '_statistics'
+          build_results_set[:statistics] = true
+        else
+          build_results_set[:binaries] << { filename: binary['filename'],
+                                            size: binary['size'],
+                                            links: { details?: QUERYABLE_BUILD_RESULTS.any? { |regex| regex.match?(binary['filename']) },
+                                                     download_url: download_url_for_binary(architecture_name: result['arch'], file_name: binary['filename']),
+                                                     cloud_upload?: uploadable?(binary['filename'], result['arch']) } }
+        end
+      end
+      @buildresults << build_results_set
     end
-    unless @buildresult
-      flash[:error] = "Package \"#{@package}\" has no build result for repository #{@repository}"
-      redirect_to :controller => 'package', :action => :show, :project => @project, :package => @package, :nextstatus => 404 and return
-    end
+  rescue Backend::Error => e
+    flash[:error] = e.message
+    redirect_back(fallback_location: { controller: :package, action: :show, project: @project, package: @package })
   end
 
   def users
-    @users = [@project.api_obj.users, @package.users].flatten.uniq
-    @groups = [@project.api_obj.groups, @package.groups].flatten.uniq
+    @users = [@project.users, @package.users].flatten.uniq
+    @groups = [@project.groups, @package.groups].flatten.uniq
     @roles = Role.local_roles
+    if User.session && params[:notification_id]
+      @current_notification = Notification.find(params[:notification_id])
+      authorize @current_notification, :update?, policy_class: NotificationPolicy
+    end
+    @current_request_action = BsRequestAction.find(params[:request_action_id]) if User.session && params[:request_action_id]
   end
 
   def requests
@@ -165,499 +264,144 @@ class Webui::PackageController < Webui::WebuiController
     @default_request_state = params[:state] if params[:state]
   end
 
-  def commit
-    required_parameters :revision
-    render partial: 'commit_item', locals: {rev: params[:revision] }
-  end
-
   def revisions
     unless @package.check_source_access?
       flash[:error] = 'Could not access revisions'
-      redirect_to :action => :show, :project => @project.name, :package => @package.name and return
+      redirect_to action: :show, project: @project.name, package: @package.name
+      return
     end
-    @max_revision = @package.rev.to_i
-    @upper_bound = @max_revision
-    if params[:showall]
-      @visible_commits = @max_revision
-    else
-      @upper_bound = params[:rev].to_i if params[:rev]
-      @visible_commits = [9, @upper_bound].min # Don't show more than 9 requests
-    end
-    @lower_bound = [1, @upper_bound - @visible_commits + 1].max
+
+    per_page = 20
+    revision_count = (params[:rev] || @package.rev).to_i
+    per_page = revision_count if User.session && params['show_all']
+    @revisions = Kaminari.paginate_array((1..revision_count).to_a.reverse).page(params[:page]).per(per_page)
   end
-
-  def submit_request_dialog
-    if params[:revision]
-      @revision = params[:revision]
-    else
-      @revision = @package.rev
-    end
-    @cleanup_source = @project.name.include?(':branches:') # Rather ugly decision finding...
-    @tprj = ''
-    if lt = @package.backend_package.links_to
-      @tprj = lt.project.name # fill in from link
-    end
-    @tprj = params[:targetproject] if params[:targetproject] # allow to override by parameter
-
-    render_dialog
-  end
-
-  def submit_request
-    required_parameters :project, :package
-    if params[:targetproject].blank?
-      flash[:error] = 'Please provide a target for the submit request'
-      redirect_to :action => :show, :project => params[:project], :package => params[:package] and return
-    end
-
-    begin
-      params[:type] = 'submit'
-      if not params[:sourceupdate] and params[:project].include?(':branches:')
-        params[:sourceupdate] = 'update' # Avoid auto-removal of branch
-      end
-      req = WebuiRequest.new(params)
-      req.save(:create => true)
-    rescue ActiveXML::Transport::Error, ActiveXML::Transport::NotFoundError => e
-      flash[:error] = "Unable to submit: #{e.message}"
-      redirect_to(:action => 'show', :project => params[:project], :package => params[:package]) and return
-    end
-
-    # Supersede logic has to be below addition as we need the new request id
-    if params[:supersede]
-      pending_requests = BsRequestCollection.list_ids(project: params[:targetproject], package: params[:package], states: %w(new review declined), types: %w(submit))
-      pending_requests.each do |request_id|
-        next if request_id == req.id # ignore newly created request
-        begin
-          WebuiRequest.modify(request_id, 'superseded', reason: "Superseded by request #{req.id}", superseded_by: req.id)
-        rescue WebuiRequest::ModifyError => e
-          flash[:error] = e.message
-          redirect_to(:action => 'requests', :project => params[:project], :package => params[:package]) and return
-        end
-      end
-    end
-
-    flash[:notice] = "Created <a href='#{url_for(:controller => 'request', :action => 'show', :id => req.value('id'))}'>submit request #{req.value('id')}</a> to <a href='#{url_for(:controller => 'project', :action => 'show', :project => params[:targetproject])}'>#{params[:targetproject]}</a>"
-    redirect_to(:action => 'show', :project => params[:project], :package => params[:package])
-  end
-
-  def set_linkinfo
-    @linkinfo = nil
-    lt = @package.backend_package.links_to
-    if lt
-      @linkinfo = { package: lt, error: @package.backend_package.error }
-      if lt.backend_package.verifymd5 != @package.backend_package.verifymd5
-        @linkinfo[:diff] = true
-      end
-    end
-  end
-
-  def package_files( rev = nil, expand = nil )
-    files = []
-    p = {}
-    p[:project] = @package.project.name
-    p[:package] = @package.name
-    p[:expand]  = expand  if expand
-    p[:rev]     = rev     if rev
-    dir = Directory.find(p)
-    return files unless dir
-    @serviceinfo = dir.find_first(:serviceinfo)
-    dir.each(:entry) do |entry|
-      file = Hash[*[:name, :size, :mtime, :md5].map {|x| [x, entry.value(x.to_s)]}.flatten]
-      file[:viewable] = !Package.is_binary_file?(file[:name]) && file[:size].to_i < 2**20  # max. 1 MB
-      file[:editable] = file[:viewable] && !file[:name].match(/^_service[_:]/)
-      file[:srcmd5] = dir.value(:srcmd5)
-      files << file
-    end
-    return files
-  end
-
-  def set_file_details
-    @forced_unexpand ||= ''
-
-    # check source access
-    return false unless @package.check_source_access?
-
-    set_linkinfo
-
-    begin
-      @current_rev = @package.rev
-      if not @revision and not @srcmd5
-        # on very first page load only
-        @revision = @current_rev
-      end
-
-      if @srcmd5
-        @files = package_files(@srcmd5, @expand)
-      else
-        @files = package_files(@revision, @expand)
-      end
-    rescue ActiveXML::Transport::Error => e
-      # TODO crudest hack ever!
-      if e.summary == 'service in progress'
-        @expand = 0
-        # silently in this case
-        return set_file_details
-      end
-      if @expand == 1
-        @forced_unexpand = e.summary
-        @forced_unexpand = e.details if e.details
-        @expand = 0
-        return set_file_details
-      end
-      @files = []
-      return false
-    end
-
-    @spec_count = 0
-    @files.each do |file|
-      @spec_count += 1 if file[:ext] == 'spec'
-    end
-
-    # check source service state
-    serviceerror = nil
-    serviceerror = @package.serviceinfo.value(:error) if @package.serviceinfo
-
-    return true
-  end
-  private :set_file_details
-
-  def add_person
-    @roles = Role.local_roles
-  end
-
-  def add_group
-    @roles = Role.local_roles
-  end
-
-  def find_last_req
-    if @oproject and @opackage
-      last_req = BsRequestAction.where(target_project: @oproject,
-                                       target_package: @opackage,
-                                       source_project: @package.project,
-                                       source_package: @package.name).order(:bs_request_id).last
-      return nil unless last_req
-      last_req = last_req.bs_request
-      if last_req.state != :declined
-        return nil # ignore all !declined
-      end
-      return { id: last_req.id,
-               decliner: last_req.commenter,
-               when: last_req.updated_at,
-               comment: last_req.comment }
-    end
-    return nil
-  end
-
-  class DiffError < APIException
-  end
-
-  def get_diff(path)
-    begin
-      @rdiff = ActiveXML.backend.direct_http URI(path + '&expand=1'), method: 'POST', timeout: 10
-    rescue ActiveXML::Transport::Error => e
-      flash[:error] = 'Problem getting expanded diff: ' + e.summary
-      begin
-        @rdiff = ActiveXML.backend.direct_http URI(path + '&expand=0'), method: 'POST', timeout: 10
-      rescue ActiveXML::Transport::Error => e
-        flash[:error] = 'Error getting diff: ' + e.summary
-        redirect_back_or_to package_show_path(project: @project, package: @package)
-        return false
-      end
-    end
-    return true
-  end
-
 
   def rdiff
     @last_rev = @package.dir_hash['rev']
     @linkinfo = @package.linkinfo
     if params[:oproject]
-      @oproject = Project.find_by_name(params[:oproject])
+      @oproject = ::Project.find_by_name(params[:oproject])
       @opackage = @oproject.find_package(params[:opackage]) if @oproject && params[:opackage]
     end
 
     @last_req = find_last_req
 
     @rev = params[:rev] || @last_rev
+    @linkrev = params[:linkrev]
 
-    query = {'cmd' => 'diff', 'view' => 'xml', 'withissues' => 1}
-    [:orev, :opackage, :oproject].each do |k|
-      query[k] = params[k] unless params[k].blank?
+    options = {}
+    [:orev, :opackage, :oproject, :linkrev, :olinkrev].each do |k|
+      options[k] = params[k] if params[k].present?
     end
-    query[:rev] = @rev if @rev
-    return unless get_diff(@package.source_path + "?#{query.to_query}")
+    options[:rev] = @rev if @rev
+    options[:filelimit] = 0 if params[:full_diff] && User.session
+    options[:tarlimit] = 0 if params[:full_diff] && User.session
+    return unless get_diff(@project.name, @package.name, options)
 
     # we only look at [0] because this is a generic function for multi diffs - but we're sure we get one
     filenames = sorted_filenames_from_sourcediff(@rdiff)[0]
+
     @files = filenames['files']
+    @not_full_diff = @files.any? { |file| file[1]['diff'].try(:[], 'shown') }
     @filenames = filenames['filenames']
 
-  end
-
-  def save_new
-    @package_name = params[:name]
-    @package_title = params[:title]
-    @package_description = params[:description]
-
-    return unless check_package_name_for_new
-
-    @package = @project.packages.build( name: @package_name )
-    @package.title = params[:title]
-    @package.description = params[:description]
-    if params[:source_protection]
-      @package.flags.build flag: :sourceaccess, status: :disable
-    end
-    if params[:disable_publishing]
-      @package.flags.build flag: :publish, status: :disable
-    end
-    if @package.save
-      flash[:notice] = "Package '#{@package.name}' was created successfully"
-      redirect_to :action => 'show', :project => params[:project], :package => @package_name
-    else
-      flash[:notice] = "Failed to create package '#{@package}'"
-      redirect_to :controller => 'project', :action => 'show', :project => params[:project]
+    # FIXME: moved from the old view, needs refactoring
+    @submit_url_opts = {}
+    if @oproject && @opackage && !@oproject.find_attribute('OBS', 'RejectRequests') && !@opackage.find_attribute('OBS', 'RejectRequests')
+      @submit_message = "Submit to #{@oproject.name}/#{@opackage.name}"
+      @submit_url_opts[:target_project] = @oproject.name
+      @submit_url_opts[:targetpackage] = @opackage.name
+    elsif @rev != @last_rev
+      @submit_message = "Revert #{@project.name}/#{@package.name} to revision #{@rev}"
+      @submit_url_opts[:target_project] = @project.name
     end
   end
 
-  def check_package_name_for_new
-    unless Package.valid_name? @package_name
-      flash[:error] = "Invalid package name: '#{@package_name}'"
-      redirect_to :controller => :project, :action => 'new_package', :project => @project
-      return false
-    end
-    if Package.exists_by_project_and_name @project.name, @package_name
-      flash[:error] = "Package '#{@package_name}' already exists in project '#{@project}'"
-      redirect_to :controller => :project, :action => 'new_package', :project => @project
-      return false
-    end
-    @project = @project.api_obj
-    unless User.current.can_create_package_in? @project
-      redirect_to controller: :project, action: :new_package, project: @project,
-                  error: "You can't create packages in #{@project.name}"
-      return false
-    end
-    true
-  end
-
-  def branch_dialog
-    render_dialog
-  end
-
-  def branch
-    begin
-      path = "/source/#{CGI.escape(params[:project])}/#{CGI.escape(params[:package])}?cmd=branch"
-      result = ActiveXML::Node.new(frontend.transport.direct_http( URI(path), :method => 'POST', :data => ''))
-      result_project = result.find_first( "/status/data[@name='targetproject']" ).text
-      result_package = result.find_first( "/status/data[@name='targetpackage']" ).text
-    rescue ActiveXML::Transport::Error => e
-      message = e.summary
-      if e.code == 'double_branch_package'
-        flash[:notice] = 'You already branched the package and got redirected to it instead'
-        bprj, bpkg = message.split('exists: ')[1].split('/', 2) # Hack to find out branch project / package
-        redirect_to :controller => 'package', :action => 'show', :project => bprj, :package => bpkg and return
-      else
-        flash[:error] = message
-        redirect_to :controller => 'package', :action => 'show', :project => params[:project], :package => params[:package] and return
-      end
-    end
-    flash[:success] = "Branched package #{@project} / #{@package}"
-    redirect_to :controller => 'package', :action => 'show',
-      :project => result_project, :package => result_package and return
-  end
-
-
-  def save_new_link
-    @linked_project = params[:linked_project].strip
-    @linked_package = params[:linked_package].strip
-    @target_package = params[:target_package].strip
-    @revision       = nil
-    @current_revision = true if params[:current_revision]
-
-    unless Package.valid_name? @linked_package
-      flash[:error] = "Invalid package name: '#{@linked_package}'"
-      redirect_to :controller => :project, :action => 'new_package_branch', :project => params[:project] and return
+  def branch_diff_info
+    linked_package = @package.backend_package.links_to
+    target_project = target_package = description = ''
+    if linked_package
+      target_project = linked_package.project.name
+      target_package = linked_package.name
+      description = @package.commit_message_from_changes_file(target_project, target_package)
     end
 
-    unless Project.valid_name? @linked_project
-      flash[:error] = "Invalid project name: '#{@linked_project}'"
-      redirect_to :controller => :project, :action => 'new_package_branch', :project => params[:project] and return
-    end
-
-    begin
-      # just as existens check
-      Package.get_by_project_and_name(@linked_project, @linked_package)
-    rescue APIException
-      flash[:error] = "Unable to find package '#{@linked_package}' in project '#{@linked_project}'."
-      redirect_to :controller => :project, :action => 'new_package_branch', :project => @project and return
-    end
-
-    @target_package = @linked_package if @target_package.blank?
-    unless Package.valid_name? @target_package
-      flash[:error] = "Invalid target package name: '#{@target_package}'"
-      redirect_to :controller => :project, :action => 'new_package_branch', :project => @project and return
-    end
-    if Package.exists_by_project_and_name @project.name, @target_package
-      flash[:error] = "Package '#{@target_package}' already exists in project '#{@project}'"
-      redirect_to :controller => :project, :action => 'new_package_branch', :project => @project and return
-    end
-
-    dirhash = Package.dir_hash(@linked_project, @linked_package)
-    revision = dirhash['xsrcmd5'] || dirhash['rev']
-    unless revision
-      flash[:error] = "Unable to branch package '#{@target_package}', it has no source revision yet"
-      redirect_to :controller => :project, :action => 'new_package_branch', :project => @project and return
-    end
-
-    @revision = revision if @current_revision
-
-    logger.debug "link params doing branch: #{@linked_project}, #{@linked_package}"
-    begin
-      path = Package.source_path(@linked_project, @linked_package, nil, { cmd: :branch, target_project: @project.name, target_package: @target_package})
-      path += "&rev=#{CGI.escape(@revision)}" if @revision
-      frontend.transport.direct_http( URI(path), :method => 'POST', :data => '')
-      flash[:success] = "Branched package #{@project.name} / #{@target_package}"
-    rescue ActiveXML::Transport::Error => e
-      flash[:error] = e.summary
-    end
-
-    redirect_to :controller => 'package', :action => 'show', :project => @project, :package => @target_package
+    render json: {
+      targetProject: target_project,
+      targetPackage: target_package,
+      description: description,
+      cleanupSource: @project.branch? # We should remove the package if this request is a branch
+    }
   end
 
   def save
-    unless User.current.can_modify_package? @package
-      redirect_to :action => 'show', :project => params[:project], :package => params[:package], error: 'No permission to save'
-      return
-    end
+    authorize @package, :update?
     @package.title = params[:title]
     @package.description = params[:description]
     if @package.save
-      flash[:notice] = "Package data for '#{@package.name}' was saved successfully"
+      flash[:success] = "Package data for '#{elide(@package.name)}' was saved successfully"
     else
-      flash[:notice] = "Failed to save package '#{@package.name}'"
+      flash[:error] = "Failed to save package '#{elide(@package.name)}': #{@package.errors.full_messages.to_sentence}"
     end
-    redirect_to :action => 'show', :project => params[:project], :package => params[:package]
-  end
-
-  def delete_dialog
-    render_dialog
+    redirect_to action: :show, project: params[:project], package: params[:package]
   end
 
   def remove
+    authorize @package, :destroy?
+
+    # Don't check weak dependencies if we force
+    @package.check_weak_dependencies? unless params[:force]
+    if @package.errors.empty?
+      @package.destroy
+      redirect_to(project_show_path(@project), success: 'Package was successfully removed.')
+    else
+      redirect_to(package_show_path(project: @project, package: @package),
+                  error: "Package can't be removed: #{@package.errors.full_messages.to_sentence}")
+    end
+  end
+
+  def trigger_services
+    authorize @package, :update?
+
     begin
-      FrontendCompat.new.delete_package :project => @project, :package => @package
-      flash[:notice] = "Package '#{@package}' was removed successfully from project '#{@project}'"
-    rescue ActiveXML::Transport::Error => e
-      flash[:error] = e.summary
+      Backend::Api::Sources::Package.trigger_services(@project.name, @package.name, User.session!.to_s)
+      flash[:success] = 'Services successfully triggered'
+    rescue Timeout::Error => e
+      flash[:error] = "Services couldn't be triggered: " + e.message
+    rescue Backend::Error => e
+      flash[:error] = "Services couldn't be triggered: " + Xmlhash::XMLHash.new(error: e.summary)[:error]
     end
-    redirect_to :controller => 'project', :action => 'show', :project => @project
-  end
-
-  def add_file
-    set_file_details
-  end
-
-  def valid_file_name? name
-    name.present? && name =~ %r{^[^\/]+$}
-  end
-
-  def save_file
-    unless User.current.can_modify_package? @package
-      redirect_to :back, error: "You're not allowed to modify #{@package.name}"
-      return
-    end
-
-    file = params[:file]
-    file_url = params[:file_url]
-    filename = params[:filename]
-
-    if file.present?
-      # we are getting an uploaded file
-      filename = file.original_filename if filename.blank?
-
-      unless valid_file_name?(filename)
-        flash[:error] = "'#{filename}' is not a valid filename."
-        redirect_back_or_to :action => 'add_file', :project => params[:project], :package => params[:package]
-        return
-      end
-
-      begin
-        @package.save_file file: file, filename: filename
-      rescue ActiveXML::Transport::Error => e
-        flash[:error] = e.summary
-        redirect_back_or_to :action => 'add_file', :project => params[:project], :package => params[:package]
-        return
-      end
-    elsif file_url.present?
-      # we have a remote file uri
-      return unless add_file_url(file_url)
-    else
-      return unless add_file_filename(filename)
-    end
-
-    flash[:success] = "The file #{filename} has been added."
-    redirect_to :action => :show, :project => @project, :package => @package
-  end
-
-  def add_file_filename(filename)
-    if filename.blank?
-      flash[:error] = 'No file or URI given.'
-      redirect_back_or_to :action => 'add_file', :project => params[:project], :package => params[:package]
-      return false
-    else
-      unless valid_file_name?(filename)
-        flash[:error] = "'#{filename}' is not a valid filename."
-        redirect_back_or_to :action => 'add_file', :project => params[:project], :package => params[:package]
-        return false
-      end
-      begin
-        @package.save_file filename: filename
-      rescue ActiveXML::Transport::Error => e
-        flash[:error] = e.summary
-        redirect_back_or_to :action => 'add_file', :project => params[:project], :package => params[:package]
-        return false
-      end
-    end
-    true
-  end
-
-  def add_file_url(file_url)
-    @services = Service.find(project: @project, package: @package.name)
-    unless @services
-      @services = Service.new(project: @project, package: @package.name)
-    end
-    @services.addDownloadURL(file_url)
-    unless @services.save
-      flash[:error] = "Failed to add file from URL '#{file_url}'. -> #{e.class}"
-      redirect_back_or_to :action => 'add_file', :project => params[:project], :package => params[:package]
-      return false
-    end
-    true
+    redirect_to package_show_path(@project, @package)
   end
 
   def remove_file
-    required_parameters :filename
+    authorize @package, :update?
+
     filename = params[:filename]
     begin
-      @package.delete_file filename
-      flash[:notice] = "File '#{filename}' removed successfully"
-    rescue ActiveXML::Transport::NotFoundError
-      flash[:notice] = "Failed to remove file '#{filename}'"
+      @package.delete_file(filename)
+      flash[:success] = "File '#{filename}' removed successfully"
+    rescue Backend::NotFoundError
+      flash[:error] = "Failed to remove file '#{filename}'"
     end
-    redirect_to :action => :show, :project => @project, :package => @package
+    redirect_to action: :show, project: @project, package: @package
   end
 
   def view_file
     @filename = params[:filename] || params[:file] || ''
-    if Package.is_binary_file?(@filename) # We don't want to display binary files
+    if binary_file?(@filename) # We don't want to display binary files
       flash[:error] = "Unable to display binary file #{@filename}"
-      redirect_back_or_to :action => :show, :project => @project, :package => @package and return
+      redirect_back(fallback_location: { action: :show, project: @project, package: @package })
+      return
     end
     @rev = params[:rev]
     @expand = params[:expand]
     @addeditlink = false
-    if User.current.can_modify_package?(@package) && @rev.blank?
+    if User.possibly_nobody.can_modify?(@package) && @rev.blank? && @package.scmsync.blank?
       begin
         files = package_files(@rev, @expand)
-      rescue ActiveXML::Transport::Error => e
+      rescue Backend::Error
         files = []
       end
       files.each do |file|
@@ -669,16 +413,479 @@ class Webui::PackageController < Webui::WebuiController
     end
     begin
       @file = @package.source_file(@filename, fetch_from_params(:rev, :expand))
-    rescue ActiveXML::Transport::NotFoundError => e
+    rescue Backend::NotFoundError
       flash[:error] = "File not found: #{@filename}"
-      redirect_to :action => :show, :package => @package, :project => @project and return
-    rescue ActiveXML::Transport::Error => e
+      redirect_to action: :show, package: @package, project: @project
+      return
+    rescue Backend::Error => e
       flash[:error] = "Error: #{e}"
-      redirect_back_or_to :action => :show, :project => @project, :package => @package and return
+      redirect_back(fallback_location: { action: :show, project: @project, package: @package })
+      return
     end
-    if @spider_bot
-      render :template => 'webui/package/simple_file_view' and return
+
+    render(template: 'webui/package/simple_file_view') && return if @spider_bot
+  end
+
+  def live_build_log
+    @repo = @project.repositories.find_by(name: params[:repository]).try(:name)
+    unless @repo
+      flash[:error] = "Couldn't find repository '#{params[:repository]}'. Are you sure it still exists?"
+      redirect_to(package_show_path(@project, @package))
+      return
     end
+
+    @arch = Architecture.archcache[params[:arch]].try(:name)
+    unless @arch
+      flash[:error] = "Couldn't find architecture '#{params[:arch]}'. Are you sure it still exists?"
+      redirect_to(package_show_path(@project, @package))
+      return
+    end
+
+    @offset = 0
+    @status = get_status(@project, @package_name, @repo, @arch)
+    @what_depends_on = Package.what_depends_on(@project, @package_name, @repo, @arch)
+    @finished = Buildresult.final_status?(status)
+
+    set_job_status
+  end
+
+  def update_build_log
+    # Make sure objects don't contain invalid chars (eg. '../')
+    @repo = @project.repositories.find_by(name: params[:repository]).try(:name)
+    unless @repo
+      @errors = "Couldn't find repository '#{params[:repository]}'. We don't have build log for this repository"
+      return
+    end
+
+    @arch = Architecture.archcache[params[:arch]].try(:name)
+    unless @arch
+      @errors = "Couldn't find architecture '#{params[:arch]}'. We don't have build log for this architecture"
+      return
+    end
+
+    begin
+      @maxsize = 1024 * 64
+      @first_request = params[:initial] == '1'
+      @offset = params[:offset].to_i
+      @status = get_status(@project, @package_name, @repo, @arch)
+      @finished = Buildresult.final_status?(@status)
+      @size = get_size_of_log(@project, @package_name, @repo, @arch)
+
+      chunk_start = @offset
+      chunk_end = @offset + @maxsize
+
+      # Start at the most recent part to not get the full log from the begining just the last 64k
+      if @first_request && (@finished || @size >= @maxsize)
+        chunk_start = [0, @size - @maxsize].max
+        chunk_end = @size
+      end
+
+      @log_chunk = get_log_chunk(@project, @package_name, @repo, @arch, chunk_start, chunk_end)
+
+      old_offset = @offset
+      @offset = [chunk_end, @size].min
+    rescue Timeout::Error, IOError
+      @log_chunk = ''
+    rescue Backend::Error => e
+      case e.summary
+      when /Logfile is not that big/
+        @log_chunk = ''
+      when /start out of range/
+        # probably build compare has cut log and offset is wrong, reset offset
+        @log_chunk = ''
+        @offset = old_offset
+      else
+        @log_chunk = "No live log available: #{e.summary}\n"
+        @finished = true
+      end
+    end
+  end
+
+  def abort_build
+    authorize @package, :update?
+
+    if @package.abort_build(params)
+      flash[:success] = "Triggered abort build for #{elide(@project.name)}/#{elide(@package.name)} successfully."
+      redirect_to package_show_path(project: @project, package: @package)
+    else
+      flash[:error] = "Error while triggering abort build for #{elide(@project.name)}/#{elide(@package.name)}: #{@package.errors.full_messages.to_sentence}."
+      redirect_to package_live_build_log_path(project: @project, package: @package, repository: params[:repository], arch: params[:arch])
+    end
+  end
+
+  def trigger_rebuild
+    rebuild_trigger = PackageControllerService::RebuildTrigger.new(package_object: @package, package_name_with_multibuild_suffix: params[:package],
+                                                                   project: @project, repository: params[:repository], arch: params[:arch])
+    authorize rebuild_trigger.policy_object, :update?
+
+    if rebuild_trigger.rebuild?
+      flash[:success] = rebuild_trigger.success_message
+      redirect_to package_show_path(project: @project, package: @package)
+    else
+      flash[:error] = rebuild_trigger.error_message
+      redirect_to package_binaries_path(project: @project, package: @package, repository: params[:repository])
+    end
+  end
+
+  def wipe_binaries
+    authorize @package, :update?
+
+    if @package.wipe_binaries(params)
+      flash[:success] = "Triggered wipe binaries for #{elide(@project.name)}/#{elide(@package.name)} successfully."
+    else
+      flash[:error] = "Error while triggering wipe binaries for #{elide(@project.name)}/#{elide(@package.name)}: #{@package.errors.full_messages.to_sentence}."
+    end
+
+    redirect_to package_binaries_path(project: @project, package: @package, repository: params[:repository])
+  end
+
+  def devel_project
+    tgt_pkg = Package.find_by_project_and_name(params[:project], params[:package])
+
+    render plain: tgt_pkg.try(:develpackage).try(:project).to_s
+  end
+
+  def buildresult
+    if @project.repositories.any?
+      show_all = params[:show_all].to_s.casecmp?('true')
+      @index = params[:index]
+      @buildresults = @package.buildresult(@project, show_all)
+
+      # TODO: this is part of the temporary changes done for 'request_show_redesign'.
+      request_show_redesign_partial = 'webui/request/beta_show_tabs/build_status' if params.fetch(:inRequestShowRedesign, false)
+
+      render partial: (request_show_redesign_partial || 'buildstatus'), locals: { buildresults: @buildresults,
+                                                                                  index: @index,
+                                                                                  project: @project,
+                                                                                  collapsed_packages: params.fetch(:collapsedPackages, []),
+                                                                                  collapsed_repositories: params.fetch(:collapsedRepositories, {}) }
+    else
+      render partial: 'no_repositories', locals: { project: @project }
+    end
+  end
+
+  def rpmlint_result
+    @repo_arch_hash = {}
+    @buildresult = Buildresult.find_hashed(project: @project.to_param, package: @package.to_param, view: 'status')
+    repos = [] # Temp var
+    if @buildresult
+      @buildresult.elements('result') do |result|
+        if result.value('repository') != 'images' &&
+           (result.value('status') && result.value('status').value('code') != 'excluded')
+          hash_key = valid_xml_id(elide(result.value('repository'), 30))
+          @repo_arch_hash[hash_key] ||= []
+          @repo_arch_hash[hash_key] << result['arch']
+          repos << result.value('repository')
+        end
+      end
+    end
+
+    @repo_list = repos.uniq.collect do |repo_name|
+      [repo_name, valid_xml_id(elide(repo_name, 30))]
+    end
+
+    if @repo_list.empty?
+      render partial: 'no_repositories', locals: { project: @project }
+    else
+      # TODO: this is part of the temporary changes done for 'request_show_redesign'.
+      request_show_redesign_partial = 'webui/request/beta_show_tabs/rpm_lint_result' if params.fetch(:inRequestShowRedesign, false)
+
+      render partial: (request_show_redesign_partial || 'rpmlint_result'), locals: { index: params[:index], project: @project, package: @package,
+                                                                                     repository_list: @repo_list, repo_arch_hash: @repo_arch_hash,
+                                                                                     is_staged_request: params[:is_staged_request] }
+    end
+  end
+
+  def rpmlint_log
+    @log = Backend::Api::BuildResults::Binaries.rpmlint_log(params[:project], params[:package], params[:repository], params[:architecture])
+    @log.encode!(xml: :text)
+    render partial: 'rpmlint_log'
+  rescue Backend::NotFoundError
+    render plain: 'No rpmlint log'
+  end
+
+  def meta
+    @meta = @package.render_xml
+  end
+
+  def save_meta
+    errors = []
+
+    authorize @package, :save_meta_update?
+
+    errors << 'admin rights are required to raise the protection level of a package' if FlagHelper.xml_disabled_for?(@meta_xml, 'sourceaccess')
+
+    errors << 'project name in xml data does not match resource path component' if @meta_xml['project'] && @meta_xml['project'] != @project.name
+
+    errors << 'package name in xml data does not match resource path component' if @meta_xml['name'] && @meta_xml['name'] != @package.name
+
+    if errors.empty?
+      begin
+        @package.update_from_xml(@meta_xml)
+        flash.now[:success] = 'The Meta file has been successfully saved.'
+        status = 200
+      rescue Backend::Error, NotFoundError => e
+        flash.now[:error] = "Error while saving the Meta file: #{e}."
+        status = 400
+      end
+    else
+      flash.now[:error] = "Error while saving the Meta file: #{errors.compact.join("\n")}."
+      status = 400
+    end
+    render layout: false, status: status, partial: 'layouts/webui/flash', object: flash
+  end
+
+  private
+
+  # Get an URL to a binary produced by the build.
+  # In the published repo for everyone, in the backend directly only for logged in users.
+  def download_url_for_binary(architecture_name:, file_name:)
+    if publishing_enabled(architecture_name: architecture_name)
+      published_url = Backend::Api::BuildResults::Binaries.download_url_for_file(@project.name, @repository.name, params[:package], architecture_name, file_name)
+      return published_url if published_url
+    end
+
+    return "/build/#{@project.name}/#{@repository.name}/#{architecture_name}/#{params[:package]}/#{file_name}" if User.session
+  end
+
+  def publishing_enabled(architecture_name:)
+    if @project == @package.project
+      @package.enabled_for?('publish', @repository.name, architecture_name)
+    else
+      # We are looking at a package coming through a project link
+      # Let's see if we rebuild linked packages.
+      # NOTE: linkedbuild=localdep||alldirect would be too much hassle to figure out...
+      return false if @repository.linkedbuild != 'all'
+
+      # If we are rebuilding packages, let's ask @project if it publishes.
+      @project.enabled_for?('publish', @repository.name, architecture_name)
+    end
+  end
+
+  def package_params
+    params.require(:package).permit(:name, :title, :description)
+  end
+
+  def package_details_params
+    # We use :package_details instead of the canonical :package param key
+    # because :package is already used in the Webui::WebuiController#require_package
+    # filter.
+    # TODO: rename the usage of :package in #require_package to :package_name to unlock
+    # the proper use of defaults.
+    params
+      .require(:package_details)
+      .permit(:title,
+              :description,
+              :url)
+  end
+
+  def validate_xml
+    Suse::Validator.validate('package', params[:meta])
+    @meta_xml = Xmlhash.parse(params[:meta])
+  rescue Suse::ValidationError => e
+    flash.now[:error] = "Error while saving the Meta file: #{e}."
+    render layout: false, status: :bad_request, partial: 'layouts/webui/flash', object: flash
+  end
+
+  def package_files(rev = nil, expand = nil)
+    query = {}
+    query[:expand]  = expand  if expand
+    query[:rev]     = rev     if rev
+
+    dir_xml = @package.source_file(nil, query)
+    return [] if dir_xml.blank?
+
+    dir = Xmlhash.parse(dir_xml)
+    @serviceinfo = dir.elements('serviceinfo').first
+    files = []
+    dir.elements('entry') do |entry|
+      file = Hash[*[:name, :size, :mtime, :md5].map! { |x| [x, entry.value(x.to_s)] }.flatten]
+      file[:viewable] = !binary_file?(file[:name]) && file[:size].to_i < 2**20 # max. 1 MB
+      file[:editable] = file[:viewable] && !file[:name].match?(/^_service[_:]/)
+      file[:srcmd5] = dir.value('srcmd5')
+      files << file
+    end
+    files
+  end
+
+  # Basically backend stores date in /source (package sources) and /build (package
+  # build related). Logically build logs are stored in /build. Though build logs also
+  # contain information related to source packages.
+  # Thus before giving access to the build log, we need to ensure user has source access
+  # rights.
+  #
+  # This before_filter checks source permissions for packages that belong
+  # to local projects and local projects that link to other project's packages.
+  #
+  # If the check succeeds it sets @project and @package variables.
+  def check_build_log_access
+    @project = Project.find_by(name: params[:project])
+    unless @project
+      redirect_to root_path, error: "Couldn't find project '#{params[:project]}'. Are you sure it still exists?"
+      return false
+    end
+
+    @package_name = params[:package]
+    begin
+      @package = Package.get_by_project_and_name(@project, @package_name, use_source: false,
+                                                                          follow_multibuild: true,
+                                                                          follow_project_links: true)
+    rescue Package::UnknownObjectError
+      redirect_to project_show_path(@project.to_param),
+                  error: "Couldn't find package '#{params[:package]}' in " \
+                         "project '#{@project.to_param}'. Are you sure it exists?"
+      return false
+    end
+
+    # NOTE: @package is a String for multibuild packages
+    @package = Package.find_by_project_and_name(@project.name, Package.striping_multibuild_suffix(@package_name)) if @package.is_a?(String)
+
+    unless @package.check_source_access?
+      redirect_to package_show_path(project: @project.name, package: @package_name),
+                  error: 'Could not access build log'
+      return false
+    end
+
+    @can_modify = User.possibly_nobody.can_modify?(@project) || User.possibly_nobody.can_modify?(@package)
+
+    true
+  end
+
+  def require_architecture
+    @architecture = Architecture.archcache[params[:arch]]
+    return if @architecture
+
+    flash[:error] = "Couldn't find architecture '#{params[:arch]}'"
+    redirect_to package_binaries_path(project: @project, package: @package, repository: @repository.name)
+  end
+
+  def require_repository
+    @repository = @project.repositories.find_by(name: params[:repository])
+    return if @repository
+
+    flash[:error] = "Couldn't find repository '#{params[:repository]}'"
+    redirect_to package_show_path(project: @project, package: @package)
+  end
+
+  def handle_parameters_for_rpmlint_log
+    params.require([:project, :package, :repository, :architecture])
+  end
+
+  def set_file_details
+    @forced_unexpand ||= ''
+
+    # check source access
+    @files = []
+    return false unless @package.check_source_access?
+
+    set_linkinfo
+
+    begin
+      @current_rev = @package.rev
+      @revision = @current_rev if !@revision && !@srcmd5 # on very first page load only
+
+      @files = package_files(@srcmd5 || @revision, @expand)
+    rescue Backend::Error => e
+      # TODO: crudest hack ever!
+      if e.summary == 'service in progress' && @expand == 1
+        @expand = 0
+        @service_running = true
+        # silently in this case
+        return set_file_details
+      end
+      if @expand == 1
+        @forced_unexpand = e.details || e.summary
+        @expand = 0
+        return set_file_details
+      end
+      return false
+    end
+
+    true
+  end
+
+  def set_linkinfo
+    return unless @package.is_link?
+
+    # FIXME: We have a rails bug here.
+    # the `.backend_package.links_to` is an association chain.
+    # Due to this bug https://github.com/rails/rails/issues/38709 `linked_package` will not get the refreshed
+    # contents and then the md5 at the bottom of this method are the same, thus no rendering the linkinfo
+    linked_package = @package.backend_package.links_to
+    return set_remote_linkinfo unless linked_package
+
+    @linkinfo = { package: linked_package, error: @package.backend_package.error }
+    @linkinfo[:diff] = true if linked_package.backend_package.verifymd5 != @package.backend_package.verifymd5
+  end
+
+  def set_remote_linkinfo
+    linkinfo = @package.linkinfo
+
+    return unless linkinfo && linkinfo['package'] && linkinfo['project']
+    return unless Package.exists_on_backend?(linkinfo['package'], linkinfo['project'])
+
+    @linkinfo = { remote_project: linkinfo['project'], package: linkinfo['package'] }
+  end
+
+  def check_package_name_for_new
+    package_name = params[:package][:name]
+
+    # FIXME: This should be a validation in the Package model
+    unless Package.valid_name?(package_name)
+      flash[:error] = "Invalid package name: '#{elide(package_name)}'"
+      redirect_to action: :new, project: @project
+      return false
+    end
+    # FIXME: This should be a validation in the Package model
+    if Package.exists_by_project_and_name(@project.name, package_name)
+      flash[:error] = "Package '#{elide(package_name)}' already exists in project '#{elide(@project.name)}'"
+      redirect_to action: :new, project: @project
+      return false
+    end
+
+    true
+  end
+
+  def find_last_req
+    return if @oproject.blank? || @opackage.blank?
+
+    last_req = find_last_declined_bs_request
+
+    return if last_req.blank?
+
+    { id: last_req.number, decliner: last_req.commenter,
+      when: last_req.updated_at, comment: last_req.comment }
+  end
+
+  def find_last_declined_bs_request
+    last_req = BsRequestAction.joins(:bs_request).where(target_project: @oproject,
+                                                        target_package: @opackage,
+                                                        source_project: @package.project,
+                                                        source_package: @package.name)
+                              .order(:bs_request_id).last
+
+    return if last_req.blank?
+
+    last_req.bs_request if bs_request.state == :declined
+  end
+
+  def get_diff(project, package, options = {})
+    options[:view] = :xml
+    options[:cacheonly] = 1 unless User.session
+    options[:withissues] = 1
+    begin
+      @rdiff = Backend::Api::Sources::Package.source_diff(project, package, options.merge(expand: 1))
+    rescue Backend::Error => e
+      flash[:error] = 'Problem getting expanded diff: ' + e.summary
+      begin
+        @rdiff = Backend::Api::Sources::Package.source_diff(project, package, options.merge(expand: 0))
+      rescue Backend::Error => e
+        flash[:error] = 'Error getting diff: ' + e.summary
+        redirect_back(fallback_location: package_show_path(project: @project, package: @package))
+        return false
+      end
+    end
+    true
   end
 
   def fetch_from_params(*arr)
@@ -689,323 +896,21 @@ class Webui::PackageController < Webui::WebuiController
     opts
   end
 
-  def save_modified_file
-    check_ajax
-    required_parameters :project, :package, :filename, :file
-    project = params[:project]
-    package = params[:package]
-    filename = params[:filename]
-    params[:file].gsub!( /\r\n/, "\n" )
-    begin
-      frontend.put_file(params[:file], :project => project, :package => package, :filename => filename, :comment => params[:comment])
-    rescue Timeout::Error => e
-      render json: { error: 'Timeout when saving file. Please try again.'
-      }, status: 400
-      return
-    rescue ActiveXML::Transport::Error => e
-      render json: { error: e.summary }, status: 400
-      return
-    end
-    render json: { status: 'ok' }
-  end
-
-  def live_build_log
-    required_parameters :arch, :repository
-    @arch = params[:arch]
-    @repo = params[:repository]
-    begin
-      size = get_size_of_log(@project, @package, @repo, @arch)
-      logger.debug('log size is %d' % size)
-      @offset = size - 32 * 1024
-      @offset = 0 if @offset < 0
-      @initiallog = get_log_chunk( @project, @package, @repo, @arch, @offset, size)
-    rescue => e
-      logger.error "Got #{e.class}: #{e.message}; returning empty log."
-      @initiallog = ''
-    end
-    @offset = (@offset || 0) + ActiveXML::backend.last_body_length
-  end
-
-  def update_build_log
-    check_ajax
-
-    @project = params[:project]
-    @package = params[:package]
-    @arch = params[:arch]
-    @repo = params[:repository]
-    @initial = params[:initial]
-    @offset = params[:offset].to_i
-    @finished = false
-    @maxsize = 1024 * 64
+  def set_job_status
+    @percent = nil
 
     begin
-      @log_chunk = get_log_chunk( @project, @package, @repo, @arch, @offset, @offset + @maxsize)
-
-      if( @log_chunk.length == 0 )
-        @finished = true
-      else
-        @offset += ActiveXML::backend.last_body_length
+      jobstatus = get_job_status(@project, @package_name, @repo, @arch)
+      if jobstatus.present?
+        js = Xmlhash.parse(jobstatus)
+        @workerid = js.get('workerid')
+        @buildtime = Time.now.to_i - js.get('starttime').to_i
+        ld = js.get('lastduration')
+        @percent = (@buildtime * 100) / ld.to_i if ld.present?
       end
-
-    rescue Timeout::Error, IOError
-      @log_chunk = ''
-
-    rescue ActiveXML::Transport::Error => e
-      if e.summary =~ %r{Logfile is not that big}
-        @log_chunk = ''
-      else
-        @log_chunk = "No live log available: #{e.summary}\n"
-        @finished = true
-      end
-    end
-
-    logger.debug 'finished ' + @finished.to_s
-
-  end
-
-  def abort_build
-    params[:redirect] = 'live_build_log'
-    api_cmd('abortbuild', params)
-  end
-
-
-  def trigger_rebuild
-    api_cmd('rebuild', params)
-  end
-
-  def wipe_binaries
-    api_cmd('wipe', params)
-  end
-
-  def devel_project
-    check_ajax
-    required_parameters :package, :project
-    tgt_pkg = Package.find_by_project_and_name( params[:project], params[:package] )
-    if tgt_pkg and tgt_pkg.develpackage
-      render text: tgt_pkg.develpackage.project
-    else
-      render text: ''
+    rescue StandardError
+      @workerid = nil
+      @buildtime = nil
     end
   end
-
-  def api_cmd(cmd, params)
-    options = {}
-    options[:arch] = params[:arch] if params[:arch]
-    options[:repository] = params[:repo] if params[:repo]
-    options[:project] = @project.to_s
-    options[:package] = @package.to_s
-
-    begin
-      frontend.cmd cmd, options
-    rescue ActiveXML::Transport::Error => e
-      flash[:error] = e.summary
-      redirect_to :action => :show, :project => @project, :package => @package and return
-    end
-
-    logger.debug( "Triggered #{cmd} for #{@project}/#{@package}, options=#{options.inspect}" )
-    @message = "Triggered #{cmd} for #{@project}/#{@package}."
-    controller = 'package'
-    action = 'show'
-    if  params[:redirect] == 'monitor'
-      controller = 'project'
-      action = 'monitor'
-    end
-
-    unless request.xhr?
-      # non ajax request:
-      flash[:notice] = @message
-      redirect_to :controller => controller, :action => action,
-        :project => @project, :package => @package
-    else
-      # ajax request - render default view: in this case 'trigger_rebuild.rjs'
-      return
-    end
-  end
-  private :api_cmd
-
-  def import_spec
-    all_files = package_files
-    all_files.each do |file|
-      @specfile_name = file[:name] if file[:name].end_with?('.spec')
-    end
-    if @specfile_name.blank?
-      render json: {} and return
-    end
-    specfile_content = @package.source_file(@specfile_name)
-
-    description = []
-    lines = specfile_content.split(/\n/)
-    line = lines.shift until line =~ /^%description\s*$/
-    description << lines.shift until description.last =~ /^%/
-    # maybe the above end-detection of the description-section could be improved like this:
-    # description << lines.shift until description.last =~ /^%\{?(debug_package|prep|pre|preun|....)/
-    description.pop
-
-    render json: { description: description }
-  end
-
-  def buildresult
-    check_ajax
-    load_buildresults
-    render :partial => 'buildstatus'
-  end
-
-  def rpmlint_result
-    check_ajax
-    @repo_list, @repo_arch_hash = [], {}
-    @buildresult = Buildresult.find_hashed(:project => @project.to_param, :package => @package.to_param, :view => 'status')
-    repos = [] # Temp var
-    @buildresult.elements('result') do |result|
-      hash_key = valid_xml_id(elide(result.value('repository'), 30))
-      @repo_arch_hash[hash_key] ||= []
-      @repo_arch_hash[hash_key] << result['arch']
-      repos << result.value('repository')
-    end if @buildresult
-    repos.uniq.each do |repo_name|
-      @repo_list << [repo_name, valid_xml_id(elide(repo_name, 30))]
-    end
-    if @repo_list.empty?
-      render partial: 'no_repositories'
-    else
-      render partial: 'rpmlint_result', locals: {index: params[:index]}
-    end
-  end
-
-  def get_rpmlint_log(project, package, repository, architecture)
-    path = "/build/#{pesc project}/#{pesc repository}/#{pesc architecture}/#{pesc package}/rpmlint.log"
-    ActiveXML::backend.direct_http(URI(path), timeout: 500)
-  end
-
-  def rpmlint_log
-    required_parameters :project, :package, :repository, :architecture
-    begin
-      rpmlint_log = get_rpmlint_log(params[:project], params[:package], params[:repository], params[:architecture])
-      rpmlint_log.encode!(xml: :text)
-      res = ''
-      rpmlint_log.lines.each do |line|
-        if line.match(/\w+(?:\.\w+)+: W: /)
-          res += "<span style=\"color: olive;\">#{line}</span>"
-        elsif line.match(/\w+(?:\.\w+)+: E: /)
-          res += "<span style=\"color: red;\">#{line}</span>"
-        else
-          res += line
-        end
-      end
-      render :text => res, content_type: 'text/html'
-    rescue ActiveXML::Transport::NotFoundError
-      render :text => 'No rpmlint log'
-    end
-  end
-
-  def meta
-    @meta = @package.render_xml
-  end
-
-  def save_meta
-    begin
-      frontend.put_file(params[:meta], :project => @project, :package => @package, :filename => '_meta')
-    rescue ActiveXML::Transport::Error => e
-      message = e.summary
-      flash[:error] = message
-      @meta = params[:meta]
-      render :text => message, :status => 400, :content_type => 'text/plain'
-      return
-    end
-
-    flash[:notice] = 'Config successfully saved'
-    render :text => 'Config successfully saved', :content_type => 'text/plain'
-  end
-
-  def attributes
-    @attributes = @package.attribs
-  end
-
-  def edit
-  end
-
-  def repositories
-    @flags = @package.expand_flags
-  end
-
-  def change_flag
-    check_ajax
-    required_parameters :cmd, :flag
-    frontend.source_cmd params[:cmd], project: @project, package: @package, repository: params[:repository], arch: params[:arch], flag: params[:flag], status: params[:status]
-    @flags = @package.expand_flags[params[:flag]]
-  end
-
-  private
-
-  def file_available? url, max_redirects=5
-    uri = URI.parse( url )
-    http = Net::HTTP.new(uri.host, uri.port)
-    http.open_timeout = 15
-    http.read_timeout = 15
-    logger.debug "Checking url: #{url}"
-    begin
-      response =  http.head uri.path
-      if response.code.to_i == 302 and response['location'] and max_redirects > 0
-        return file_available? response['location'], (max_redirects - 1)
-      end
-      return response.code.to_i == 200 ? true : false
-    rescue Object => e
-      logger.error "Error in checking for file #{url}: #{e.message}"
-      return false
-    end
-  end
-
-  def require_package
-    required_parameters :package
-    params[:rev], params[:package] = params[:pkgrev].split('-', 2) if params[:pkgrev]
-    @project ||= params[:project]
-    unless params[:package].blank?
-      begin
-        @package = Package.get_by_project_and_name( @project.to_param, params[:package], use_source: false, follow_project_links: true )
-      rescue APIException # why it's not found is of no concern :)
-      end
-    end
-
-    render_missing_package unless @package
-  end
-
-  def render_missing_package
-    unless request.xhr?
-      flash[:error] = "Package \"#{params[:package]}\" not found in project \"#{params[:project]}\""
-      redirect_to :controller => 'project', :action => 'show', :project => @project, :nextstatus => 404
-    else
-      render :text => "Package \"#{params[:package]}\" not found in project \"#{params[:project]}\"", :status => 404 and return
-    end
-  end
-
-  def load_buildresults
-    @buildresult = Buildresult.find_hashed( :project => @project, :package => @package.to_param, :view => 'status')
-    if @buildresult.blank?
-      @buildresult = Array.new
-      return
-    end
-    fill_status_cache
-
-    newr = Hash.new
-    @buildresult.elements('result').sort {|a,b| a['repository'] <=> b['repository']}.each do |result|
-      repo = result['repository']
-      if result.has_key? 'status'
-        newr[repo] ||= Array.new
-        newr[repo] << result['arch']
-      end
-    end
-
-    @buildresult = Array.new
-    newr.keys.sort.each do |r|
-      @buildresult << [r, newr[r].flatten.sort]
-    end
-  end
-
-  def users_path
-    url_for(action: :users, project: @project, package: @package)
-  end
-
-  def add_path(action)
-    url_for(action: action, project: @project, role: params[:role], userid: params[:userid], package: @package)
-  end
-
 end

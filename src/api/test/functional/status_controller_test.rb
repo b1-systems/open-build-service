@@ -1,82 +1,97 @@
-require File.expand_path(File.dirname(__FILE__) + "/..") + "/test_helper"
+require File.expand_path(File.dirname(__FILE__) + '/..') + '/test_helper'
 
-class StatusControllerTest < ActionDispatch::IntegrationTest 
-
+class StatusControllerTest < ActionDispatch::IntegrationTest
   fixtures :all
 
   def setup
     prepare_request_valid_user
   end
- 
+
   def test_messages
-    get "/status/messages"
+    get '/status/messages'
     assert_response :success
-    assert_xml_tag :tag => 'status_messages'
+    assert_xml_tag tag: 'status_messages'
   end
 
   def test_new_message
-    put "/status/messages"
+    post '/status/messages'
     assert_response 403
 
     login_king
-    put "/status/messages", '<whereareyou/>'
+    post '/status/messages', params: '<whereareyou/>'
     assert_response 400
 
-    put "/status/messages", '<messages><message>nada</message></messages>'
+    post '/status/messages', params: '<status_message><message>nada</message></status_message>'
     assert_response 400
-    assert_xml_tag attributes: { code: 'invalid_record' }
+    assert_xml_tag attributes: { code: 'validation_failed' }
 
-    put "/status/messages", '<message severity="1">I have nothing to say</message>'
+    post '/status/messages', params: '<status_message><message>I have nothing to say</message><severity>yellow</severity></status_message>'
     assert_response :success
-  
+
     # delete it again
-    get "/status/messages"
+    get '/status/messages'
     assert_response :success
     messages = Xmlhash.parse @response.body
-    msg_id = messages.get('message').value('msg_id')
+    msg_id = messages.get('status_message').value('id')
 
     prepare_request_valid_user
     delete "/status/messages/#{msg_id}"
     assert_response 403
-   
-    login_king    
+
+    login_king
     delete "/status/messages/#{msg_id}"
     assert_response :success
 
-    delete "/status/messages/17"
+    delete '/status/messages/17'
     assert_response 404
-   
-    get "/status/messages" 
-    messages = ActiveXML::Node.new @response.body
-    assert_equal 0, messages.each.size
+
+    get '/status/messages'
+    assert_match(/status_messages count="0"/, @response.body)
+  end
+
+  def test_calculate_workers_by_constraints
+    post '/worker'
+    assert_response 400
+    assert_xml_tag(tag: 'status', attributes: { code: 'missing_parameter' })
+    post '/worker?cmd=checkconstraints&project=HiddenProject&package=TestPack&repository=10.2&arch=i586'
+    assert_response 404
+    assert_xml_tag(tag: 'status', attributes: { code: 'unknown_project' })
+    post '/worker?cmd=checkconstraints&project=home:Iggy&package=TestPack&repository=10.2&arch=i586'
+    assert_response :success
+    assert_select 'directory' do
+      assert_select 'entry', name: 'x86_64:build33:1'
+    end
+    raw_post '/worker?cmd=checkconstraints&project=home:Iggy&package=TestPack&repository=10.2&arch=i586',
+             '<constraints></constraints>' # real calculation tests are done in backend test suite
+    assert_response :success
+    assert_select 'directory' do
+      assert_select 'entry', name: 'x86_64:build33:1'
+    end
+  end
+
+  def test_worker_capability
+    get '/worker/x86_64:build33:1'
+    assert_response :success
+    assert_select 'worker', hostarch: 'x86_64', registerserver: 'http://4.3.2.1:5253', workerid: 'worker:1' do
+      assert_select 'sandbox', 'kvm'
+    end
   end
 
   def test_workerstatus
-    get "/status/workerstatus"
+    get '/worker/_status'          # official route since OBS 2.8
     assert_response :success
-    # just the publisher is running in the background during test suite run
-    assert_xml_tag(:tag => "daemon", :attributes => {:type => 'publisher', :state => 'running'})
+    assert_xml_tag(tag: 'daemon', attributes: { type: 'publisher', state: 'dead' })
+    assert_xml_tag(tag: 'idle', attributes: { workerid: 'worker:1', hostarch: 'x86_64' })
+
+    get '/build/_workerstatus'     # to be dropped FIXME3.0
+    assert_response :success
+    get '/status/workerstatus'
+    assert_response :success
   end
 
   def test_project_status
     # exists only in the API, should give minimal status
-    get "/status/project/home:Iggy"
+    get '/status/project/home:Iggy'
     assert_response :success
-  end
-
-  def test_bsrequest
-    get "/status/bsrequest?id=1"
-    assert_xml_tag(:tag => "status", :attributes => {:code => 'not_found'})
-    assert_response 404
-  end
-
-  def test_history
-    get "/status/history"
-    assert_response 400
-   
-    get "/status/history?hours=24&key=idle_i586"
-    assert_response :success
-    # there is no history in fixtures so the result doesn't matter
   end
 end
-
