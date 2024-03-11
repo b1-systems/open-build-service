@@ -1,4 +1,3 @@
-require 'rails_helper'
 require Rails.root.join('db/data/20200326221616_regenerate_notifications.rb')
 
 RSpec.describe RegenerateNotifications, type: :migration do
@@ -45,7 +44,7 @@ RSpec.describe RegenerateNotifications, type: :migration do
     let!(:revoked_bs_request) { create(:bs_request, type: 'maintenance_release', state: :revoked) } # This shouldn't regenerate notification
 
     before do
-      owner.create_rss_token
+      owner.regenerate_rss_secret
     end
 
     subject { RegenerateNotifications.new.up }

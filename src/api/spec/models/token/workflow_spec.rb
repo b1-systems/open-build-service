@@ -1,10 +1,8 @@
-require 'rails_helper'
-
 RSpec.describe Token::Workflow do
   describe '#call' do
     let(:token_user) { create(:confirmed_user, :with_home, login: 'Iggy') }
     let(:workflow_token) { create(:workflow_token, executor: token_user) }
-    let(:workflow_run) { create(:workflow_run, token: workflow_token) }
+    let(:workflow_run) { create(:workflow_run, token: workflow_token, response_url: 'https://example.com') }
 
     context 'without a payload' do
       it do
@@ -70,7 +68,7 @@ RSpec.describe Token::Workflow do
       let(:scm_extractor) { TriggerControllerService::SCMExtractor.new(scm, event, github_payload) }
       let(:scm_webhook) { SCMWebhook.new(payload: github_extractor_payload) }
       let(:yaml_downloader) { Workflows::YAMLDownloader.new(scm_webhook.payload, token: workflow_token) }
-      let(:yaml_file) { Rails.root.join('spec/support/files/workflows.yml').expand_path }
+      let(:yaml_file) { file_fixture('workflows.yml') }
       let(:yaml_to_workflows_service) { Workflows::YAMLToWorkflowsService.new(yaml_file: yaml_file, scm_webhook: scm_webhook, token: workflow_token, workflow_run: workflow_run) }
       let(:workflow) do
         Workflow.new(scm_webhook: scm_webhook, token: workflow_token,
@@ -137,7 +135,7 @@ RSpec.describe Token::Workflow do
       let(:scm_extractor) { TriggerControllerService::SCMExtractor.new(scm, event, github_payload) }
       let(:scm_webhook) { SCMWebhook.new(payload: github_extractor_payload) }
       let(:yaml_downloader) { Workflows::YAMLDownloader.new(scm_webhook.payload, token: workflow_token) }
-      let(:yaml_file) { Rails.root.join('spec/support/files/workflows.yml').expand_path }
+      let(:yaml_file) { file_fixture('workflows.yml') }
       let(:yaml_to_workflows_service) { Workflows::YAMLToWorkflowsService.new(yaml_file: yaml_file, scm_webhook: scm_webhook, token: workflow_token, workflow_run: workflow_run) }
       let(:workflows) { [Workflow.new(scm_webhook: scm_webhook, token: workflow_token, workflow_instructions: {})] }
 
@@ -207,9 +205,39 @@ RSpec.describe Token::Workflow do
       let(:workflow_token_b) { build(:workflow_token, workflow_configuration_path: nil, workflow_configuration_url: 'https://example.com/subdir/config_file.yml') }
       let(:workflow_token_c) { build(:workflow_token, workflow_configuration_path: 'subdir/config_file.yml', workflow_configuration_url: nil) }
 
+      before do
+        # For URL validation to work, we have to make sure to have the url return a successful response
+        stub_request(:get, 'https://example.com/subdir/config_file.yml')
+      end
+
       it { expect(workflow_token_a).not_to be_valid }
       it { expect(workflow_token_b).to be_valid }
       it { expect(workflow_token_c).to be_valid }
+    end
+
+    context 'validates existence of the workflow configuration url' do
+      # Correct URL
+      let(:workflow_token_a) { build(:workflow_token, workflow_configuration_path: nil, workflow_configuration_url: 'https://example.com/subdir/config_file.yml') }
+      # Wrong schema
+      let(:workflow_token_b) { build(:workflow_token, workflow_configuration_path: nil, workflow_configuration_url: 'htt://example.com/subdir/config_file.yml') }
+      # Wrong URL syntax
+      let(:workflow_token_c) { build(:workflow_token, workflow_configuration_path: nil, workflow_configuration_url: 'https://@@example.com/subdir/config_file.yml') }
+      # Not resolvable (no such tld)
+      let(:workflow_token_d) { build(:workflow_token, workflow_configuration_path: nil, workflow_configuration_url: 'https://example.foo/subdir/config_file.yml') }
+      # Not found on the server
+      let(:workflow_token_e) { build(:workflow_token, workflow_configuration_path: nil, workflow_configuration_url: 'https://example.com/subdir') }
+
+      before do
+        # For URL validation to work, we have to make sure to have the url return an appropriate response for the scenario
+        stub_request(:get, 'https://example.com/subdir/config_file.yml')
+        stub_request(:get, 'https://example.com/subdir').to_return(status: 404)
+      end
+
+      it { expect(workflow_token_a).to be_valid }
+      it { expect(workflow_token_b).not_to be_valid }
+      it { expect(workflow_token_c).not_to be_valid }
+      it { expect(workflow_token_d).not_to be_valid }
+      it { expect(workflow_token_e).not_to be_valid }
     end
   end
 end

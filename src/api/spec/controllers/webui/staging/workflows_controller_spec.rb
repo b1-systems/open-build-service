@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe Webui::Staging::WorkflowsController do
   let(:user) { create(:confirmed_user, :with_home, login: 'tom') }
   let(:managers_group) { create(:group) }
@@ -45,7 +43,7 @@ RSpec.describe Webui::Staging::WorkflowsController do
       subject { project.staging }
 
       it { expect(Staging::Workflow.count).to eq(1) }
-      it { expect(subject.staging_projects.map(&:name)).to match_array(['home:tom:Staging:A', 'home:tom:Staging:B']) }
+      it { expect(subject.staging_projects.map(&:name)).to contain_exactly('home:tom:Staging:A', 'home:tom:Staging:B') }
       it { expect(response).to redirect_to(staging_workflow_path(project)) }
       it { expect(subject.managers_group).to eq(managers_group) }
       it { expect(flash[:success]).not_to be_nil }
@@ -63,7 +61,7 @@ RSpec.describe Webui::Staging::WorkflowsController do
       subject { project.staging }
 
       it { expect(Staging::Workflow.count).to eq(1) }
-      it { expect(subject.staging_projects.map(&:name)).to match_array(['home:tom:Staging:A', 'home:tom:Staging:B']) }
+      it { expect(subject.staging_projects.map(&:name)).to contain_exactly('home:tom:Staging:A', 'home:tom:Staging:B') }
       it { expect(response).to redirect_to(staging_workflow_path(project)) }
       it { expect(subject.managers_group).to eq(managers_group) }
       it { expect(flash[:success]).not_to be_nil }

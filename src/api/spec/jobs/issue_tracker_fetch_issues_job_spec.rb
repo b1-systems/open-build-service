@@ -1,12 +1,6 @@
-require 'rails_helper'
 require 'webmock/rspec'
 
-# WARNING: If you change tests make sure you uncomment this line
-# and start a test backend. Some of the actions
-# require real backend answers for projects/packages.
-# CONFIG['global_write_through'] = true
-
-RSpec.describe IssueTrackerFetchIssuesJob, vcr: true do
+RSpec.describe IssueTrackerFetchIssuesJob, :vcr do
   include ActiveJob::TestHelper
 
   describe '#perform' do

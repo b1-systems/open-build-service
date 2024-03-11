@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe Webui::RequestHelper do
   let(:target_package) { create(:package) }
   let(:target_project) { target_package.project }
@@ -21,7 +19,7 @@ RSpec.describe Webui::RequestHelper do
 
     context 'for releasing a package' do
       let(:bs_request_with_maintenance_release_action) do
-        create(:bs_request_with_maintenance_release_action,
+        create(:bs_request_with_maintenance_release_actions,
                target_package: target_package,
                source_package: source_package)
       end

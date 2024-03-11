@@ -1,10 +1,7 @@
-require 'rails_helper'
 require 'webmock/rspec'
 require 'rantly/rspec_extensions'
-# WARNING: If you change #file_exists or #has_file test make sure
-# you uncomment the next line and start a test backend.
-# CONFIG['global_write_through'] = true
-RSpec.describe Package, vcr: true do
+
+RSpec.describe Package, :vcr do
   let(:user) { create(:confirmed_user, :with_home, login: 'tom') }
   let(:home_project) { user.home_project }
   let(:package) { create(:package, name: 'test_package', project: home_project) }
@@ -102,7 +99,7 @@ RSpec.describe Package, vcr: true do
       create(:relationship_package_user, user: user, package: package)
       create(:relationship_package_user, user: other_user, package: package)
 
-      expect(package.maintainers).to match_array([other_user, user])
+      expect(package.maintainers).to contain_exactly(other_user, user)
     end
 
     it 'resolves groups properly' do
@@ -118,7 +115,7 @@ RSpec.describe Package, vcr: true do
       create(:relationship_package_group_as_bugowner, group: group_bugowner, package: package)
       create(:relationship_package_group, group: group, package: package)
 
-      expect(package.maintainers).to match_array([other_user, other_user2])
+      expect(package.maintainers).to contain_exactly(other_user, other_user2)
     end
 
     it 'makes sure that no user is listed more than one time' do
@@ -129,7 +126,7 @@ RSpec.describe Package, vcr: true do
       create(:relationship_package_group, group: group_bugowner, package: package)
       create(:relationship_package_user, user: user, package: package)
 
-      expect(package.maintainers).to match_array([user])
+      expect(package.maintainers).to contain_exactly(user)
     end
 
     it 'returns users and the users of resolved groups' do
@@ -140,7 +137,7 @@ RSpec.describe Package, vcr: true do
       create(:relationship_package_group, group: group_bugowner, package: package)
       create(:relationship_package_user, user: other_user2, package: package)
 
-      expect(package.maintainers).to match_array([user, other_user, other_user2])
+      expect(package.maintainers).to contain_exactly(user, other_user, other_user2)
     end
   end
 
@@ -324,15 +321,6 @@ RSpec.describe Package, vcr: true do
     it { expect(package_with_file.source_path('icon', format: :html)).to eq('/source/home:tom/package_with_files/icon?format=html') }
   end
 
-  describe '#public_source_path' do
-    it { expect(package_with_file.public_source_path).to eq('/public/source/home:tom/package_with_files') }
-    it { expect(package_with_file.public_source_path('icon')).to eq('/public/source/home:tom/package_with_files/icon') }
-
-    it 'adds the format parameter to the url that was given to the method' do
-      expect(package_with_file.public_source_path('icon', format: :html)).to eq('/public/source/home:tom/package_with_files/icon?format=html')
-    end
-  end
-
   describe '.what_depends_on' do
     let(:repository) { 'openSUSE_Leap_42.1' }
     let(:architecture) { 'x86_64' }
@@ -390,7 +378,7 @@ RSpec.describe Package, vcr: true do
       end
 
       it 'returns an array with the dependencies' do
-        expect(result).to eq(['gcc6', 'xz'])
+        expect(result).to eq(%w[gcc6 xz])
       end
     end
 

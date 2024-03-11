@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe CommentPolicy do
   let(:anonymous_user) { create(:user_nobody) }
   let(:comment_author) { create(:confirmed_user, login: 'burdenski') }
@@ -12,12 +10,10 @@ RSpec.describe CommentPolicy do
   let(:request) { create(:bs_request_with_submit_action, target_package: package) }
   let(:comment_on_package) { create(:comment_package, commentable: package, user: comment_author) }
   let(:comment_on_request) { create(:comment_request, commentable: request, user: comment_author) }
-  let(:comment_deleted_user) { create(:comment_project, commentable: project, user: anonymous_user) }
+  let(:comment_deleted) { create(:comment_project, commentable: project, user: anonymous_user) }
 
   subject { CommentPolicy }
 
-  # rubocop:disable RSpec/RepeatedExample
-  # This cop is currently not recognizing the permissions block as separate test
   permissions :destroy? do
     it 'Not logged users cannot destroy comments' do
       expect(subject).not_to permit(nil, comment)
@@ -31,14 +27,21 @@ RSpec.describe CommentPolicy do
       expect(subject).to permit(comment_author, comment)
     end
 
-    it 'Logged users can destroy comments by deleted users' do
-      expect(subject).to permit(comment_author, comment_deleted_user)
+    it 'Anonymous users cannot destroy already deleted comments' do
+      expect(subject).not_to permit(nil, comment_deleted)
+    end
+
+    it 'Logged users cannot destroy already deleted comments' do
+      expect(subject).not_to permit(comment_author, comment_deleted)
+    end
+
+    it 'Admin cannot destroy already deleted comments' do
+      expect(subject).not_to permit(admin_user, comment_deleted)
     end
 
     it 'User cannot destroy comments of other user' do
       expect(subject).not_to permit(user, comment)
     end
-    # rubocop:enable RSpec/RepeatedExample
 
     context 'with a comment of a Package' do
       before do
@@ -71,8 +74,6 @@ RSpec.describe CommentPolicy do
     end
   end
 
-  # rubocop:disable RSpec/RepeatedExample
-  # This cop is currently not recognizing the permissions block as separate test
   permissions :update? do
     it 'an anonymous user cannot update comments' do
       expect(subject).not_to permit(nil, comment)
@@ -90,19 +91,108 @@ RSpec.describe CommentPolicy do
       expect(subject).not_to permit(other_user, comment)
     end
 
-    context 'with an anonymous user comment' do
-      it 'a normal user is unable to update an anonymous user comment' do
-        expect(subject).not_to permit(other_user, comment_deleted_user)
+    context 'with a deleted comment' do
+      it 'a normal user is unable to update a deleted comment' do
+        expect(subject).not_to permit(other_user, comment_deleted)
       end
 
-      it 'an admin user is unable to update an anonymous user comment' do
-        expect(subject).not_to permit(admin_user, comment_deleted_user)
+      it 'an admin user is unable to update a deleted comment' do
+        expect(subject).not_to permit(admin_user, comment_deleted)
       end
 
-      it 'an anonymous user is unable to update an anonymous user comment' do
-        expect(subject).not_to permit(anonymous_user, comment_deleted_user)
+      it 'an anonymous user is unable to update a deleted comment' do
+        expect(subject).not_to permit(anonymous_user, comment_deleted)
       end
     end
   end
-  # rubocop:enable RSpec/RepeatedExample
+
+  permissions :reply? do
+    it 'an anonymous user cannot reply to comments' do
+      expect(subject).not_to permit(nil, comment)
+    end
+
+    it 'an admin user can reply to other comments' do
+      expect(subject).to permit(admin_user, comment)
+    end
+
+    it 'a user can reply to comments' do
+      expect(subject).to permit(comment_author, comment)
+    end
+
+    context 'with a deleted comment' do
+      it 'a normal user is unable to reply to a deleted comment' do
+        expect(subject).not_to permit(other_user, comment_deleted)
+      end
+
+      it 'an admin user is unable to reply to a deleted comment' do
+        expect(subject).not_to permit(admin_user, comment_deleted)
+      end
+
+      it 'an anonymous user is unable to reply to a deleted comment' do
+        expect(subject).not_to permit(anonymous_user, comment_deleted)
+      end
+    end
+  end
+
+  permissions :moderate? do
+    it 'a not logged-in user cannot moderate comments' do
+      expect(subject).not_to permit(nil, comment)
+    end
+
+    it 'an anonymous user cannot moderate comments' do
+      expect(subject).not_to permit(anonymous_user, comment)
+    end
+
+    it 'a non-admin user cannot moderate comments' do
+      expect(subject).not_to permit(other_user, comment)
+    end
+
+    it 'an admin user can moderate comments' do
+      expect(subject).to permit(admin_user, comment)
+    end
+
+    context 'with a deleted comment' do
+      it 'no one is able to moderate a deleted comment' do
+        expect(subject).not_to permit(admin_user, comment_deleted)
+      end
+    end
+
+    context 'when the moderator is a staff member' do
+      let(:staff_user) { create(:staff_user) }
+
+      it 'an staff member can moderate comments' do
+        expect(subject).to permit(staff_user, comment)
+      end
+    end
+
+    context 'when the user has the moderator role assigned' do
+      let(:user_with_moderator_role) { create(:moderator) }
+
+      it 'can moderate comments' do
+        expect(subject).to permit(user_with_moderator_role, comment)
+      end
+    end
+  end
+
+  permissions :history? do
+    let(:staff_user) { create(:staff_user) }
+    let(:moderator) { create(:moderator) }
+    let(:comment_moderated) { create(:comment_project, commentable: project, moderated_at: DateTime.now.utc, moderator_id: moderator.id) }
+
+    before do
+      Flipper.enable(:content_moderation)
+    end
+
+    it { is_expected.to permit(other_user, comment) }
+    it { is_expected.not_to permit(other_user, comment_deleted) }
+    it { is_expected.not_to permit(other_user, comment_moderated) }
+
+    it { is_expected.to permit(moderator, comment_deleted) }
+    it { is_expected.to permit(admin_user, comment_deleted) }
+    it { is_expected.to permit(staff_user, comment_deleted) }
+
+    it { is_expected.to permit(moderator, comment_moderated) }
+    it { is_expected.to permit(admin_user, comment_moderated) }
+    it { is_expected.to permit(staff_user, comment_moderated) }
+  end
 end

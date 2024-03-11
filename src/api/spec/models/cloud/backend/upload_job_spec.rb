@@ -1,4 +1,3 @@
-require 'rails_helper'
 require 'webmock/rspec'
 
 RSpec.describe Cloud::Backend::UploadJob do
@@ -108,7 +107,7 @@ RSpec.describe Cloud::Backend::UploadJob do
     end
   end
 
-  describe '.find', vcr: true do
+  describe '.find', :vcr do
     let(:upload_job) { create(:upload_job, job_id: 1000, user: user) }
     let(:path) { "#{CONFIG['source_url']}/cloudupload?name=#{upload_job.job_id}" }
 

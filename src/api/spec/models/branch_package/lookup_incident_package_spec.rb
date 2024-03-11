@@ -1,6 +1,4 @@
-require 'rails_helper'
-
-RSpec.describe BranchPackage::LookupIncidentPackage, vcr: false do
+RSpec.describe BranchPackage::LookupIncidentPackage do
   let(:user) { create(:confirmed_user, :with_home, login: 'tom') }
 
   before do

@@ -12,7 +12,7 @@
       .dropdown#request-actions
         %button.btn.btn-outline-primary.btn-sm.dropdown-toggle.rounded-0{ 'aria-expanded' => 'false', 'data-bs-toggle' => 'dropdown',
                                                                           :type => 'button', 'data-boundary' => 'viewport' }
-          Select Action
+          = action[:name]
         %ul.dropdown-menu.dropdown-menu-start.scrollable-dropdown.pt-0
           %li.card-header.px-1.sticky-top
             %h6.dropdown-header
@@ -42,9 +42,11 @@
     %span#action-seen-by-user-wrapper
       = render ActionSeenByUserComponent.new(action: active_action, user: User.session!)
 
-.fst-italic= request_action_header(action, bs_request.creator)
+%p.fst-italic= request_action_header(action, bs_request.creator)
+- if active_action.target_releaseproject
+  %p.fst-italic Release in #{project_or_package_link(project: active_action.target_releaseproject)}
 
-- if active_action.type == 'add_role'
+- if %w[add_role set_bugowner].include?(active_action.type)
   :ruby
     parameters = { project: active_action.target_project, request_action_id: active_action.id, notification_id: @current_notification }
     roles_link = if active_action.target_package

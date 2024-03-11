@@ -39,7 +39,7 @@ http_interactions:
           <description></description>
           <person userid="tom" role="maintainer"/>
         </project>
-  recorded_at: Mon, 06 Jul 2020 13:49:19 GMT
+  recorded_at: Tue, 26 Sep 2023 14:23:53 GMT
 - request:
     method: put
     uri: http://backend:5352/source/home:tom/package_with_file/_meta?user=tom
@@ -47,8 +47,8 @@ http_interactions:
       encoding: UTF-8
       string: |
         <package name="package_with_file" project="home:tom">
-          <title>Endless Night</title>
-          <description>Fuga repellat amet facilis.</description>
+          <title>O Pioneers!</title>
+          <description>Quasi aut quia voluptates.</description>
         </package>
     headers:
       Accept-Encoding:
@@ -69,21 +69,21 @@ http_interactions:
       Connection:
       - close
       Content-Length:
-      - '153'
+      - '150'
     body:
       encoding: UTF-8
       string: |
         <package name="package_with_file" project="home:tom">
-          <title>Endless Night</title>
-          <description>Fuga repellat amet facilis.</description>
+          <title>O Pioneers!</title>
+          <description>Quasi aut quia voluptates.</description>
         </package>
-  recorded_at: Mon, 06 Jul 2020 13:49:19 GMT
+  recorded_at: Tue, 26 Sep 2023 14:23:53 GMT
 - request:
     method: put
     uri: http://backend:5352/source/home:tom/package_with_file/_config
     body:
       encoding: UTF-8
-      string: Atque sunt nobis. Non tempore ea. Exercitationem amet dolore.
+      string: A quaerat ab. Laborum consequuntur praesentium. Perferendis hic ea.
     headers:
       Accept-Encoding:
       - gzip;q=1.0,deflate;q=0.6,identity;q=0.3
@@ -108,20 +108,20 @@ http_interactions:
       encoding: UTF-8
       string: |
         <revision rev="1" vrev="1">
-          <srcmd5>eff1546648db180a7f6894bdf31ea21b</srcmd5>
+          <srcmd5>eb532c5365968a545bc82ecdb6251a15</srcmd5>
           <version>unknown</version>
-          <time>1594043359</time>
+          <time>1695738233</time>
           <user>unknown</user>
           <comment></comment>
           <requestid/>
         </revision>
-  recorded_at: Mon, 06 Jul 2020 13:49:19 GMT
+  recorded_at: Tue, 26 Sep 2023 14:23:53 GMT
 - request:
     method: put
     uri: http://backend:5352/source/home:tom/package_with_file/somefile.txt
     body:
       encoding: UTF-8
-      string: Enim velit ut. Odit eum debitis. Rerum aut nemo.
+      string: In qui enim. Beatae a neque. Aperiam eaque aut.
     headers:
       Accept-Encoding:
       - gzip;q=1.0,deflate;q=0.6,identity;q=0.3
@@ -146,14 +146,14 @@ http_interactions:
       encoding: UTF-8
       string: |
         <revision rev="2" vrev="2">
-          <srcmd5>0971bdd8eafb9c69fc3dd763e32ed63f</srcmd5>
+          <srcmd5>f95d40ce0bf550a0e9b469cf6bf9f5c0</srcmd5>
           <version>unknown</version>
-          <time>1594043359</time>
+          <time>1695738233</time>
           <user>unknown</user>
           <comment></comment>
           <requestid/>
         </revision>
-  recorded_at: Mon, 06 Jul 2020 13:49:19 GMT
+  recorded_at: Tue, 26 Sep 2023 14:23:53 GMT
 - request:
     method: get
     uri: http://backend:5352/source/home:tom/package_with_file
@@ -183,11 +183,11 @@ http_interactions:
     body:
       encoding: UTF-8
       string: |
-        <directory name="package_with_file" rev="2" vrev="2" srcmd5="0971bdd8eafb9c69fc3dd763e32ed63f">
-          <entry name="_config" md5="40796dddfd594622119433959e4604f8" size="61" mtime="1594043359"/>
-          <entry name="somefile.txt" md5="a4d93ad25109b14f529b5300861b39ee" size="48" mtime="1594043359"/>
+        <directory name="package_with_file" rev="2" vrev="2" srcmd5="f95d40ce0bf550a0e9b469cf6bf9f5c0">
+          <entry name="_config" md5="112164dc266079d556706ad8dc1496d6" size="67" mtime="1695738233"/>
+          <entry name="somefile.txt" md5="917d0255cc58be5a4f9d637caea2da43" size="47" mtime="1695738233"/>
         </directory>
-  recorded_at: Mon, 06 Jul 2020 13:49:19 GMT
+  recorded_at: Tue, 26 Sep 2023 14:23:53 GMT
 - request:
     method: get
     uri: http://backend:5352/source/home:tom/package_with_file
@@ -217,11 +217,11 @@ http_interactions:
     body:
       encoding: UTF-8
       string: |
-        <directory name="package_with_file" rev="2" vrev="2" srcmd5="0971bdd8eafb9c69fc3dd763e32ed63f">
-          <entry name="_config" md5="40796dddfd594622119433959e4604f8" size="61" mtime="1594043359"/>
-          <entry name="somefile.txt" md5="a4d93ad25109b14f529b5300861b39ee" size="48" mtime="1594043359"/>
+        <directory name="package_with_file" rev="2" vrev="2" srcmd5="f95d40ce0bf550a0e9b469cf6bf9f5c0">
+          <entry name="_config" md5="112164dc266079d556706ad8dc1496d6" size="67" mtime="1695738233"/>
+          <entry name="somefile.txt" md5="917d0255cc58be5a4f9d637caea2da43" size="47" mtime="1695738233"/>
         </directory>
-  recorded_at: Mon, 06 Jul 2020 13:49:19 GMT
+  recorded_at: Tue, 26 Sep 2023 14:23:53 GMT
 - request:
     method: post
     uri: http://backend:5352/source/home:tom/package_with_file?cmd=diff&expand=1&opackage=package_with_file&oproject=home:tom&rev=2&view=xml&withissues=1
@@ -253,10 +253,10 @@ http_interactions:
     body:
       encoding: UTF-8
       string: |
-        <sourcediff key="3b30cf2436777b030488772cabf2d2da">
-          <old project="home:tom" package="package_with_file" rev="2" srcmd5="0971bdd8eafb9c69fc3dd763e32ed63f"/>
-          <new project="home:tom" package="package_with_file" rev="2" srcmd5="0971bdd8eafb9c69fc3dd763e32ed63f"/>
+        <sourcediff key="51d4e36aabba4cb058c36acb05ce9325">
+          <old project="home:tom" package="package_with_file" rev="2" srcmd5="f95d40ce0bf550a0e9b469cf6bf9f5c0"/>
+          <new project="home:tom" package="package_with_file" rev="2" srcmd5="f95d40ce0bf550a0e9b469cf6bf9f5c0"/>
           <files/>
         </sourcediff>
-  recorded_at: Mon, 06 Jul 2020 13:49:19 GMT
-recorded_with: VCR 6.0.0
+  recorded_at: Tue, 26 Sep 2023 14:23:53 GMT
+recorded_with: VCR 6.2.0

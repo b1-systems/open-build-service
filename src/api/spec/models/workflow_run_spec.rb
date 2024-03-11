@@ -1,6 +1,4 @@
-require 'rails_helper'
-
-RSpec.describe WorkflowRun, vcr: true do
+RSpec.describe WorkflowRun, :vcr do
   describe '#save_scm_report_success' do
     let(:workflow_run) { create(:workflow_run) }
 
@@ -64,6 +62,8 @@ RSpec.describe WorkflowRun, vcr: true do
         subject
         expect(workflow_run.reload.status).to eql('fail')
       end
+
+      it { expect { subject }.to change(Event::WorkflowRunFail, :count).by(1) }
     end
 
     context 'when providing some other keys' do
@@ -85,28 +85,6 @@ RSpec.describe WorkflowRun, vcr: true do
       it 'marks the workflow run as failed' do
         subject
         expect(workflow_run.reload.status).to eql('fail')
-      end
-    end
-  end
-
-  describe '#scm_vendor' do
-    let(:workflow_run) { create(:workflow_run, request_headers: headers) }
-
-    subject { workflow_run.scm_vendor }
-
-    context 'when event is from GitHub' do
-      let(:headers) { "HTTP_X_GITHUB_EVENT_TYPE: pull_request\nHTTP_X_GITHUB_EVENT: pull_request\nHTTP_ACCEPT: application/xml" }
-
-      it 'identifies GitHub' do
-        expect(subject).to be(:github)
-      end
-    end
-
-    context 'when event is from Gitea' do
-      let(:headers) { "HTTP_X_GITEA_EVENT: pull_request\nHTTP_X_GITHUB_EVENT_TYPE: pull_request\nHTTP_X_GITHUB_EVENT: pull_request\nHTTP_ACCEPT: application/xml" }
-
-      it 'identifies Gitea' do
-        expect(subject).to be(:gitea)
       end
     end
   end

@@ -1,4 +1,3 @@
-# rubocop:disable Layout/LineLength
 # rubocop:disable Metrics/AbcSize
 # rubocop:disable Metrics/MethodLength
 # rubocop:disable Metrics/ClassLength
@@ -1540,7 +1539,7 @@ class MaintenanceTests < ActionDispatch::IntegrationTest
     assert_xml_tag parent: { tag: 'binarylist' }, tag: 'binary', attributes: { filename: 'package.rpm' }
     get '/source/BaseDistro2.0:LinkedUpdateProject/_project/_history'
     assert_response :success
-    assert_xml_tag parent: { tag: 'revision' },  tag: 'comment', content: "Releasing from project My:Maintenance:#{incident_id} the update My-oldname-2010-1"
+    assert_xml_tag parent: { tag: 'revision' }, tag: 'comment', content: "Releasing from project My:Maintenance:#{incident_id} the update My-oldname-2010-1"
     get "/source/BaseDistro2.0:LinkedUpdateProject/patchinfo.#{incident_id}/_meta"
     assert_response :success
     # must not build in Update project
@@ -2265,7 +2264,7 @@ class MaintenanceTests < ActionDispatch::IntegrationTest
     reqid = node['id']
 
     # got locked
-    get '/source/home:tom:test/_meta'
+    get '/source/home:tom:test/pack/_meta'
     assert_response :success
     assert_xml_tag(parent: { tag: 'lock' }, tag: 'enable')
     assert_no_xml_tag(parent: { tag: 'lock' }, tag: 'disable') # disable got removed
@@ -2280,7 +2279,7 @@ class MaintenanceTests < ActionDispatch::IntegrationTest
     assert_response :success
 
     # disable lock and cleanup
-    get '/source/home:tom:test/_meta'
+    get '/source/home:tom:test/pack/_meta'
     assert_response :success
     assert_no_xml_tag(parent: { tag: 'lock' }, tag: 'enable')
 
@@ -2619,4 +2618,3 @@ class MaintenanceTests < ActionDispatch::IntegrationTest
     assert_response :success
   end
 end
-# rubocop:enable Layout/LineLength

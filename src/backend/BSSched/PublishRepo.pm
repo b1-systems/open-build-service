@@ -167,8 +167,9 @@ sub prpfinished {
 
   my $seen_binary;
   my $singleexport;
-  $singleexport = $bconf->{'singleexport'} if $bconf;
-  $singleexport = 1 if $bconf && grep {$_ eq 'singleexport'} @{$bconf->{'repotype'} || []};
+  $singleexport = $bconf->{'singleexport'} if $bconf;						# obsolete
+  $singleexport = 1 if $bconf && grep {$_ eq 'singleexport'} @{$bconf->{'repotype'} || []};	# obsolete
+  $singleexport = 1 if $bconf && $bconf->{'publishflags:singleexport'};
   if ($singleexport) {
     print "    prp $prp is singleexport\n";
     $seen_binary = {};
@@ -598,6 +599,7 @@ sub publishdelta {
   return 0 unless @s && $s[7];          # zero size means skip it
   return 0 unless -s "$dst/$delta->[0].dseq";   # need dseq file
   my $deltaname = mkdeltaname($delta->[1], $bin);
+  return 0 if length("${rbin}::$deltaname") > 240;	# limit file name size
   my $deltaseqname = $deltaname;
   $deltaseqname =~ s/\.drpm$//;
   $deltaseqname .= '.dseq';

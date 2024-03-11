@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.shared_context 'some assigned reviews and some unassigned reviews' do
   let!(:user) { create(:user) }
 
@@ -32,7 +30,7 @@ RSpec.describe Review do
 
   describe 'validations' do
     it 'is not allowed to specify by_user and any other reviewable' do
-      [:by_group, :by_project, :by_package].each do |reviewable|
+      %i[by_group by_project by_package].each do |reviewable|
         review = Review.create(:by_user => user.login, reviewable => 'not-existent-reviewable')
         expect(review.errors.messages[:base])
           .to eq(['it is not allowed to have more than one reviewer entity: by_user, by_group, by_project'])
@@ -40,7 +38,7 @@ RSpec.describe Review do
     end
 
     it 'is not allowed to specify by_group and any other reviewable' do
-      [:by_project, :by_package].each do |reviewable|
+      %i[by_project by_package].each do |reviewable|
         review = Review.create(:by_group => group.title, reviewable => 'not-existent-reviewable')
         expect(review.errors.messages[:base])
           .to eq(['it is not allowed to have more than one reviewer entity: by_user, by_group, by_project'])
@@ -53,7 +51,7 @@ RSpec.describe Review do
 
     subject { Review.assigned }
 
-    it { is_expected.to match_array([review_assigned1, review_assigned2]) }
+    it { is_expected.to contain_exactly(review_assigned1, review_assigned2) }
   end
 
   describe '.unassigned' do
@@ -61,7 +59,7 @@ RSpec.describe Review do
 
     subject { Review.unassigned }
 
-    it { is_expected.to match_array([review_unassigned1, review_unassigned2]) }
+    it { is_expected.to contain_exactly(review_unassigned1, review_unassigned2) }
   end
 
   describe '.set_associations' do
@@ -344,14 +342,15 @@ RSpec.describe Review do
 
   describe '#update_caches' do
     RSpec.shared_examples "the subject's cache is reset when it's review changes" do
+      let!(:cache_key) { subject.cache_key_with_version }
+
       before do
-        @cache_key = subject.cache_key_with_version
         review.state = :accepted
         review.save
         subject.reload
       end
 
-      it { expect(subject.cache_key_with_version).not_to eq(@cache_key) }
+      it { expect(subject.cache_key_with_version).not_to eq(cache_key) }
     end
 
     context 'by_user' do

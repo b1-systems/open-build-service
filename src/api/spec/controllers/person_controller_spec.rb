@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe PersonController do
   let(:user) { create(:confirmed_user) }
   let(:admin_user) { create(:admin_user) }
@@ -26,29 +24,29 @@ RSpec.describe PersonController do
         get :get_userinfo, params: { login: user.login }
       end
 
-      it { expect(response.body).to have_selector('person > login', text: user.login) }
-      it { expect(response.body).to have_selector('person > email', text: user.email) }
-      it { expect(response.body).to have_selector('person > realname', text: user.realname) }
-      it { expect(response.body).to have_selector('person > state', text: 'confirmed') }
+      it { expect(response.body).to have_css('person > login', text: user.login) }
+      it { expect(response.body).to have_css('person > email', text: user.email) }
+      it { expect(response.body).to have_css('person > realname', text: user.realname) }
+      it { expect(response.body).to have_css('person > state', text: 'confirmed') }
 
       it 'shows not the ignore_auth_services flag' do
-        expect(response.body).to have_selector('person > ignore_auth_services', text: user.ignore_auth_services, count: 0)
+        expect(response.body).to have_css('person > ignore_auth_services', text: user.ignore_auth_services, count: 0)
       end
     end
 
     context 'called by an admin' do
       before do
-        login user
+        login admin_user
         get :get_userinfo, params: { login: user.login }
       end
 
-      it { expect(response.body).to have_selector('person > login', text: user.login) }
-      it { expect(response.body).to have_selector('person > email', text: user.email) }
-      it { expect(response.body).to have_selector('person > realname', text: user.realname) }
-      it { expect(response.body).to have_selector('person > state', text: 'confirmed') }
+      it { expect(response.body).to have_css('person > login', text: user.login) }
+      it { expect(response.body).to have_css('person > email', text: user.email) }
+      it { expect(response.body).to have_css('person > realname', text: user.realname) }
+      it { expect(response.body).to have_css('person > state', text: 'confirmed') }
 
       it 'shows not the ignore_auth_services flag' do
-        expect(response.body).to have_selector('person > ignore_auth_services', text: user.ignore_auth_services, count: 0)
+        expect(response.body).to have_css('person > ignore_auth_services', text: user.ignore_auth_services, count: 0)
       end
     end
   end

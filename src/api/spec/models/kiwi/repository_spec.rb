@@ -1,4 +1,3 @@
-require 'rails_helper'
 require 'rantly/rspec_extensions'
 
 RSpec.describe Kiwi::Repository do
@@ -31,8 +30,8 @@ RSpec.describe Kiwi::Repository do
         expect(subject).to allow_value('obsrepositories:/').for(:source_path)
       end
 
-      ['dir', 'iso', 'smb', 'this'].each do |protocol|
-        it 'valid' do
+      it 'validates "dir", "iso", "smb", and "this" protocols' do
+        %w[dir iso smb this].each do |protocol|
           property_of do
             protocol + '://' + sized(range(1, 199)) { string(/./) }
           end.check(3) do |string|
@@ -41,8 +40,8 @@ RSpec.describe Kiwi::Repository do
         end
       end
 
-      ['ftp', 'http', 'https', 'plain'].each do |protocol|
-        it 'valid' do
+      it 'validates "ftp", "http", "https" and "plain" protocols' do
+        %w[ftp http https plain].each do |protocol|
           property_of do
             # TODO: improve regular expression to generate the URI
             protocol + '://' + sized(range(1, 199)) { string(/\w/) }
@@ -79,14 +78,14 @@ RSpec.describe Kiwi::Repository do
           index = range(0, (string.length - 3))
           string[index] = ':'
           string[index + 1] = string[index + 2] = '/'
-          guard(['ftp', 'http', 'https', 'plain', 'dir', 'iso', 'smb', 'this', 'obs'].exclude?(string[0..index - 1]))
+          guard(%w[ftp http https plain dir iso smb this obs].exclude?(string[0..index - 1]))
           string
         end.check(3) do |string|
           expect(subject).not_to allow_value(string).for(:source_path)
         end
       end
 
-      ['ftp', 'http', 'https', 'plain', 'obs'].each do |protocol|
+      %w[ftp http https plain obs].each do |protocol|
         it 'not valid when has `{`' do
           property_of do
             string = sized(range(1, 199)) { string(/\w/) }

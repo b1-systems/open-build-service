@@ -33,8 +33,17 @@ namespace :dev do
     end
   end
 
+  task test_environment: :environment do
+    unless Rails.env.test?
+      puts "You are running this rake task in #{Rails.env} environment."
+      puts 'Please only run this task with RAILS_ENV=test'
+      puts 'otherwise it will destroy your database data.'
+      exit(1)
+    end
+  end
+
   desc 'Bootstrap the application'
-  task :bootstrap, [:old_test_suite] => [:prepare, :environment] do |_t, args|
+  task :bootstrap, [:old_test_suite] => %i[prepare environment] do |_t, args|
     args.with_defaults(old_test_suite: false)
 
     begin
@@ -77,6 +86,8 @@ namespace :dev do
       include FactoryBot::Syntax::Methods
       require 'active_support/testing/time_helpers'
       include ActiveSupport::Testing::TimeHelpers
+      require 'tasks/dev/test_data/maintenance'
+      include TestData::Maintenance
 
       Rails.cache.clear
       Rake::Task['db:reset'].invoke
@@ -213,8 +224,11 @@ namespace :dev do
       # Trigger package builds for home:Admin
       home_admin.store
 
-      # Create notifications by running the `dev:notifications:data` task two times
-      Rake::Task['dev:notifications:data'].invoke(2)
+      # Create some Reports
+      Rake::Task['dev:reports:data'].invoke
+
+      # Create some Decisions on existing Reports
+      Rake::Task['dev:reports:decisions'].invoke
 
       # Create a workflow token, some workflow runs and their related data
       Rake::Task['dev:workflows:create_workflow_runs'].invoke
@@ -226,13 +240,16 @@ namespace :dev do
       Rake::Task['dev:requests:request_with_multiple_submit_actions_builds_and_diffs'].invoke
 
       # Create a maintenance environment with maintenance requests
-      Rake::Task['dev:test_data:maintenance'].invoke
+      create_maintenance_setup
 
       # Create a request with a delete request action
       Rake::Task['dev:requests:request_with_delete_action'].invoke
 
       # Create news
       Rake::Task['dev:news:data'].invoke
+
+      # Create notifications by running the `dev:notifications:data` task two times
+      Rake::Task['dev:notifications:data'].invoke(2)
     end
   end
 end

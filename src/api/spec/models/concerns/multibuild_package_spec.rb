@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 # Test class
 class TestMultibuildPackage
   include MultibuildPackage
@@ -67,8 +65,7 @@ RSpec.describe MultibuildPackage do
     end
 
     before do
-      allow(test_class_instance).to receive(:multibuild?).and_return(true)
-      allow(test_class_instance).to receive(:source_file).and_return(multibuild_xml)
+      allow(test_class_instance).to receive_messages(multibuild?: true, source_file: multibuild_xml)
     end
 
     describe '#multibuild_flavors' do

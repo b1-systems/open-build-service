@@ -1,6 +1,6 @@
 require 'browser_helper'
 
-RSpec.describe 'Requests_Submissions', js: true, vcr: true do
+RSpec.describe 'Requests_Submissions', :js, :vcr do
   let(:submitter) { create(:confirmed_user, :with_home, login: 'madam_submitter') }
   let(:source_project) { submitter.home_project }
   let(:source_package) { create(:package_with_file, name: 'Quebec', project: source_project) }
@@ -81,12 +81,11 @@ RSpec.describe 'Requests_Submissions', js: true, vcr: true do
         login submitter
 
         # TODO: Create a factory for this (branch a package and save a new file in it - to be able to submit the branched package)
-        BranchPackage.new(
-          project: source_project.name,
-          package: source_package.name,
-          target_project: source_project.name,
-          target_package: branched_package_name
-        ).branch
+        create(:branch_package,
+               project: source_project.name,
+               package: source_package.name,
+               target_project: source_project.name,
+               target_package: branched_package_name)
         Package.find_by(project_id: source_project.id, name: branched_package_name).save_file(filename: 'new_file', file: 'I am a new file')
       end
 
@@ -104,7 +103,7 @@ RSpec.describe 'Requests_Submissions', js: true, vcr: true do
       end
     end
 
-    describe 'when under the beta program', beta: true do
+    describe 'when under the beta program', :beta do
       describe 'submit several packages at once against a factory staging project' do
         let!(:factory) { create(:project, name: 'openSUSE:Factory') }
         let!(:staging_workflow) { create(:staging_workflow, project: factory) }
@@ -140,7 +139,7 @@ RSpec.describe 'Requests_Submissions', js: true, vcr: true do
           login receiver
           visit request_show_path(bs_request.number)
 
-          expect(page).to have_text('Select Action')
+          expect(page).to have_text(bs_request.bs_request_actions.first[:name])
           expect(page).to have_text('Next')
           expect(page).to have_text("(of #{bs_request.bs_request_actions.count})")
           expect(page).to have_css('.bg-staging')

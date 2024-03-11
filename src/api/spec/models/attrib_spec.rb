@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe Attrib do
   let(:user) { create(:confirmed_user) }
   let(:project) { create(:project) }
@@ -113,8 +111,8 @@ RSpec.describe Attrib do
       end
 
       context 'values list' do
-        let(:values1) { ['blue', 'green'] }
-        let(:values2) { ['green', 'blue'] }
+        let(:values1) { %w[blue green] }
+        let(:values2) { %w[green blue] }
 
         it 'resorts attribute values' do
           expect(attribute.update_with_associations(values1, [])).to be(true)
@@ -140,7 +138,7 @@ RSpec.describe Attrib do
       subject { build(:attrib, project: project, attrib_type: attrib_type, values: [attrib_value]) }
 
       it {
-        expect(subject.errors.full_messages).to match_array(["Values Value 'Not allowed value' is not allowed. Please use one of: Allowed value"])
+        expect(subject.errors.full_messages).to contain_exactly("Values Value 'Not allowed value' is not allowed. Please use one of: Allowed value")
       }
     end
 
@@ -151,7 +149,7 @@ RSpec.describe Attrib do
         let(:attrib_value) { build(:attrib_value, value: '2022-01-50') }
 
         it {
-          expect(subject.errors.full_messages).to match_array(["Value '2022-01-50' couldn't be parsed: 'argument out of range'"])
+          expect(subject.errors.full_messages).to contain_exactly("Value '2022-01-50' couldn't be parsed: 'argument out of range'")
         }
       end
 
@@ -159,7 +157,7 @@ RSpec.describe Attrib do
         let(:attrib_value) { build(:attrib_value, value: '2022-01-01 12:10 wrong_timezone') }
 
         it {
-          expect(subject.errors.full_messages).to match_array(["Value '2022-01-01 12:10 wrong_timezone' contains a non-valid timezone"])
+          expect(subject.errors.full_messages).to contain_exactly("Value '2022-01-01 12:10 wrong_timezone' contains a non-valid timezone")
         }
       end
     end
@@ -170,7 +168,7 @@ RSpec.describe Attrib do
 
       subject { build(:attrib, project: project, attrib_type: attrib_type, issues: [issue]) }
 
-      it { expect(subject.errors.full_messages).to match_array(["Issues can't have issues"]) }
+      it { expect(subject.errors.full_messages).to contain_exactly("Issues can't have issues") }
     end
 
     describe '#validate_allowed_values_for_attrib_type' do
@@ -178,7 +176,7 @@ RSpec.describe Attrib do
 
       subject { build(:attrib, project: project, attrib_type: attrib_type, values: []) }
 
-      it { expect(subject.errors.full_messages).to match_array(['Values has 0 values, but only 1 are allowed']) }
+      it { expect(subject.errors.full_messages).to contain_exactly('Values has 0 values, but only 1 are allowed') }
     end
   end
 end

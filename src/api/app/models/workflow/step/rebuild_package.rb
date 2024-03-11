@@ -1,13 +1,14 @@
 class Workflow::Step::RebuildPackage < Workflow::Step
   include Triggerable
 
-  REQUIRED_KEYS = [:project, :package].freeze
+  REQUIRED_KEYS = %i[project package].freeze
 
   attr_reader :project_name, :package_name
 
   validate :validate_project_and_package_name
 
   def call
+    return if scm_webhook.closed_merged_pull_request? || scm_webhook.reopened_pull_request?
     return unless valid?
 
     # Call Triggerable method to set all the elements needed for rebuilding
@@ -20,6 +21,7 @@ class Workflow::Step::RebuildPackage < Workflow::Step
 
     Pundit.authorize(@token.executor, @token, :rebuild?)
     rebuild_package
+    Workflows::ScmEventSubscriptionCreator.new(token, workflow_run, scm_webhook, @package).call
   end
 
   def set_project_name
@@ -33,7 +35,7 @@ class Workflow::Step::RebuildPackage < Workflow::Step
   private
 
   def package_find_options
-    { use_source: false, follow_project_links: true, follow_multibuild: true }
+    { use_source: false, follow_multibuild: true }
   end
 
   def rebuild_package

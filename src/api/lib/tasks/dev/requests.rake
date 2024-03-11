@@ -32,6 +32,9 @@ namespace :dev do
         source_package: source_package_a
       )
 
+      target_package_b = Package.where(name: 'package_b', project: target_project).first ||
+                         create(:package, name: 'package_b', project: target_project)
+
       # Create more actions to submit new files from different packages to package_b
       ('b'..'z').each_with_index do |char, index|
         figure = (index + 1).to_s.rjust(2, '0') # Generate the last two figures for the issue code
@@ -39,9 +42,6 @@ namespace :dev do
 
         source_package = Package.where(name: "package_#{char}", project: source_project).first ||
                          create(:package_with_files, name: "package_#{char}", project: source_project, changes_file_content: changes_file_content)
-
-        target_package_b = Package.where(name: 'package_b', project: target_project).first ||
-                           create(:package, name: 'package_b', project: target_project)
 
         action_attributes = {
           source_package: source_package,
@@ -65,6 +65,28 @@ namespace :dev do
       bs_req_action = build(:bs_request_action, action_attributes)
       bs_req_action.save! if bs_req_action.valid?
 
+      # Create an action to set a user as bugowner
+      action_attributes = {
+        target_project: target_project,
+        target_package: target_package_b,
+        person_name: 'user_1',
+        type: 'set_bugowner',
+        bs_request: request
+      }
+      bs_req_action = build(:bs_request_action, action_attributes)
+      bs_req_action.save! if bs_req_action.valid?
+
+      # Create an action to set a group as bugowner
+      action_attributes = {
+        target_project: target_project,
+        target_package: target_package_a,
+        group_name: 'group_1',
+        type: 'set_bugowner',
+        bs_request: request
+      }
+      bs_req_action = build(:bs_request_action, action_attributes)
+      bs_req_action.save! if bs_req_action.valid?
+
       create(:bs_request_action_delete,
              target_project: target_project,
              bs_request: request)
@@ -82,7 +104,7 @@ namespace :dev do
 
       # Current devel package
       servers_project = Project.find_by(name: 'servers') || create(:project, name: 'servers')
-      apache2_servers = Package.find_by_project_and_name(servers_project.name, 'apache2') || create(:package, project: servers_project, name: 'apache2')
+      apache2_servers = Package.find_by_project_and_name(servers_project.name, 'apache2') || create(:package_with_file, project: servers_project, name: 'apache2')
 
       # Future devel package (source)
       # source_project -> home:Admin:branches:openSUSE:Factory
@@ -172,7 +194,7 @@ namespace :dev do
       admin = User.get_default_admin
       home_admin_project = RakeSupport.find_or_create_project(admin.home_project_name, admin)
 
-      target_package = create(:package, project: home_admin_project, name: Faker::Lorem.word)
+      target_package = create(:package, project: home_admin_project, name: "#{Faker::Lorem.word}_#{Time.now.to_i}")
       request = create(:delete_bs_request, target_package: target_package, creator: iggy)
 
       puts "* Request with delete action #{request.number} has been created."

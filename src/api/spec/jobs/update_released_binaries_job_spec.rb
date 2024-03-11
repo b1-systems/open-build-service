@@ -1,9 +1,4 @@
-require 'rails_helper'
-# WARNING: If you change #file_exists or #has_file test make sure
-# you uncomment the next line and start a test backend.
-# CONFIG['global_write_through'] = true
-
-RSpec.describe UpdateReleasedBinariesJob, vcr: true do
+RSpec.describe UpdateReleasedBinariesJob, :vcr do
   describe '#perform' do
     let!(:project) { create(:project, name: 'apache') }
     let!(:repository) { create(:repository, name: 'mod_ssl', project: project, architectures: ['i586']) }
@@ -37,9 +32,6 @@ RSpec.describe UpdateReleasedBinariesJob, vcr: true do
       before do
         allow(BinaryRelease).to receive(:update_binary_releases).and_raise(StandardError)
         allow($stdout).to receive(:write) # Needed to avoid the puts of the error method
-      end
-
-      before do
         allow(Airbrake).to receive(:notify)
       end
 

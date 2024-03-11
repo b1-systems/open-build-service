@@ -1,11 +1,6 @@
-require 'rails_helper'
 require 'webmock/rspec'
 
-# WARNING: Some tests require real backend answers, so make sure you uncomment
-# this line and start a test backend.
-# CONFIG['global_write_through'] = true
-
-RSpec.describe Kiwi::Image, vcr: true do
+RSpec.describe Kiwi::Image, :vcr do
   include_context 'a kiwi image xml'
   include_context 'an invalid kiwi image xml'
 
@@ -318,8 +313,7 @@ RSpec.describe Kiwi::Image, vcr: true do
       subject { Nokogiri::XML::Document.parse(kiwi_image.to_xml) }
 
       before do
-        allow(package).to receive(:kiwi_image_file).and_return('config.kiwi')
-        allow(package).to receive(:source_file).and_return(kiwi_xml)
+        allow(package).to receive_messages(kiwi_image_file: 'config.kiwi', source_file: kiwi_xml)
         kiwi_image.package = package
         kiwi_image.save
       end
@@ -338,8 +332,7 @@ RSpec.describe Kiwi::Image, vcr: true do
       subject { Nokogiri::XML::Document.parse(kiwi_image.to_xml) }
 
       before do
-        allow(package).to receive(:kiwi_image_file).and_return('config.kiwi')
-        allow(package).to receive(:source_file).and_return(Kiwi::Image::DEFAULT_KIWI_BODY)
+        allow(package).to receive_messages(kiwi_image_file: 'config.kiwi', source_file: Kiwi::Image::DEFAULT_KIWI_BODY)
         kiwi_image.save
         kiwi_image.package = package
         kiwi_image.package_groups << create(:kiwi_package_group_non_empty, kiwi_type: 'image')
@@ -356,7 +349,7 @@ RSpec.describe Kiwi::Image, vcr: true do
     context 'without a package' do
       it { expect(kiwi_image.write_to_backend).to be(false) }
 
-      it 'will not call save! method' do
+      it 'does not call save! method' do
         expect(kiwi_image).not_to receive(:save!)
         kiwi_image.write_to_backend
       end
@@ -458,26 +451,26 @@ RSpec.describe Kiwi::Image, vcr: true do
     context 'with use_project_repositories set' do
       subject { Kiwi::Image.binaries_available(project.name, true, []) }
 
-      it { expect(subject.keys).to match_array(['package1', 'package2', 'package3']) }
-      it { expect(subject['package1']).to match_array(['i586', 'x86_64']) }
-      it { expect(subject['package2']).to match_array(['i586']) }
-      it { expect(subject['package3']).to match_array(['x86_64']) }
+      it { expect(subject.keys).to contain_exactly('package1', 'package2', 'package3') }
+      it { expect(subject['package1']).to contain_exactly('i586', 'x86_64') }
+      it { expect(subject['package2']).to contain_exactly('i586') }
+      it { expect(subject['package3']).to contain_exactly('x86_64') }
     end
 
     context 'with OBS and "normal" repositories set' do
       subject { Kiwi::Image.binaries_available(project.name, false, ['obs://home:tom/standard', 'http://example.com/']) }
 
-      it { expect(subject.keys).to match_array(['package1', 'package3', 'package4']) }
-      it { expect(subject['package1']).to match_array(['x86_64']) }
-      it { expect(subject['package3']).to match_array(['i586']) }
-      it { expect(subject['package4']).to match_array(['i586', 'x86_64']) }
+      it { expect(subject.keys).to contain_exactly('package1', 'package3', 'package4') }
+      it { expect(subject['package1']).to contain_exactly('x86_64') }
+      it { expect(subject['package3']).to contain_exactly('i586') }
+      it { expect(subject['package4']).to contain_exactly('i586', 'x86_64') }
     end
   end
 
   describe '#find_binaries_by_name' do
     let(:binaries_available_sample) do
-      { 'apache' => ['i586', 'x86_64'], 'apache2' => ['x86_64'],
-        'appArmor' => ['i586', 'x86_64'], 'bcrypt' => ['x86_64'] }
+      { 'apache' => %w[i586 x86_64], 'apache2' => ['x86_64'],
+        'appArmor' => %w[i586 x86_64], 'bcrypt' => ['x86_64'] }
     end
 
     before do
@@ -489,11 +482,11 @@ RSpec.describe Kiwi::Image, vcr: true do
     it { expect(subject.find_binaries_by_name('', 'project', [], use_project_repositories: true)).to eq(binaries_available_sample) }
 
     it do
-      expect(subject.find_binaries_by_name('ap', 'project', [], use_project_repositories: true)).to eq('apache' => ['i586', 'x86_64'],
-                                                                                                       'apache2' => ['x86_64'], 'appArmor' => ['i586', 'x86_64'])
+      expect(subject.find_binaries_by_name('ap', 'project', [], use_project_repositories: true)).to eq('apache' => %w[i586 x86_64],
+                                                                                                       'apache2' => ['x86_64'], 'appArmor' => %w[i586 x86_64])
     end
 
-    it { expect(subject.find_binaries_by_name('app', 'project', [], use_project_repositories: true)).to eq('appArmor' => ['i586', 'x86_64']) }
+    it { expect(subject.find_binaries_by_name('app', 'project', [], use_project_repositories: true)).to eq('appArmor' => %w[i586 x86_64]) }
     it { expect(subject.find_binaries_by_name('b', 'project', [], use_project_repositories: true)).to eq('bcrypt' => ['x86_64']) }
     it { expect(subject.find_binaries_by_name('c', 'project', [], use_project_repositories: true)).to be_empty }
   end

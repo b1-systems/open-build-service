@@ -1,6 +1,4 @@
-require 'rails_helper'
-
-RSpec.describe Person::TokenController, vcr: false do
+RSpec.describe Person::TokenController do
   let(:user) { create(:user_with_service_token, :with_home) }
   let(:other_user) { create(:confirmed_user) }
 
@@ -30,7 +28,7 @@ RSpec.describe Person::TokenController, vcr: false do
     context 'called for a user that does not exist' do
       before do
         login user
-        get :index, params: { login: 'non-existant-user' }, format: :xml
+        get :index, params: { login: 'non-existent-user' }, format: :xml
       end
 
       it { expect(response).not_to render_template(:index) }
@@ -53,18 +51,46 @@ RSpec.describe Person::TokenController, vcr: false do
       end
     end
 
+    context 'called with only project parameter' do
+      before do
+        login user
+      end
+
+      subject { post :create, params: { login: user.login, project: user.home_project, operation: 'rebuild' }, format: :xml }
+
+      it 'creates a global token' do
+        expect { subject }.to change { user.tokens.count }.by(1)
+        expect(response).to have_http_status(:success)
+      end
+    end
+
+    context 'called with only package parameter' do
+      before do
+        login user
+      end
+
+      subject { post :create, params: { login: user.login, package: 'test', operation: 'create' }, format: :xml }
+
+      it 'does not create a token' do
+        expect { subject }.not_to(change { user.tokens.count })
+        expect(response).to have_http_status(:bad_request)
+      end
+    end
+
     context 'called with project and package parameter' do
       let!(:package) { create(:package, project: user.home_project) }
 
       before do
         login user
-        post :create, params: { login: user.login, package: package, project: package.project, operation: 'runservice' }, format: :xml
       end
 
+      subject { post :create, params: { login: user.login, package: package, project: package.project, operation: 'runservice' }, format: :xml }
+
       it { expect(response).to have_http_status(:success) }
-      it { expect(response).to render_template(:create) }
-      it { expect(user.tokens.where(package: package)).to exist }
-      it { expect(assigns(:token)).to eq(package.token) }
+
+      it 'creates a token' do
+        expect { subject }.to change { user.tokens.count }.by(+1)
+      end
     end
 
     context 'operation is workflow' do

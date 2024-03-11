@@ -39,15 +39,15 @@ http_interactions:
           <description></description>
           <person userid="Iggy" role="maintainer"/>
         </project>
-  recorded_at: Mon, 31 Jan 2022 15:05:08 GMT
+  recorded_at: Mon, 07 Aug 2023 10:14:14 GMT
 - request:
     method: put
-    uri: http://backend:5352/source/foo_project/_meta?user=user_7
+    uri: http://backend:5352/source/foo_project/_meta?user=user_135
     body:
       encoding: UTF-8
       string: |
         <project name="foo_project">
-          <title>The Wings of the Dove</title>
+          <title>The Far-Distant Oxus</title>
           <description/>
           <person userid="Iggy" role="maintainer"/>
         </project>
@@ -70,25 +70,25 @@ http_interactions:
       Connection:
       - close
       Content-Length:
-      - '153'
+      - '152'
     body:
       encoding: UTF-8
       string: |
         <project name="foo_project">
-          <title>The Wings of the Dove</title>
+          <title>The Far-Distant Oxus</title>
           <description></description>
           <person userid="Iggy" role="maintainer"/>
         </project>
-  recorded_at: Mon, 31 Jan 2022 15:05:08 GMT
+  recorded_at: Mon, 07 Aug 2023 10:14:15 GMT
 - request:
     method: put
-    uri: http://backend:5352/source/foo_project/bar_package/_meta?user=user_8
+    uri: http://backend:5352/source/foo_project/bar_package/_meta?user=user_136
     body:
       encoding: UTF-8
       string: |
         <package name="bar_package" project="foo_project">
-          <title>Let Us Now Praise Famous Men</title>
-          <description>Voluptas eum neque recusandae.</description>
+          <title>The Wind's Twelve Quarters</title>
+          <description>Molestias quam et repellat.</description>
         </package>
     headers:
       Accept-Encoding:
@@ -109,22 +109,21 @@ http_interactions:
       Connection:
       - close
       Content-Length:
-      - '168'
+      - '163'
     body:
       encoding: UTF-8
       string: |
         <package name="bar_package" project="foo_project">
-          <title>Let Us Now Praise Famous Men</title>
-          <description>Voluptas eum neque recusandae.</description>
+          <title>The Wind's Twelve Quarters</title>
+          <description>Molestias quam et repellat.</description>
         </package>
-  recorded_at: Mon, 31 Jan 2022 15:05:08 GMT
+  recorded_at: Mon, 07 Aug 2023 10:14:15 GMT
 - request:
     method: put
     uri: http://backend:5352/source/foo_project/bar_package/_config
     body:
       encoding: UTF-8
-      string: Consequatur officiis dolor. Dolorum occaecati alias. Rerum cupiditate
-        possimus.
+      string: Omnis enim voluptatum. Ea ad iusto. Voluptas odit ut.
     headers:
       Accept-Encoding:
       - gzip;q=1.0,deflate;q=0.6,identity;q=0.3
@@ -148,21 +147,21 @@ http_interactions:
     body:
       encoding: UTF-8
       string: |
-        <revision rev="23" vrev="23">
-          <srcmd5>9acf66fcd49d06b07316aab5b11f9410</srcmd5>
+        <revision rev="97" vrev="97">
+          <srcmd5>2c72a912a5d41dada0c740d22b67dc34</srcmd5>
           <version>unknown</version>
-          <time>1643641508</time>
+          <time>1691403255</time>
           <user>unknown</user>
           <comment></comment>
           <requestid/>
         </revision>
-  recorded_at: Mon, 31 Jan 2022 15:05:08 GMT
+  recorded_at: Mon, 07 Aug 2023 10:14:15 GMT
 - request:
     method: put
     uri: http://backend:5352/source/foo_project/bar_package/somefile.txt
     body:
       encoding: UTF-8
-      string: Id qui provident. Eveniet et debitis. Ad qui maxime.
+      string: Dolores nulla eveniet. Doloremque doloribus occaecati. Cum soluta qui.
     headers:
       Accept-Encoding:
       - gzip;q=1.0,deflate;q=0.6,identity;q=0.3
@@ -186,13 +185,47 @@ http_interactions:
     body:
       encoding: UTF-8
       string: |
-        <revision rev="24" vrev="24">
-          <srcmd5>e8351b49b29b7484698b13a28d4c9427</srcmd5>
+        <revision rev="98" vrev="98">
+          <srcmd5>cf0b3ddb52c20353b96bc539b03026a6</srcmd5>
           <version>unknown</version>
-          <time>1643641508</time>
+          <time>1691403255</time>
           <user>unknown</user>
           <comment></comment>
           <requestid/>
         </revision>
-  recorded_at: Mon, 31 Jan 2022 15:05:09 GMT
-recorded_with: VCR 6.0.0
+  recorded_at: Mon, 07 Aug 2023 10:14:15 GMT
+- request:
+    method: post
+    uri: http://backend:5352/source/foo_project/bar_package?cmd=waitservice
+    body:
+      encoding: UTF-8
+      string: ''
+    headers:
+      Content-Type:
+      - application/octet-stream
+      Accept-Encoding:
+      - gzip;q=1.0,deflate;q=0.6,identity;q=0.3
+      Accept:
+      - "*/*"
+      User-Agent:
+      - Ruby
+  response:
+    status:
+      code: 200
+      message: OK
+    headers:
+      Content-Type:
+      - text/xml
+      Cache-Control:
+      - no-cache
+      Connection:
+      - close
+      Content-Length:
+      - '21'
+    body:
+      encoding: UTF-8
+      string: '<status code="ok" />
+
+'
+  recorded_at: Mon, 07 Aug 2023 10:14:15 GMT
+recorded_with: VCR 6.2.0

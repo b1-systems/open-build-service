@@ -1,8 +1,6 @@
-require 'rails_helper'
 require 'rantly/rspec_extensions'
-# WARNING: If you need to make a Backend call uncomment the following line
-# CONFIG['global_write_through'] = true
-RSpec.describe Project, vcr: true do
+
+RSpec.describe Project, :vcr do
   let!(:project) { create(:project, name: 'openSUSE_41') }
   let(:remote_project) { create(:remote_project, name: 'openSUSE.org') }
   let(:package) { create(:package, project: project) }
@@ -13,7 +11,7 @@ RSpec.describe Project, vcr: true do
   describe 'validations' do
     it {
       expect(subject).to validate_inclusion_of(:kind)
-        .in_array(['standard', 'maintenance', 'maintenance_incident', 'maintenance_release'])
+        .in_array(%w[standard maintenance maintenance_incident maintenance_release])
     }
 
     it { is_expected.to validate_length_of(:name).is_at_most(200) }
@@ -43,8 +41,7 @@ RSpec.describe Project, vcr: true do
 
   describe '#store' do
     before do
-      allow(project).to receive(:save!).and_return(true)
-      allow(project).to receive(:write_to_backend).and_return(true)
+      allow(project).to receive_messages(save!: true, write_to_backend: true)
       project.commit_opts = { comment: 'the comment' }
     end
 
@@ -331,17 +328,17 @@ RSpec.describe Project, vcr: true do
       end
 
       let!(:incident) do
-        create(:bs_request_with_maintenance_incident_action, creator: admin_user, target_project: project, source_package: source_package)
+        create(:bs_request_with_maintenance_incident_actions, creator: admin_user, target_project: project, source_package: source_package)
       end
       let(:accepted_incident) do
-        create(:bs_request_with_maintenance_incident_action, creator: admin_user, target_package: package, source_package: source_package)
+        create(:bs_request_with_maintenance_incident_actions, creator: admin_user, target_package: package, source_package: source_package)
       end
 
       let!(:release) do
-        create(:bs_request_with_maintenance_release_action, creator: admin_user, target_package: package, source_package: source_package)
+        create(:bs_request_with_maintenance_release_actions, creator: admin_user, target_package: package, source_package: source_package)
       end
       let!(:other_release) do
-        create(:bs_request_with_maintenance_release_action, creator: admin_user, target_package: package, source_package: source_package)
+        create(:bs_request_with_maintenance_release_actions, creator: admin_user, target_package: package, source_package: source_package)
       end
 
       before do
@@ -446,8 +443,8 @@ RSpec.describe Project, vcr: true do
     end
 
     context 'with linked repositories' do
-      let(:repository_1) { create(:repository, name: 'Tumbleweed', architectures: ['i586', 'x86_64'], project: deleted_project) }
-      let(:repository_2) { create(:repository, name: 'RepoWithLink', architectures: ['i586', 'x86_64'], project: deleted_project) }
+      let(:repository_1) { create(:repository, name: 'Tumbleweed', architectures: %w[i586 x86_64], project: deleted_project) }
+      let(:repository_2) { create(:repository, name: 'RepoWithLink', architectures: %w[i586 x86_64], project: deleted_project) }
       let!(:path_elements) { create(:path_element, repository: repository_2, link: repository_1) }
 
       it 'project meta is properly restored' do
@@ -695,7 +692,7 @@ RSpec.describe Project, vcr: true do
       end
 
       it 'returns the categories values' do
-        expect(subject).to eql(['Test', 'Private'])
+        expect(subject).to eql(%w[Test Private])
       end
     end
 

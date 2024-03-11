@@ -2,7 +2,7 @@ class Webui::SearchController < Webui::WebuiController
   before_action :set_attribute_list
   before_action :set_tracker_list
   before_action :set_parameters, except: :issue
-  before_action :set_page, only: [:index, :issue]
+  before_action :set_page, only: %i[index issue]
 
   def index
     search
@@ -87,8 +87,8 @@ class Webui::SearchController < Webui::WebuiController
 
   def search_what
     @search_what = []
-    @search_what << 'package' if params[:search_for].in?(['0', '2'])
-    @search_what << 'project' if params[:search_for].in?(['0', '1'])
+    @search_what << 'package' if params[:search_for].in?(%w[0 2])
+    @search_what << 'project' if params[:search_for].in?(%w[0 1])
     @search_what << 'owner' if params[:owner] == '1' && !@search_issue
   end
 

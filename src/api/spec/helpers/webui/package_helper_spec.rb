@@ -1,4 +1,3 @@
-require 'rails_helper'
 require 'rantly/rspec_extensions'
 
 RSpec.describe Webui::PackageHelper do
@@ -142,6 +141,8 @@ RSpec.describe Webui::PackageHelper do
           expect(guess_code_class(filename)).to eq('shell')
         end
       end
+
+      it_behaves_like 'file with extension', 'sh', 'shell'
     end
 
     context 'is python' do
@@ -152,6 +153,8 @@ RSpec.describe Webui::PackageHelper do
           expect(guess_code_class(filename)).to eq('python')
         end
       end
+
+      it_behaves_like 'file with extension', 'py', 'python'
     end
 
     context 'is makefile' do
@@ -184,10 +187,6 @@ RSpec.describe Webui::PackageHelper do
       it_behaves_like 'file with extension', 'perl', 'perl'
     end
 
-    context 'is python' do
-      it_behaves_like 'file with extension', 'py', 'python'
-    end
-
     context 'is ruby' do
       it_behaves_like 'file with extension', 'rb', 'ruby'
     end
@@ -198,10 +197,6 @@ RSpec.describe Webui::PackageHelper do
 
     context 'is javascript' do
       it_behaves_like 'file with extension', 'js', 'javascript'
-    end
-
-    context 'is shell' do
-      it_behaves_like 'file with extension', 'sh', 'shell'
     end
 
     context 'is rpm-spec' do

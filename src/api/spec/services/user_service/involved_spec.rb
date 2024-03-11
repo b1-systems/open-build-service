@@ -1,6 +1,4 @@
-require 'rails_helper'
-
-RSpec.describe UserService::Involved, vcr: true do
+RSpec.describe UserService::Involved, :vcr do
   let(:user) { create(:confirmed_user, :with_home) }
   let(:home_project) { user.home_project }
 

@@ -5,10 +5,10 @@ class PersonController < ApplicationController
   validate_action register: { method: :put, response: :status }
   validate_action register: { method: :post, response: :status }
 
-  skip_before_action :extract_user, only: [:command, :register]
-  skip_before_action :require_login, only: [:command, :register]
+  skip_before_action :extract_user, only: %i[command register]
+  skip_before_action :require_login, only: %i[command register]
 
-  before_action :set_user, only: [:post_userinfo, :change_my_password, :get_watchlist, :put_watchlist]
+  before_action :set_user, only: %i[post_userinfo change_my_password get_watchlist put_watchlist]
 
   def show
     @list = if params[:prefix]
@@ -202,7 +202,7 @@ class PersonController < ApplicationController
     note = xml.elements['/unregisteredperson/note'].text if xml.elements['/unregisteredperson/note']
     status = xml.elements['/unregisteredperson/state'].text if xml.elements['/unregisteredperson/status']
 
-    if authenticator.proxy_mode?
+    if ::Configuration.proxy_auth_mode_enabled?
       raise ErrRegisterSave, 'Missing iChain header' if request.env['HTTP_X_USERNAME'].blank?
 
       login = request.env['HTTP_X_USERNAME']

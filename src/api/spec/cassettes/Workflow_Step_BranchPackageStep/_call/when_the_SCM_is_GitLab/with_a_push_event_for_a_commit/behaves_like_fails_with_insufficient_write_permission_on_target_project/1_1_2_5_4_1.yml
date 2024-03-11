@@ -39,15 +39,15 @@ http_interactions:
           <description></description>
           <person userid="Iggy" role="maintainer"/>
         </project>
-  recorded_at: Mon, 31 Jan 2022 15:07:48 GMT
+  recorded_at: Mon, 07 Aug 2023 10:14:23 GMT
 - request:
     method: put
-    uri: http://backend:5352/source/foo_project/_meta?user=user_19
+    uri: http://backend:5352/source/foo_project/_meta?user=user_163
     body:
       encoding: UTF-8
       string: |
         <project name="foo_project">
-          <title>The Violent Bear It Away</title>
+          <title>Death Be Not Proud</title>
           <description/>
           <person userid="Iggy" role="maintainer"/>
         </project>
@@ -70,25 +70,25 @@ http_interactions:
       Connection:
       - close
       Content-Length:
-      - '156'
+      - '150'
     body:
       encoding: UTF-8
       string: |
         <project name="foo_project">
-          <title>The Violent Bear It Away</title>
+          <title>Death Be Not Proud</title>
           <description></description>
           <person userid="Iggy" role="maintainer"/>
         </project>
-  recorded_at: Mon, 31 Jan 2022 15:07:48 GMT
+  recorded_at: Mon, 07 Aug 2023 10:14:23 GMT
 - request:
     method: put
-    uri: http://backend:5352/source/foo_project/bar_package/_meta?user=user_20
+    uri: http://backend:5352/source/foo_project/bar_package/_meta?user=user_164
     body:
       encoding: UTF-8
       string: |
         <package name="bar_package" project="foo_project">
-          <title>The World, the Flesh and the Devil</title>
-          <description>Corrupti sit et sint.</description>
+          <title>Those Barren Leaves, Thrones, Dominations</title>
+          <description>Illo officiis rerum vel.</description>
         </package>
     headers:
       Accept-Encoding:
@@ -109,21 +109,21 @@ http_interactions:
       Connection:
       - close
       Content-Length:
-      - '165'
+      - '175'
     body:
       encoding: UTF-8
       string: |
         <package name="bar_package" project="foo_project">
-          <title>The World, the Flesh and the Devil</title>
-          <description>Corrupti sit et sint.</description>
+          <title>Those Barren Leaves, Thrones, Dominations</title>
+          <description>Illo officiis rerum vel.</description>
         </package>
-  recorded_at: Mon, 31 Jan 2022 15:07:48 GMT
+  recorded_at: Mon, 07 Aug 2023 10:14:23 GMT
 - request:
     method: put
     uri: http://backend:5352/source/foo_project/bar_package/_config
     body:
       encoding: UTF-8
-      string: Rerum nostrum et. Autem nemo maxime. Ipsa rerum suscipit.
+      string: Voluptatem rem inventore. Et voluptatem consequatur. Ex vitae mollitia.
     headers:
       Accept-Encoding:
       - gzip;q=1.0,deflate;q=0.6,identity;q=0.3
@@ -147,22 +147,21 @@ http_interactions:
     body:
       encoding: UTF-8
       string: |
-        <revision rev="121" vrev="121">
-          <srcmd5>d71639e89bd44c2ebf6c6459d4a722a0</srcmd5>
+        <revision rev="131" vrev="131">
+          <srcmd5>e1801e0cab57509f413724739710f233</srcmd5>
           <version>unknown</version>
-          <time>1643641668</time>
+          <time>1691403263</time>
           <user>unknown</user>
           <comment></comment>
           <requestid/>
         </revision>
-  recorded_at: Mon, 31 Jan 2022 15:07:48 GMT
+  recorded_at: Mon, 07 Aug 2023 10:14:23 GMT
 - request:
     method: put
     uri: http://backend:5352/source/foo_project/bar_package/somefile.txt
     body:
       encoding: UTF-8
-      string: Temporibus voluptas sapiente. Error eius mollitia. Magni praesentium
-        iste.
+      string: Eveniet illo sed. Est illo veniam. Aut et molestias.
     headers:
       Accept-Encoding:
       - gzip;q=1.0,deflate;q=0.6,identity;q=0.3
@@ -186,15 +185,15 @@ http_interactions:
     body:
       encoding: UTF-8
       string: |
-        <revision rev="122" vrev="122">
-          <srcmd5>773b5caddbb904b93186784781babbba</srcmd5>
+        <revision rev="132" vrev="132">
+          <srcmd5>df3f8f42c0c92178adc6645f2b164740</srcmd5>
           <version>unknown</version>
-          <time>1643641668</time>
+          <time>1691403263</time>
           <user>unknown</user>
           <comment></comment>
           <requestid/>
         </revision>
-  recorded_at: Mon, 31 Jan 2022 15:07:48 GMT
+  recorded_at: Mon, 07 Aug 2023 10:14:23 GMT
 - request:
     method: put
     uri: http://backend:5352/source/project_without_maintainer_rights/_meta?user=Iggy
@@ -202,7 +201,7 @@ http_interactions:
       encoding: UTF-8
       string: |
         <project name="project_without_maintainer_rights">
-          <title>In a Dry Season</title>
+          <title>Clouds of Witness</title>
           <description/>
         </project>
     headers:
@@ -224,15 +223,49 @@ http_interactions:
       Connection:
       - close
       Content-Length:
-      - '125'
+      - '127'
     body:
       encoding: UTF-8
       string: |
         <project name="project_without_maintainer_rights">
-          <title>In a Dry Season</title>
+          <title>Clouds of Witness</title>
           <description></description>
         </project>
-  recorded_at: Mon, 31 Jan 2022 15:07:48 GMT
+  recorded_at: Mon, 07 Aug 2023 10:14:23 GMT
+- request:
+    method: post
+    uri: http://backend:5352/source/foo_project/bar_package?cmd=waitservice
+    body:
+      encoding: UTF-8
+      string: ''
+    headers:
+      Content-Type:
+      - application/octet-stream
+      Accept-Encoding:
+      - gzip;q=1.0,deflate;q=0.6,identity;q=0.3
+      Accept:
+      - "*/*"
+      User-Agent:
+      - Ruby
+  response:
+    status:
+      code: 200
+      message: OK
+    headers:
+      Content-Type:
+      - text/xml
+      Cache-Control:
+      - no-cache
+      Connection:
+      - close
+      Content-Length:
+      - '21'
+    body:
+      encoding: UTF-8
+      string: '<status code="ok" />
+
+'
+  recorded_at: Mon, 07 Aug 2023 10:14:24 GMT
 - request:
     method: post
     uri: http://backend:5352/search/package/id?match=(linkinfo/@package=%22bar_package%22%20and%20linkinfo/@project=%22foo_project%22%20and%20@project=%22foo_project%22)
@@ -266,5 +299,5 @@ http_interactions:
       string: |
         <collection>
         </collection>
-  recorded_at: Mon, 31 Jan 2022 15:07:48 GMT
-recorded_with: VCR 6.0.0
+  recorded_at: Mon, 07 Aug 2023 10:14:24 GMT
+recorded_with: VCR 6.2.0

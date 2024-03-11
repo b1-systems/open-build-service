@@ -1,6 +1,4 @@
-require 'rails_helper'
-
-RSpec.describe Webui::ArchitecturesController, js: true do
+RSpec.describe Webui::ArchitecturesController, :js do
   let(:admin_user) { create(:admin_user) }
 
   before do

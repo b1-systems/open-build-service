@@ -5,13 +5,11 @@ class ChannelBinary < ApplicationRecord
   belongs_to :architecture, optional: true
 
   validate do |channel_binary|
-    if channel_binary.project && channel_binary.repository
-      errors.add(:base, :invalid, message: 'Associated project has to match with repository.project') unless channel_binary.repository.project == channel_binary.project
-    end
+    errors.add(:base, :invalid, message: 'Associated project has to match with repository.project') if channel_binary.project && channel_binary.repository && !(channel_binary.repository.project == channel_binary.project)
   end
 
   def self._sync_keys
-    [:name, :project, :repository, :architecture, :package, :binaryarch]
+    %i[name project repository architecture package binaryarch]
   end
 
   def self.find_by_project_and_package(project, package)
@@ -35,8 +33,7 @@ class ChannelBinary < ApplicationRecord
   def create_channel_package_into(project, comment = nil)
     channel = channel_binary_list.channel
     package_exists = Package.exists_by_project_and_name(project.name, channel.name,
-                                                        follow_project_links: false,
-                                                        allow_remote_packages: false)
+                                                        follow_project_links: false)
     # does it exist already? then just skip it
     # create a channel package beside my package and return that
     channel.branch_channel_package_into_project(project, comment) unless package_exists

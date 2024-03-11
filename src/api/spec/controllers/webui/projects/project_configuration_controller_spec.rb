@@ -1,6 +1,4 @@
-require 'rails_helper'
-
-RSpec.describe Webui::Projects::ProjectConfigurationController, vcr: true do
+RSpec.describe Webui::Projects::ProjectConfigurationController, :vcr do
   let(:user) { create(:confirmed_user, :with_home, login: 'tom') }
   let(:apache_project) { create(:project, name: 'Apache') }
   let(:another_project) { create(:project, name: 'Another_Project') }
@@ -68,14 +66,6 @@ RSpec.describe Webui::Projects::ProjectConfigurationController, vcr: true do
       it { expect(flash[:error]).to eq('Sorry, you are not authorized to update this project.') }
       it { expect(response.status).to eq(302) }
       it { expect(response).to redirect_to(root_path) }
-    end
-
-    context 'with a non existing project' do
-      let(:post_update) { post :update, params: { project_name: 'non:existing:project', config: 'save config' } }
-
-      it 'raise a RecordNotFound Exception' do
-        expect { post_update }.to raise_error ActiveRecord::RecordNotFound
-      end
     end
   end
 end

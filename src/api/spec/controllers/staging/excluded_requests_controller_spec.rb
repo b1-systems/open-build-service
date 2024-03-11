@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe Staging::ExcludedRequestsController do
   render_views
 
@@ -33,20 +31,21 @@ RSpec.describe Staging::ExcludedRequestsController do
     let!(:request_exclusion_2) { create(:request_exclusion, bs_request: bs_request_2, staging_workflow: staging_workflow, description: 'Request 2') }
 
     before do
+      login(user)
       get :index, params: { staging_workflow_project: staging_workflow.project.name, format: :xml }
     end
 
     it { expect(response).to have_http_status(:success) }
 
     it 'returns the excluded_requests xml' do
-      expect(response.body).to have_selector('excluded_requests', count: 1)
-      expect(response.body).to have_selector('excluded_requests > request', count: 2)
-      expect(response.body).to have_selector("excluded_requests > request[id='#{bs_request.number}']")
-      expect(response.body).to have_selector("excluded_requests > request[id='#{bs_request_2.number}']")
-      expect(response.body).to have_selector("excluded_requests > request[package='#{bs_request.first_target_package}']")
-      expect(response.body).to have_selector("excluded_requests > request[package='#{bs_request_2.first_target_package}']")
-      expect(response.body).to have_selector("excluded_requests > request[description='Request 1']")
-      expect(response.body).to have_selector("excluded_requests > request[description='Request 2']")
+      expect(response.body).to have_css('excluded_requests', count: 1)
+      expect(response.body).to have_css('excluded_requests > request', count: 2)
+      expect(response.body).to have_css("excluded_requests > request[id='#{bs_request.number}']")
+      expect(response.body).to have_css("excluded_requests > request[id='#{bs_request_2.number}']")
+      expect(response.body).to have_css("excluded_requests > request[package='#{bs_request.first_target_package}']")
+      expect(response.body).to have_css("excluded_requests > request[package='#{bs_request_2.first_target_package}']")
+      expect(response.body).to have_css("excluded_requests > request[description='Request 1']")
+      expect(response.body).to have_css("excluded_requests > request[description='Request 2']")
     end
   end
 
@@ -95,7 +94,7 @@ RSpec.describe Staging::ExcludedRequestsController do
       it { expect(response).to have_http_status(:bad_request) }
     end
 
-    context 'fails: non-existant bs_request number, invalid request exclusion' do
+    context 'fails: non-existent bs_request number, invalid request exclusion' do
       before do
         post :create, params: { staging_workflow_project: staging_workflow.project.name, format: :xml },
                       body: "<excluded_requests><request id='43_543'/></excluded_requests>"

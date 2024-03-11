@@ -132,4 +132,18 @@ sub upload_intoto {
   return upload_entry($server, $entry);
 }
 
+sub upload_dsse {
+  my ($server, $envelope, $pubkey) = @_;
+  my $verifier = mime_encode($pubkey);
+  my $spec = {
+    'proposedContent' => { 'envelope' => $envelope, 'verifiers' => [ $verifier ] },
+  };
+  my $entry = {
+    'kind' => 'dsse',
+    'apiVersion' => '0.0.1',
+    'spec' => $spec,
+  };
+  return upload_entry($server, $entry);
+}
+
 1;

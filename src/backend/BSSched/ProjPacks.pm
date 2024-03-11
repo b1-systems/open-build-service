@@ -444,11 +444,15 @@ sub update_projpacks {
       delete $proj->{'package'};
     }
   }
+  if (defined($projid) && $isgone) {
+    update_prpcheckuseforbuild($gctx, $projid);
+    BSSched::DoD::update_doddata($gctx, $projid) if $BSConfig::enable_download_on_demand;
+  }
+
   my $remoteprojs = $gctx->{'remoteprojs'};
   if (!defined($projid)) {
     %$remoteprojs = ();
   } elsif (!($packids && @$packids)) {
-    update_prpcheckuseforbuild($gctx, $projid) if $isgone;
     # delete project from remoteprojs if it is not in the remotemap
     if (!grep {$_->{'project'} eq $projid} @{$projpacksin->{'remotemap'} || []}) {
       delete $remoteprojs->{$projid};
@@ -476,12 +480,17 @@ sub update_project_meta {
   if ($doasync) {
     $param->{'async'} = { %$doasync, '_resume' => \&update_project_meta_resume, '_projid' => $projid, '_changeprp' => $projid };
   }
-  my @args;
+  # withsrcmd5 is needed for the patterns md5sum
+  my @args = ('nopackages', 'withrepos', 'withconfig', 'withsrcmd5', "arch=$myarch");
   push @args, "partition=$BSConfig::partition" if $BSConfig::partition;
   push @args, "project=$projid";
   eval {
-    # withsrcmd5 is needed for the patterns md5sum
-    $projpacksin = $gctx->{'rctx'}->xrpc($gctx, $projid, $param, $BSXML::projpack, 'nopackages', 'withrepos', 'withconfig', 'withsrcmd5', "arch=$myarch", @args);
+    if ($usestorableforprojpack) {
+      $projpacksin = $gctx->{'rctx'}->xrpc($gctx, $projid, $param, \&BSUtil::fromstorable, 'view=storable', @args);
+
+    } else {
+      $projpacksin = $gctx->{'rctx'}->xrpc($gctx, $projid, $param, $BSXML::projpack, @args);
+    }
   };
   if ($@ || !$projpacksin) {
     print $@ if $@;
@@ -508,6 +517,7 @@ sub has_critical_config_change {
   my @mprefix = ("%define _project $projid", "%define _repository $repoid");
   my $cold = Build::read_config($arch, [ @mprefix, split("\n", $oldconfig || '') ]);
   my $cnew = Build::read_config($arch, [ @mprefix, split("\n", $newconfig || '') ]);
+  return 1 if ($cold->{'expandflags:macroserial'} || '') ne ($cnew->{'expandflags:macroserial'} || '');
   return 1 unless BSUtil::identical($cold->{'macros'}, $cnew->{'macros'});
   return 1 unless BSUtil::identical($cold->{'type'}, $cnew->{'type'});
   # some buildflags change the dependency parsing
@@ -876,6 +886,7 @@ sub is_related {
   my $lprojid2 = length($projid2);
   return 1 if $lprojid1 > $lprojid2 && substr($projid1, 0, $lprojid2 + 1) eq "$projid2:";
   return 1 if $lprojid2 > $lprojid1 && substr($projid2, 0, $lprojid1 + 1) eq "$projid1:";
+  return 1 if $BSConfig::related_projects && ($BSConfig::related_projects->{"$projid1/$projid2"} || $BSConfig::related_projects->{"$projid2/$projid1"});
   return 0;
 }
 
@@ -1808,7 +1819,7 @@ sub get_remoteproject {
 
   my $myarch = $gctx->{'arch'};
   print "getting data for missing project '$projid' from $BSConfig::srcserver\n";
-  my @args;
+  my @args = ('withconfig', 'withremotemap', 'remotemaponly', "arch=$myarch");
   push @args, "partition=$BSConfig::partition" if $BSConfig::partition;
   push @args, "project=$projid";
   my $param = {
@@ -1820,9 +1831,9 @@ sub get_remoteproject {
   my $projpacksin;
   eval {
     if ($usestorableforprojpack) {
-      $projpacksin = $gctx->{'rctx'}->xrpc($gctx, $projid, $param, \&BSUtil::fromstorable, 'view=storable', 'withconfig', 'withremotemap', 'remotemaponly', "arch=$myarch", @args);
+      $projpacksin = $gctx->{'rctx'}->xrpc($gctx, $projid, $param, \&BSUtil::fromstorable, 'view=storable', @args);
     } else {
-      $projpacksin = $gctx->{'rctx'}->xrpc($gctx, $projid, $param, $BSXML::projpack, 'withconfig', 'withremotemap', 'remotemaponly', "arch=$myarch", @args);
+      $projpacksin = $gctx->{'rctx'}->xrpc($gctx, $projid, $param, $BSXML::projpack, @args);
     }
   };
   return 0 if !$@ && $projpacksin && $param->{'async'};

@@ -3,13 +3,18 @@ class Token::Rebuild < Token
     set_triggered_at
     package_name = options[:package].to_param
     package_name += ':' + options[:multibuild_flavor] if options[:multibuild_flavor]
-    Backend::Api::Sources::Package.rebuild(options[:project].to_param,
-                                           package_name,
+    if package_name.present?
+      Backend::Api::Sources::Package.rebuild(options[:project].to_param,
+                                             package_name,
+                                             options.slice(:repository, :arch).compact)
+    else
+      Backend::Api::Build::Project.rebuild(options[:project].to_param,
                                            options.slice(:repository, :arch).compact)
+    end
   end
 
   def package_find_options
-    { use_source: false, follow_project_links: true, follow_multibuild: true }
+    { use_source: false, follow_multibuild: true }
   end
 end
 

@@ -8,7 +8,7 @@ OBSApi::Application.routes.draw do
       mount Flipper::UI.app(Flipper) => '/flipper'
     end
 
-    resources :news_items, only: [:index, :new, :create, :edit, :update, :destroy], controller: 'webui/status_messages' do
+    resources :news_items, only: %i[index new create edit update destroy], controller: 'webui/status_messages' do
       collection do
         post 'preview'
       end
@@ -18,10 +18,10 @@ OBSApi::Application.routes.draw do
       get 'main/news' => :news, constraints: ->(req) { req.format == :rss }, as: :news_feed
       get 'main/latest_updates' => :latest_updates, constraints: ->(req) { req.format == :rss }, as: :latest_updates_feed
       get 'project/latest_commits/:project' => :commits, defaults: { format: 'atom' }, constraints: cons, as: 'commits_feed'
-      get 'user/feed/:token' => :notifications, defaults: { format: 'rss' }, as: :user_rss_notifications
+      get 'user/feed/:secret' => :notifications, defaults: { format: 'rss' }, as: :user_rss_notifications
     end
 
-    resources :attribs, constraints: cons, only: [:create, :update, :destroy], controller: 'webui/attribute' do
+    resources :attribs, constraints: cons, only: %i[create update destroy], controller: 'webui/attribute' do
       collection do
         get ':project(/:package)/new' => :new, constraints: cons, as: 'new'
         get ':project(/:package)/:attribute/edit' => :edit, constraints: cons, as: 'edit'
@@ -31,13 +31,13 @@ OBSApi::Application.routes.draw do
 
     resources :image_templates, constraints: cons, only: [:index], controller: 'webui/image_templates'
 
-    resources :download_repositories, constraints: cons, only: [:create, :update, :destroy], controller: 'webui/download_on_demand'
+    resources :download_repositories, constraints: cons, only: %i[create update destroy], controller: 'webui/download_on_demand'
 
     controller 'webui/configuration' do
       get 'configuration' => :index
       patch 'configuration' => :update
     end
-    resources :interconnects, only: [:new, :create], controller: 'webui/interconnects'
+    resources :interconnects, only: %i[new create], controller: 'webui/interconnects'
 
     controller 'webui/subscriptions' do
       get 'notifications' => :index
@@ -48,7 +48,7 @@ OBSApi::Application.routes.draw do
       patch 'architectures/bulk_update_availability' => :bulk_update_availability, as: :bulk_update_availability
     end
 
-    resources :architectures, only: [:index, :update], controller: 'webui/architectures'
+    resources :architectures, only: %i[index update], controller: 'webui/architectures'
 
     controller 'webui/monitor' do
       get 'monitor/' => :index
@@ -58,6 +58,13 @@ OBSApi::Application.routes.draw do
     end
 
     resources :package, only: [:index], controller: 'webui/package', constraints: cons
+
+    controller 'webui/packages/build_log' do
+      get 'package/live_build_log/:project/:package/:repository/:arch' => :live_build_log, constraints: cons, as: 'package_live_build_log'
+      defaults format: 'js' do
+        get 'package/update_build_log/:project/:package/:repository/:arch' => :update_build_log, constraints: cons, as: 'package_update_build_log'
+      end
+    end
 
     controller 'webui/package' do
       defaults format: 'js' do
@@ -70,9 +77,11 @@ OBSApi::Application.routes.draw do
       controller 'webui/package' do
         get 'package/show/:project/:package' => :show, as: 'package_show', constraints: cons
         get 'package/branch_diff_info/:project/:package' => :branch_diff_info, as: 'package_branch_diff_info', constraints: cons
-        get 'package/dependency/:project/:package' => :dependency, constraints: cons, as: 'package_dependency'
-        get 'package/binary/:project/:package/:repository/:arch/:filename' => :binary, constraints: cons, as: 'package_binary'
-        get 'package/binaries/:project/:package/:repository' => :binaries, constraints: cons, as: 'package_binaries'
+        # For backward compatibility
+        get 'package/binary/:project/:package/:repository/:arch/:filename', to: redirect('/projects/%{project}/packages/%{package}/repositories/%{repository}/%{arch}/%{filename}'),
+                                                                            constraints: cons
+        # For backward compatibility
+        get 'package/binaries/:project/:package/:repository', to: redirect('/projects/%{project}/packages/%{package}/repositories/%{repository}'), constraints: cons
         get 'package/users/:project/:package' => :users, as: 'package_users', constraints: cons
         get 'package/requests/:project/:package' => :requests, as: 'package_requests', constraints: cons
         get 'package/statistics/:project/:package/:repository/:arch' => :statistics, as: 'package_statistics', constraints: cons
@@ -87,13 +96,10 @@ OBSApi::Application.routes.draw do
         post 'package/save_group/:project/:package' => :save_group, constraints: cons, as: 'package_save_group'
         post 'package/remove_role/:project/:package' => :remove_role, constraints: cons, as: 'package_remove_role'
         get 'package/view_file/:project/:package/(:filename)' => :view_file, constraints: cons, as: 'package_view_file'
-        get 'package/live_build_log/:project/:package/:repository/:arch' => :live_build_log, constraints: cons, as: 'package_live_build_log'
         defaults format: 'js' do
-          get 'package/update_build_log/:project/:package/:repository/:arch' => :update_build_log, constraints: cons, as: 'package_update_build_log'
           post 'package/trigger_rebuild/:project/:package' => :trigger_rebuild, constraints: cons, as: 'package_trigger_rebuild'
           get 'package/abort_build/:project/:package' => :abort_build, constraints: cons, as: 'package_abort_build'
           post 'package/trigger_services/:project/:package' => :trigger_services, constraints: cons, as: 'package_trigger_services'
-          delete 'package/wipe_binaries/:project/:package' => :wipe_binaries, constraints: cons, as: 'package_wipe_binaries'
         end
         get 'package/devel_project/:project/:package' => :devel_project, constraints: cons, as: 'package_devel_project'
         get 'package/buildresult' => :buildresult, constraints: cons, as: 'package_buildresult'
@@ -155,7 +161,7 @@ OBSApi::Application.routes.draw do
       get 'package/:package_id/kiwi_images/import_from_package' => :import_from_package, as: 'import_kiwi_image'
     end
 
-    resources :kiwi_images, only: [:show, :edit, :update], controller: 'webui/kiwi/images' do
+    resources :kiwi_images, only: %i[show edit update], controller: 'webui/kiwi/images' do
       member do
         get 'build_result' => :build_result, constraints: cons
         get 'autocomplete_binaries' => :autocomplete_binaries, as: :autocomplete_binaries
@@ -165,7 +171,7 @@ OBSApi::Application.routes.draw do
     scope :cloud, as: :cloud do
       resources :configuration, only: [:index], controller: 'webui/cloud/configurations'
 
-      resources :upload, only: [:index, :create, :destroy], controller: 'webui/cloud/upload_jobs' do
+      resources :upload, only: %i[index create destroy], controller: 'webui/cloud/upload_jobs' do
         new do
           get ':project/:package/:repository/:arch/:filename', to: 'webui/cloud/upload_jobs#new', as: '', constraints: cons
         end
@@ -173,7 +179,7 @@ OBSApi::Application.routes.draw do
         resource :log, only: :show, controller: 'webui/cloud/upload_job/logs'
       end
       scope :azure, as: :azure do
-        resource :configuration, only: [:show, :update, :destroy], controller: 'webui/cloud/azure/configurations'
+        resource :configuration, only: %i[show update destroy], controller: 'webui/cloud/azure/configurations'
         resource :upload, only: [:create], controller: 'webui/cloud/azure/upload_jobs' do
           new do
             get ':project/:package/:repository/:arch/:filename', to: 'webui/cloud/azure/upload_jobs#new', as: '', constraints: cons
@@ -181,7 +187,7 @@ OBSApi::Application.routes.draw do
         end
       end
       scope :ec2, as: :ec2 do
-        resource :configuration, only: [:show, :update], controller: 'webui/cloud/ec2/configurations'
+        resource :configuration, only: %i[show update], controller: 'webui/cloud/ec2/configurations'
         resource :upload, only: [:create], controller: 'webui/cloud/ec2/upload_jobs' do
           new do
             get ':project/:package/:repository/:arch/:filename', to: 'webui/cloud/ec2/upload_jobs#new', as: '', constraints: cons
@@ -230,7 +236,6 @@ OBSApi::Application.routes.draw do
       get 'project/edit_comment_form/:project' => :edit_comment_form, constraints: cons, as: :edit_comment_form
       post 'project/edit_comment/:project' => :edit_comment, constraints: cons
       post 'project/unlock' => :unlock
-      get 'project/keys_and_certificates/:project' => :keys_and_certificates, constraints: cons, as: 'keys_and_certificates'
     end
 
     # For backward compatibility
@@ -250,34 +255,49 @@ OBSApi::Application.routes.draw do
     controller 'webui/projects/project_configuration' do
       get 'project/prjconf/:project', to: redirect('/projects/%{project}/prjconf')
     end
+    controller 'webui/projects/signing_keys' do
+      get 'project/keys_and_certificates/:project', to: redirect('/projects/%{project}/signing_keys')
+      get 'projects/:project/public_key', to: redirect('/projects/%{project}/signing_keys')
+      get 'projects/:project/ssl_certificate', to: redirect('/projects/%{project}/signing_keys')
+    end
     # \For backward compatibility
 
     resources :projects, only: [], param: :name do
       resources :maintained_projects, controller: 'webui/projects/maintained_projects',
-                                      param: :maintained_project, only: [:index, :destroy, :create], constraints: cons
+                                      param: :maintained_project, only: %i[index destroy create], constraints: cons
       resource :status, controller: 'webui/projects/status', only: [:show], constraints: cons
-      resource :public_key, controller: 'webui/projects/public_key', only: [:show], constraints: cons
-      resource :ssl_certificate, controller: 'webui/projects/ssl_certificate', only: [:show], constraints: cons
+      resource :signing_keys, controller: 'webui/projects/signing_keys', only: [:show], constraints: cons do
+        get 'download'
+      end
       resource :pulse, controller: 'webui/projects/pulse', only: [:show], constraints: cons
-      resource :meta, controller: 'webui/projects/meta', only: [:show, :update], constraints: cons
-      resource :prjconf, controller: 'webui/projects/project_configuration', only: [:show, :update], as: :config, constraints: cons
+      resource :meta, controller: 'webui/projects/meta', only: %i[show update], constraints: cons
+      resource :prjconf, controller: 'webui/projects/project_configuration', only: %i[show update], as: :config, constraints: cons
       resource :rebuild_time, controller: 'webui/projects/rebuild_times', only: [:show], constraints: cons do
         get 'rebuild_time_png'
       end
-      resources :maintenance_incidents, controller: 'webui/projects/maintenance_incidents', only: [:index, :create], constraints: cons
-      resources :maintenance_incident_requests, controller: 'webui/projects/maintenance_incident_requests', only: [:new, :create], constraints: cons
+      resources :maintenance_incidents, controller: 'webui/projects/maintenance_incidents', only: %i[index create], constraints: cons
+      resources :maintenance_incident_requests, controller: 'webui/projects/maintenance_incident_requests', only: %i[new create], constraints: cons
       resources :packages, only: [], param: :name do
-        resources :role_additions, controller: 'webui/requests/role_additions', only: [:new, :create], constraints: cons
-        resources :deletions, controller: 'webui/requests/deletions', only: [:new, :create], constraints: cons
-        resources :devel_project_changes, controller: 'webui/requests/devel_project_changes', only: [:new, :create], constraints: cons
-        resources :submissions, controller: 'webui/requests/submissions', only: [:new, :create], constraints: cons
-        resource :files, controller: 'webui/packages/files', only: [:new, :create, :update], constraints: cons
+        resources :role_additions, controller: 'webui/requests/role_additions', only: %i[new create], constraints: cons
+        resources :deletions, controller: 'webui/requests/deletions', only: %i[new create], constraints: cons
+        resources :devel_project_changes, controller: 'webui/requests/devel_project_changes', only: %i[new create], constraints: cons
+        resources :submissions, controller: 'webui/requests/submissions', only: %i[new create], constraints: cons
+        resource :files, controller: 'webui/packages/files', only: %i[new create update], constraints: cons
         put 'toggle_watched_item', controller: 'webui/watched_items', constraints: cons
         resource :badge, controller: 'webui/packages/badge', only: [:show], constraints: cons.merge(format: :svg)
+        resources :repositories, only: [], param: :name do
+          resources :binaries, controller: 'webui/packages/binaries', only: [:index], constraints: cons
+          # Binaries with the exact same name can exist in multiple architectures, so we have to use arch param here additionally
+          resources :binaries, controller: 'webui/packages/binaries', only: [:show], constraints: cons, param: :filename, path: 'binaries/:arch/' do
+            get :dependency
+          end
+          # We wipe all binaries at once, so this is resource instead of resources
+          resource :binaries, controller: 'webui/packages/binaries', only: [:destroy]
+        end
       end
 
-      resources :role_additions, controller: 'webui/requests/role_additions', only: [:new, :create], constraints: cons
-      resources :deletions, controller: 'webui/requests/deletions', only: [:new, :create], constraints: cons
+      resources :role_additions, controller: 'webui/requests/role_additions', only: %i[new create], constraints: cons
+      resources :deletions, controller: 'webui/requests/deletions', only: %i[new create], constraints: cons
       resources :distributions, only: [:new], controller: 'webui/distributions', constraints: cons do
         collection do
           post :toggle
@@ -302,6 +322,8 @@ OBSApi::Application.routes.draw do
       get 'request/:number/request_action/:id' => :request_action, as: 'request_action'
       get 'request/:number/request_action/:id/changes' => :request_action_changes, as: 'request_action_changes'
       get 'request/:number/request_action/:request_action_id/inline_comment/:line' => :inline_comment, constraints: cons, as: 'request_inline_comment'
+      get 'request/:number/chart_build_results' => :chart_build_results, as: 'request_chart_build_results', constraints: cons
+      get 'request/:number/complete_build_results' => :complete_build_results, as: 'request_complete_build_results', constraints: cons
     end
 
     resources :requests, only: [], param: :number, controller: 'webui/bs_requests' do
@@ -325,6 +347,7 @@ OBSApi::Application.routes.draw do
       end
       member do
         post 'change_password'
+        post 'rss_secret'
         get 'edit_account'
       end
     end
@@ -352,15 +375,15 @@ OBSApi::Application.routes.draw do
 
       resources :patchinfos, only: [:index], controller: 'webui/users/patchinfos', as: :my_patchinfos
 
-      post 'rss_tokens' => :create, controller: 'webui/users/rss_tokens', as: :my_rss_token
       post 'news_items/:id' => :acknowledge, controller: 'webui/status_messages', as: :acknowledge_news_item
 
       resources :tokens, controller: 'webui/users/tokens' do
-        resources :workflow_runs, only: [:index, :show], controller: 'webui/workflow_runs'
-        resources :users, only: [:index, :create, :destroy], controller: 'webui/users/tokens/users', constraints: cons
-        resources :groups, only: [:create, :destroy], controller: 'webui/users/tokens/groups', constraints: cons
+        resources :workflow_runs, only: %i[index show], controller: 'webui/workflow_runs'
+        resources :users, only: %i[index create destroy], controller: 'webui/users/tokens/users', constraints: cons
+        resources :groups, only: %i[create destroy], controller: 'webui/users/tokens/groups', constraints: cons
       end
-      resources :token_triggers, only: [:show, :update], controller: 'webui/users/token_triggers'
+
+      resources :canned_responses, controller: 'webui/users/canned_responses', only: %i[index create edit update destroy], constraints: cons
     end
 
     get 'home', to: 'webui/webui#home', as: :home
@@ -379,10 +402,10 @@ OBSApi::Application.routes.draw do
     end
     # Legacy routes end
 
-    resource :session, only: [:new, :create, :destroy], controller: 'webui/session'
+    resource :session, only: %i[new create destroy], controller: 'webui/session'
 
-    resources :groups, only: [:index, :show, :new, :create], param: :title, constraints: cons, controller: 'webui/groups' do
-      resources :user, only: [:create, :destroy, :update], param: :user_login, constraints: cons, controller: 'webui/groups/users'
+    resources :groups, only: %i[index show new create], param: :title, constraints: cons, controller: 'webui/groups' do
+      resources :user, only: %i[create destroy update], param: :user_login, constraints: cons, controller: 'webui/groups/users'
       resources :requests, only: [:index], controller: 'webui/groups/bs_requests'
 
       collection do
@@ -390,20 +413,28 @@ OBSApi::Application.routes.draw do
       end
     end
 
-    resources :comments, constraints: cons, only: [:create, :destroy, :update], controller: 'webui/comments' do
+    resources :comments, constraints: cons, only: %i[create destroy update], controller: 'webui/comments' do
+      member do
+        post 'moderate'
+      end
+
+      defaults format: 'js' do
+        get 'history/:version_id' => :history, as: :history
+      end
+
       collection do
         post 'preview'
       end
     end
 
-    ### /apidocs
-    get 'apidocs', to: redirect('/apidocs/index')
-    get 'apidocs/(index)' => 'webui/apidocs#index', as: 'apidocs_index'
+    ### /apidocs-old
+    get 'apidocs-old', to: redirect('/apidocs-old/index')
+    get 'apidocs-old/(index)' => 'webui/apidocs#index', as: 'apidocs_index'
   end
 
   resources :staging_workflows, except: :index, controller: 'webui/staging/workflows', param: :workflow_project, constraints: cons do
     member do
-      resources :staging_projects, only: [:create, :destroy, :show], controller: 'webui/staging/projects',
+      resources :staging_projects, only: %i[create destroy show], controller: 'webui/staging/projects',
                                    param: :project_name, constraints: cons, as: 'staging_workflow_staging_project' do
         get :preview_copy, on: :member
         post :copy, on: :member
@@ -415,4 +446,17 @@ OBSApi::Application.routes.draw do
       end
     end
   end
+
+  resources :reports, only: [:create], controller: 'webui/reports'
+  resources :decisions, only: [:create], controller: 'webui/decisions' do
+    resources :appeals, only: %i[new create], controller: 'webui/appeals'
+  end
+  resources :appeals, only: [:show], controller: 'webui/appeals'
+
+  controller 'webui/comment_locks' do
+    post '/comment_locks' => :create, as: 'comment_lock'
+    delete '/comment_locks/:comment_lock_id' => :destroy, as: 'comment_unlock'
+  end
+
+  resources :code_of_conduct, only: [:index], controller: 'webui/code_of_conduct'
 end

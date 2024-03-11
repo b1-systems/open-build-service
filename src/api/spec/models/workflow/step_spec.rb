@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe Workflow::Step do
   describe '#target_package_name' do
     subject { described_class.new(step_instructions: step_instructions, scm_webhook: scm_webhook).send(:target_package_name) }
@@ -81,9 +79,9 @@ RSpec.describe Workflow::Step do
               name: 'openSUSE_Tumbleweed',
               target_project: 'openSUSE:Factory',
               target_repository: 'snapshot',
-              architectures: [
-                'x86_64',
-                'ppc'
+              architectures: %w[
+                x86_64
+                ppc
               ]
             }
           ]

@@ -24,7 +24,7 @@ class Workflow::Step
 
     return nil unless scm_webhook.pull_request_event?
 
-    pr_subproject_name = if ['github', 'gitea'].include?(scm_webhook.payload[:scm])
+    pr_subproject_name = if %w[github gitea].include?(scm_webhook.payload[:scm])
                            scm_webhook.payload[:target_repository_full_name]&.tr('/', ':')
                          else
                            scm_webhook.payload[:path_with_namespace]&.tr('/', ':')
@@ -38,20 +38,6 @@ class Workflow::Step
   rescue Project::Errors::UnknownObjectError, Package::Errors::UnknownObjectError
     # We rely on Package.get_by_project_and_name since it's the only way to work with multibuild packages.
     # It's possible for a package to not exist, so we simply rescue and do nothing. The package will be created later in the step.
-  end
-
-  def create_or_update_subscriptions(package)
-    ['Event::BuildFail', 'Event::BuildSuccess'].each do |build_event|
-      subscription = EventSubscription.find_or_create_by!(eventtype: build_event,
-                                                          receiver_role: 'reader', # We pass a valid value, but we don't need this.
-                                                          user: @token.executor,
-                                                          channel: 'scm',
-                                                          enabled: true,
-                                                          token: @token,
-                                                          package: package,
-                                                          workflow_run: workflow_run)
-      subscription.update!(payload: scm_webhook.payload) # The payload is updated regardless of whether the subscription already existed or not.
-    end
   end
 
   def target_package_name(short_commit_sha: false)
@@ -103,46 +89,6 @@ class Workflow::Step
     Project.find_remote_project(source_project_name).present?
   end
 
-  def add_branch_request_file(package:)
-    branch_request_file = case scm_webhook.payload[:scm]
-                          when 'github'
-                            branch_request_content_github
-                          when 'gitlab'
-                            branch_request_content_gitlab
-                          when 'gitea'
-                            branch_request_content_gitea
-                          end
-
-    package.save_file({ file: branch_request_file, filename: '_branch_request' })
-  end
-
-  def branch_request_content_github
-    {
-      # TODO: change to scm_webhook.payload[:action]
-      # when check_for_branch_request method in obs-service-tar_scm accepts other actions than 'opened'
-      # https://github.com/openSUSE/obs-service-tar_scm/blob/2319f50e741e058ad599a6890ac5c710112d5e48/TarSCM/tasks.py#L145
-      action: 'opened',
-      pull_request: {
-        head: {
-          repo: { full_name: scm_webhook.payload[:source_repository_full_name] },
-          sha: scm_webhook.payload[:commit_sha]
-        }
-      }
-    }.to_json
-  end
-
-  def branch_request_content_gitlab
-    { object_kind: scm_webhook.payload[:object_kind],
-      project: { http_url: scm_webhook.payload[:http_url] },
-      object_attributes: { source: { default_branch: scm_webhook.payload[:commit_sha] } } }.to_json
-  end
-
-  def branch_request_content_gitea
-    { object_kind: 'merge_request',
-      project: { http_url: scm_webhook.payload[:http_url] },
-      object_attributes: { source: { default_branch: scm_webhook.payload[:commit_sha] } } }.to_json
-  end
-
   # Only used in LinkPackageStep and BranchPackageStep.
   def validate_source_project_and_package_name
     errors.add(:base, "invalid source project '#{source_project_name}'") if step_instructions[:source_project] && !Project.valid_name?(source_project_name)
@@ -153,9 +99,5 @@ class Workflow::Step
   def validate_project_and_package_name
     errors.add(:base, "invalid project '#{step_instructions[:project]}'") if step_instructions[:project] && !Project.valid_name?(step_instructions[:project])
     errors.add(:base, "invalid package '#{step_instructions[:package]}'") if step_instructions[:package] && !Package.valid_name?(step_instructions[:package])
-  end
-
-  def webhook_event_for_linking_or_branching?
-    scm_webhook.new_pull_request? || (scm_webhook.updated_pull_request? && target_package.blank?) || scm_webhook.push_event? || scm_webhook.tag_push_event?
   end
 end

@@ -1,5 +1,3 @@
-require 'rails_helper'
-
 RSpec.describe BsRequest::FindFor::User do
   describe '#all' do
     let(:klass) { BsRequest::FindFor::User }
@@ -67,7 +65,7 @@ RSpec.describe BsRequest::FindFor::User do
         end
       end
 
-      context 'to a project with a request' do
+      context 'to a package with a request' do
         it_behaves_like 'has a request' do
           let!(:relationship_package_group) { create(:relationship_package_group, package: target_package, group: group) }
         end
@@ -113,7 +111,7 @@ RSpec.describe BsRequest::FindFor::User do
         let!(:another_request) { create(:set_bugowner_request, creator: another_user, review_by_user: user) }
 
         context 'submitted as array' do
-          subject { klass.new(user: user.login, review_states: [:accepted, :new]).all }
+          subject { klass.new(user: user.login, review_states: %i[accepted new]).all }
 
           it { expect(subject).to include(request) }
           it { expect(subject).to include(another_request) }
@@ -187,7 +185,6 @@ RSpec.describe BsRequest::FindFor::User do
       subject { klass.new(user: user.login).all }
 
       it { expect(subject).to include(review_request) }
-      it { expect(subject).to include(maintainer_request) }
       it { expect(subject).to include(maintainer_request) }
     end
   end

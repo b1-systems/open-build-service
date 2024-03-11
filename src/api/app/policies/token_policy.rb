@@ -22,7 +22,7 @@ class TokenPolicy < ApplicationPolicy
   end
 
   def edit?
-    update?
+    create?
   end
 
   def update?
@@ -37,13 +37,7 @@ class TokenPolicy < ApplicationPolicy
     create?
   end
 
-  def webui_trigger?
-    return false unless user.is_active?
-
-    record.executor == user && !record.type.in?(['Token::Workflow', 'Token::Rss'])
-  end
-
   def show?
-    record.executor == user && !record.type.in?(['Token::Rss'])
+    create?
   end
 end

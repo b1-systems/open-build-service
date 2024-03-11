@@ -1,12 +1,10 @@
-require 'rails_helper'
-
 RSpec.describe Workflow::Step::ConfigureRepositories do
   let(:user) { create(:confirmed_user, :with_home, login: 'Iggy') }
   let(:token) { create(:workflow_token, executor: user) }
 
   describe '#call' do
     let(:path_project1) { create(:project, name: 'openSUSE:Factory') }
-    let!(:path_repository1) { create(:repository, project: path_project1, name: 'snapshot', architectures: ['i586', 'aarch64']) }
+    let!(:path_repository1) { create(:repository, project: path_project1, name: 'snapshot', architectures: %w[i586 aarch64]) }
     let(:path_project2) { create(:project, name: 'openSUSE:Leap:15.4') }
     let!(:path_repository2) { create(:repository, project: path_project2, name: 'standard', architectures: ['x86_64']) }
     let(:target_project) { create(:project, name: 'OBS:Server:Unstable:openSUSE:repo123:PR-1', maintainer: user) }
@@ -21,9 +19,9 @@ RSpec.describe Workflow::Step::ConfigureRepositories do
                 { target_project: 'openSUSE:Factory', target_repository: 'snapshot' },
                 { target_project: 'openSUSE:Leap:15.4', target_repository: 'standard' }
               ],
-              architectures: [
-                'x86_64',
-                'ppc'
+              architectures: %w[
+                x86_64
+                ppc
               ]
             }
           ]
@@ -85,21 +83,16 @@ RSpec.describe Workflow::Step::ConfigureRepositories do
         let(:configured_architectures) { configured_repositories.first.architectures }
 
         it 'configures the repository with the right attributes' do
-          expect(configured_repositories).to match_array([
-                                                           have_attributes(name: 'openSUSE_Tumbleweed', db_project_id: target_project.id)
-                                                         ])
+          expect(configured_repositories).to contain_exactly(have_attributes(name: 'openSUSE_Tumbleweed', db_project_id: target_project.id))
         end
 
         it 'configures the path elements with the right attributes' do
-          expect(configured_path_elements).to match_array([
-                                                            have_attributes(parent_id: configured_repositories.first.id, repository_id: path_repository1.id, position: 1,
-                                                                            kind: 'standard'),
-                                                            have_attributes(parent_id: configured_repositories.first.id, repository_id: path_repository2.id, position: 2, kind: 'standard')
-                                                          ])
+          expect(configured_path_elements).to contain_exactly(have_attributes(parent_id: configured_repositories.first.id, repository_id: path_repository1.id, position: 1,
+                                                                              kind: 'standard'), have_attributes(parent_id: configured_repositories.first.id, repository_id: path_repository2.id, position: 2, kind: 'standard'))
         end
 
         it 'overwrites previously configured architectures with those in the step instructions' do
-          expect(configured_architectures.map(&:name)).to eq(['x86_64', 'ppc'])
+          expect(configured_architectures.map(&:name)).to eq(%w[x86_64 ppc])
         end
       end
 
@@ -112,9 +105,9 @@ RSpec.describe Workflow::Step::ConfigureRepositories do
                 {
                   name: 'openSUSE_Tumbleweed',
                   paths: [{ target_project: 'openSUSE:Factory', target_repository: 'snapshot' }],
-                  architectures: [
-                    'x86_64',
-                    'ppc'
+                  architectures: %w[
+                    x86_64
+                    ppc
                   ]
                 }
               ]
@@ -145,9 +138,9 @@ RSpec.describe Workflow::Step::ConfigureRepositories do
               [
                 {
                   name: 'openSUSE_Tumbleweed',
-                  architectures: [
-                    'x86_64',
-                    'ppc'
+                  architectures: %w[
+                    x86_64
+                    ppc
                   ]
                 }
               ]
@@ -180,9 +173,9 @@ RSpec.describe Workflow::Step::ConfigureRepositories do
                     { target_repository: 'snapshot' },
                     { target_project: 'openSUSE:Factory', target_repository: 'snapshot' }
                   ],
-                  architectures: [
-                    'x86_64',
-                    'ppc'
+                  architectures: %w[
+                    x86_64
+                    ppc
                   ]
                 }
               ]
@@ -208,9 +201,9 @@ RSpec.describe Workflow::Step::ConfigureRepositories do
                     { target_project: 'openSUSE:Factory' },
                     { target_project: 'openSUSE:Factory', target_repository: 'snapshot' }
                   ],
-                  architectures: [
-                    'x86_64',
-                    'ppc'
+                  architectures: %w[
+                    x86_64
+                    ppc
                   ]
                 }
               ]
@@ -233,9 +226,9 @@ RSpec.describe Workflow::Step::ConfigureRepositories do
                 {
                   name: 'openSUSE_Tumbleweed',
                   paths: [{ target_project: 'openSUSE:Factory', target_repository: 'snapshot' }],
-                  architectures: [
-                    'x86_64',
-                    'ppc'
+                  architectures: %w[
+                    x86_64
+                    ppc
                   ]
                 }
               ]
@@ -281,17 +274,17 @@ RSpec.describe Workflow::Step::ConfigureRepositories do
                 {
                   name: 'openSUSE_Tumbleweed-snapshot',
                   paths: [{ target_project: 'openSUSE:Factory', target_repository: 'snapshot' }],
-                  architectures: [
-                    'foo',
-                    'x86_64'
+                  architectures: %w[
+                    foo
+                    x86_64
                   ]
                 },
                 {
                   name: 'openSUSE_Tumbleweed-standard',
                   paths: [{ target_project: 'openSUSE:Factory', target_repository: 'standard' }],
-                  architectures: [
-                    'bar',
-                    'i586'
+                  architectures: %w[
+                    bar
+                    i586
                   ]
                 }
 
@@ -315,9 +308,9 @@ RSpec.describe Workflow::Step::ConfigureRepositories do
               {
                 name: 'openSUSE_Tumbleweed',
                 paths: [{ target_project: 'openSUSE:Factory', target_repository: 'snapshot' }],
-                architectures: [
-                  'x86_64',
-                  'ppc'
+                architectures: %w[
+                  x86_64
+                  ppc
                 ]
               }
             ]
@@ -343,9 +336,9 @@ RSpec.describe Workflow::Step::ConfigureRepositories do
             {
               name: 'openSUSE_Tumbleweed',
               paths: [{ target_project: 'openSUSE:Factory', target_repository: 'snapshot' }],
-              architectures: [
-                'x86_64',
-                'ppc'
+              architectures: %w[
+                x86_64
+                ppc
               ]
             }
           ]
