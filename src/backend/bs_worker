@@ -3714,6 +3714,7 @@ sub dobuild {
       $buildinfo->{'outbuildinfo'}->{$_} = $buildinfo->{$_} if defined $buildinfo->{$_};
     }
   }
+ writestr("$buildroot/.build.log", undef, "starting...");
 
   ####### download phase
   $binariesdownload = 0;
