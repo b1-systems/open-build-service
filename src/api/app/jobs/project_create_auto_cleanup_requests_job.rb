@@ -20,7 +20,7 @@ These requests are not created for projects with open requests or if you remove 
         <request>
           <action type="delete"><target project="<%= project %>"/></action>
           <description><%= description %></description>
-          <state />
+          <state name="new" />
           <accept_at><%= cleanup_time %></accept_at>
         </request>
       XML
@@ -37,11 +37,11 @@ These requests are not created for projects with open requests or if you remove 
     return unless cleanup_days && cleanup_days.positive?
 
     # defaults
-    User.get_default_admin.run_as do
+    User.default_admin.run_as do
       @cleanup_attribute = AttribType.find_by_namespace_and_name!('OBS', 'AutoCleanup')
       @cleanup_time = Time.zone.now + cleanup_days.days
 
-      Project.find_by_attribute_type(@cleanup_attribute).each do |prj|
+      Project.joins(:attribs).where(attribs: { attrib_type_id: @cleanup_attribute.id }).find_each do |prj|
         autoclean_project(prj)
       end
     end
@@ -80,7 +80,7 @@ These requests are not created for projects with open requests or if you remove 
 
   def project_ready_to_autoclean?(project)
     # project may be locked?
-    return false if project.is_locked?
+    return false if project.locked?
     # open requests do block the cleanup
     return false if open_requests_count(project.name).positive?
     return false unless project.check_weak_dependencies?
@@ -93,7 +93,7 @@ These requests are not created for projects with open requests or if you remove 
   end
 
   def relation
-    BsRequest.in_states(%i[new review declined])
+    BsRequest.where(state: %i[new review declined])
              .joins(:bs_request_actions)
   end
 end

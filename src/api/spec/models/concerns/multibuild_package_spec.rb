@@ -7,36 +7,7 @@ RSpec.describe MultibuildPackage do
   let(:test_class) { TestMultibuildPackage }
 
   context 'class methods' do
-    it { expect(test_class).to respond_to(:valid_multibuild_name?) }
     it { expect(test_class).to respond_to(:striping_multibuild_suffix) }
-
-    describe '.valid_multibuild_name?' do
-      before do
-        allow(test_class).to receive(:valid_name?).and_return(package_name_validation)
-      end
-
-      context 'valid multibuild name' do
-        let(:package_name) { 'foo:bar' }
-        let(:package_name_validation) do
-          Package.valid_name?(package_name, true)
-        end
-
-        subject { test_class.valid_multibuild_name?(package_name) }
-
-        it { expect(subject).to be_truthy }
-      end
-
-      context 'invalid multibuild name' do
-        let(:package_name) { 'foo:bar' }
-        let(:package_name_validation) do
-          Package.valid_name?(package_name, false)
-        end
-
-        subject { test_class.valid_multibuild_name?(package_name) }
-
-        it { expect(subject).to be_falsey }
-      end
-    end
 
     describe '.striping_multibuild_suffix' do
       context '_patchinfo' do
@@ -49,6 +20,26 @@ RSpec.describe MultibuildPackage do
         subject { test_class.striping_multibuild_suffix('foo:bar') }
 
         it { expect(subject).to eq('foo') }
+      end
+    end
+
+    describe '.multibuild_flavor' do
+      context '_product' do
+        subject { test_class.multibuild_flavor('_product:hans') }
+
+        it { expect(subject).to be_nil }
+      end
+
+      context 'no multibuild flavor' do
+        subject { test_class.multibuild_flavor('foo') }
+
+        it { expect(subject).to be_nil }
+      end
+
+      context 'multibuild flavor' do
+        subject { test_class.multibuild_flavor('foo:bar') }
+
+        it { expect(subject).to eq('bar') }
       end
     end
   end

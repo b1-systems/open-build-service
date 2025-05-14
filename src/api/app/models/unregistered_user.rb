@@ -7,12 +7,6 @@ class UnregisteredUser < User
   # Raises an exception if registration is disabled for a user
   # Returns true if a user can register
   def self.can_register?
-    # No registering if LDAP is on
-    if CONFIG['ldap_mode'] == :on && !User.admin_session?
-      logger.debug 'Someone tried to register with "ldap_mode" turned on'
-      raise ErrRegisterSave, 'Sorry, new users can only sign up via LDAP'
-    end
-
     # No registering if we use an authentication proxy
     if ::Configuration.proxy_auth_mode_enabled?
       logger.debug 'Someone tried to register with "proxy_auth_mode" turned on'
@@ -53,8 +47,7 @@ class UnregisteredUser < User
       password_confirmation: opts[:password_confirmation],
       email: opts[:email],
       state: state,
-      adminnote: opts[:note],
-      ignore_auth_services: Configuration.ldap_enabled?
+      adminnote: opts[:note]
     )
 
     raise ErrRegisterSave, "Could not save the registration, details: #{newuser.errors.full_messages.to_sentence}" unless newuser.save
@@ -72,7 +65,7 @@ end
 #  id                            :integer          not null, primary key
 #  adminnote                     :text(65535)
 #  biography                     :string(255)      default("")
-#  blocked_from_commenting       :boolean          default(FALSE), not null, indexed
+#  censored                      :boolean          default(FALSE), not null, indexed
 #  color_theme                   :integer          default("system"), not null
 #  deprecated_password           :string(255)      indexed
 #  deprecated_password_hash_type :string(255)
@@ -94,11 +87,11 @@ end
 #
 # Indexes
 #
-#  index_users_on_blocked_from_commenting  (blocked_from_commenting)
-#  index_users_on_in_beta                  (in_beta)
-#  index_users_on_in_rollout               (in_rollout)
-#  index_users_on_rss_secret               (rss_secret) UNIQUE
-#  index_users_on_state                    (state)
-#  users_login_index                       (login) UNIQUE
-#  users_password_index                    (deprecated_password)
+#  index_users_on_censored    (censored)
+#  index_users_on_in_beta     (in_beta)
+#  index_users_on_in_rollout  (in_rollout)
+#  index_users_on_rss_secret  (rss_secret) UNIQUE
+#  index_users_on_state       (state)
+#  users_login_index          (login) UNIQUE
+#  users_password_index       (deprecated_password)
 #

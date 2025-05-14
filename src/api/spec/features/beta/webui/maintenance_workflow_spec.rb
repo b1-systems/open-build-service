@@ -53,14 +53,12 @@ RSpec.describe 'MaintenanceWorkflow', :js, :vcr do
         visit request_show_path(bs_request)
         fill_in('reason', with: 'really? ok')
 
+        click_button('Accept')
         click_button('Accept request')
       end
 
-      it 'succeeds' do
-        expect(page).to have_text("Request #{bs_request.number} accepted")
-      end
-
       it 'creates maintenance incident project' do
+        expect(page).to have_text("Request #{bs_request.number} accepted")
         expect(bs_request.bs_request_actions.first.target_project).to eq('MaintenanceProject:0')
       end
     end
@@ -96,14 +94,12 @@ RSpec.describe 'MaintenanceWorkflow', :js, :vcr do
         visit request_show_path(bs_request)
         fill_in('reason', with: 'really? ok')
 
+        click_button('Accept')
         click_button('Accept request')
       end
 
-      it 'succeeds' do
-        expect(page).to have_text("Request #{bs_request.number} accepted")
-      end
-
       it 'creates maintenance incident project' do
+        expect(page).to have_text("Request #{bs_request.number} accepted")
         expect(bs_request.bs_request_actions.first.target_project).to eq('MaintenanceProject:0')
       end
     end

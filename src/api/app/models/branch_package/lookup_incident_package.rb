@@ -41,7 +41,7 @@ class BranchPackage::LookupIncidentPackage
 
   # TODO: there is not a better way to find it?
   def incident?(pkg)
-    pkg.project.is_maintenance_incident? && pkg.project.is_unreleased?
+    pkg.project.maintenance_incident? && pkg.project.unreleased?
   end
 
   def obs_maintenance_project
@@ -49,6 +49,6 @@ class BranchPackage::LookupIncidentPackage
   end
 
   def maintenance_projects
-    @maintenance_projects ||= Project.find_by_attribute_type(obs_maintenance_project)
+    @maintenance_projects ||= Project.joins(:attribs).where(attribs: { attrib_type_id: obs_maintenance_project.id })
   end
 end

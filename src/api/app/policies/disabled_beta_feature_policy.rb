@@ -1,9 +1,9 @@
 class DisabledBetaFeaturePolicy < ApplicationPolicy
   class Scope < Scope
     def initialize(user, scope)
-      raise Pundit::NotAuthorizedError, reason: ApplicationPolicy::ANONYMOUS_USER if user.nil? || user.is_nobody?
+      raise Pundit::NotAuthorizedError, reason: ApplicationPolicy::ANONYMOUS_USER if user.nil? || user.nobody?
 
-      super(user, scope)
+      super
     end
 
     def resolve

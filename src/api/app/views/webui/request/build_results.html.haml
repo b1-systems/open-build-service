@@ -1,18 +1,19 @@
 :ruby
-  @pagetitle = "Request #{@bs_request.number}: #{@action[:name]}"
+  @pagetitle = "Request #{@bs_request.number}: #{@action.name}"
 
 = render partial: 'beta_alert', locals: { bs_request: @bs_request, action: @action }
 
 .card
   .card-body.p-0
     = render partial: 'request_header',
-        locals: { bs_request: @bs_request, staging_status: @staging_status, action: @action, active_action: @active_action,
-                  prev_action: @prev_action, next_action: @next_action, supported_actions: @supported_actions,
-                  diff_to_superseded_id: @diff_to_superseded_id, diff_limit: @diff_limit, page_name: 'request_build_results',
-                  bs_requests: @watched_requests, packages: @watched_packages, projects: @watched_projects }
+        locals: { bs_request: @bs_request, staging_status: @staging_status, action: @action,
+                  prev_action: @prev_action, next_action: @next_action, actions: @actions,
+                  diff_to_superseded_id: @diff_to_superseded_id, page_name: 'request_build_results',
+                  bs_requests: @watched_requests, packages: @watched_packages, projects: @watched_projects,
+                  current_notification: @current_notification }
     = render partial: 'request_tabs',
-        locals: { bs_request: @bs_request, bs_request_action: @bs_request_action, issues: @issues, active_action: @active_action,
-                  actions_count: @supported_actions.count, active_tab: @active_tab }
+        locals: { bs_request: @bs_request, action: @action, issues: @issues,
+                  actions_count: @actions.count, active_tab: @active_tab }
     .container.p-4
       - if @buildable
         .build-results-content
@@ -23,9 +24,8 @@
               = link_to(@project, project_show_path(@project))
           .result{ data: { build_results_url: request_complete_build_results_path } }
             // The content of this div is set by JavaScript which calls the partial ../_build_status.html.haml
-            .text-center.p-4
-              %i.fas.fa-spinner.fa-spin.me-1
-              Loading build results...
+            = render partial: 'webui/shared/loading', locals: { text: 'Loading build results...' }
+
         :javascript
           updateBuildResultBeta();
       - else

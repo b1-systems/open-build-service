@@ -48,14 +48,21 @@ my $dest_creds;
 my $use_image_tags;
 my $multiarch;
 my $digestfile;
+my $listfile;
 my $writeinfofile;
 my $delete_mode;
 my $delete_except_mode;
 my $list_mode;
 my $no_cosign_info;
+my $no_info;
+my $listidx;
+my $listidx_no_info;
 my @tags;
 my $blobdir;
 my $oci;
+my $old_listfile;
+my $with_platforms;
+my $missingok;
 
 my $cosign;
 my $cosigncookie;
@@ -70,12 +77,24 @@ my $rekorserver;
 my $registryserver;
 my $repository;
 my @tarfiles;
+my $list_manifestinfo;
+my $manifestinfoserver;
 
 my $registry_authenticator;
 my $registry_blob_authenticator;
 my $keepalive;
 
 my $cosign_cookie_name = 'org.open-build-service.cosign.cookie';
+
+sub registry_errorcode {
+  my ($answer) = @_;
+  my $code;
+  eval {
+    my $r = JSON::XS::decode_json($answer);
+    $code = $r->{'errors'}->[0]->{'code'} if $r->{'errors'};
+  };
+  return $code;
+}
 
 sub send_layer {
   my ($param) = @_;
@@ -85,6 +104,16 @@ sub send_layer {
   return $chunk;
 }
 
+sub contenttype2manitype {
+  my ($ct) = @_;
+  return 'v1image' unless $ct;
+  return 'list' if $ct eq $BSContar::mt_docker_manifestlist;
+  return 'image' if $ct eq $BSContar::mt_docker_manifest;
+  return 'ociimage' if $ct eq $BSContar::mt_oci_manifest;
+  return 'ocilist' if $ct eq $BSContar::mt_oci_index;
+  return 'unknown';
+}
+  
 sub blob_exists {
   my ($blobid, $size) = @_;
   my $replyheaders;
@@ -218,13 +247,12 @@ sub manifest_upload {
   my $maniid = BSContar::blobid($manifest);
   return $maniid if manifest_exists($manifest, $tag, $content_type);
   $content_type ||= $BSContar::mt_docker_manifest;
-  my $fat = '';
-  $fat = 'fat ' if $content_type eq $BSContar::mt_docker_manifestlist || $content_type eq $BSContar::mt_oci_index;
+  my $mtype = contenttype2manitype($content_type);
   if (!$quiet) {
     if (defined($tag)) {
-      print "uploading ${fat}manifest $maniid for tag '$tag'... ";
+      print "uploading $mtype manifest $maniid for tag '$tag'... ";
     } else {
-      print "uploading ${fat}manifest $maniid... ";
+      print "uploading $mtype manifest $maniid... ";
     }
   }
   $tag = $maniid unless defined $tag;
@@ -245,8 +273,8 @@ sub manifest_upload {
   return $maniid;
 }
 
-sub manifest_append {
-  my ($manifest, $tag) = @_;
+sub manifest_append_digestfile  {
+  my ($manifest, $tag, $content_type) = @_;
   my $maniid = BSContar::blobid($manifest);
   my $str = "$maniid ".length($manifest).(defined($tag) ? " $tag" : '')."\n";
   if ($digestfile ne '-') {
@@ -256,16 +284,31 @@ sub manifest_append {
   }
 }
 
+sub manifest_append_listfile {
+  my ($manifest, $tag, $content_type, $extra) = @_;
+  my $mtype = contenttype2manitype($content_type || $BSContar::mt_docker_manifest);
+  my $maniid = BSContar::blobid($manifest);
+  $tag = '-' unless defined $tag;
+  my $str = sprintf "%-20s %s %s%s\n", $tag, $maniid, $mtype, $extra ne '' ? " $extra" : '';
+  if ($listfile ne '-') {
+    BSUtil::appendstr($listfile, $str);
+  } else {
+    print $str;
+  }
+}
+
 sub manifest_upload_tags {
   my ($manifest, $tags, $content_type) = @_;
   if (!@{$tags || []}) {
     manifest_upload($manifest, undef, $content_type);
-    manifest_append($manifest, undef) if defined $digestfile;
+    manifest_append_digestfile($manifest, undef, $content_type) if defined $digestfile;
+    manifest_append_listfile($manifest, undef, $content_type) if defined $listfile;
     return;
   }
   for my $tag (BSUtil::unify(@$tags)) {
     manifest_upload($manifest, $tag, $content_type);
-    manifest_append($manifest, $tag) if defined $digestfile;
+    manifest_append_digestfile($manifest, $tag, $content_type) if defined $digestfile;
+    manifest_append_listfile($manifest, $tag, $content_type) if defined $listfile;
   }
 }
 
@@ -283,10 +326,14 @@ sub cosign_upload {
   }
   my $mani = BSContar::create_dist_manifest_data($config_data, \@layer_data, $oci);
   my $mani_json = BSContar::create_dist_manifest($mani);
-  return manifest_upload($mani_json, $tag, $mani->{'mediaType'});
+  manifest_upload($mani_json, $tag, $mani->{'mediaType'});
+  my $extra = '';
+  $extra = manifest2extrainfo($mani, $tag) if $tag =~ /^[a-z0-9]+-[a-f0-9]+\.(?:sig|att)$/;
+  manifest_append_listfile($mani_json, $tag, $mani->{'mediaType'}, $extra) if defined $listfile;
 }
 
 sub get_all_tags {
+  my ($missing_ok) = @_;
   my @regtags;
   my $replyheaders;
   my $param = {
@@ -295,10 +342,18 @@ sub get_all_tags {
     'timeout' => $registry_timeout,
     'replyheaders' => \$replyheaders,
     'keepalive' => $keepalive,
+    'ignorestatus' => ($missing_ok ? 1 : 0),
   };
   while (1) {
     undef $replyheaders;
-    my $r = BSRPC::rpc($param, \&JSON::XS::decode_json);
+    my $r = BSRPC::rpc($param);
+    if ($replyheaders->{'status'} !~ /^2\d\d[^\d]/) {
+      my $code = registry_errorcode($r);
+      return () if !@regtags && $code && $code eq 'NAME_UNKNOWN' && $missing_ok;
+      die("remote error: $replyheaders->{'status'} [$code]\n") if $code;
+      die("remote error: $replyheaders->{'status'}\n");
+    }
+    $r = JSON::XS::decode_json($r);
     push @regtags, @{$r->{'tags'} || []};
     last unless $replyheaders->{'link'};
     die unless $replyheaders->{'link'} =~ /^<(\/v2\/.*)>/;
@@ -330,7 +385,7 @@ sub get_all_repositories {
 }
 
 sub get_manifest_for_tag {
-  my ($tag) = @_;
+  my ($tag, $ifnonematch) = @_;
   my $replyheaders;
   my $param = {
     'uri' => "$registryserver/v2/$repository/manifests/$tag",
@@ -340,6 +395,7 @@ sub get_manifest_for_tag {
     'timeout' => $registry_timeout,
     'keepalive' => $keepalive,
   };
+  push @{$param->{'headers'}}, "If-None-Match: $ifnonematch" if $ifnonematch;
   my $mani_json;
   eval { $mani_json = BSRPC::rpc($param); };
   if ($@) {
@@ -411,44 +467,173 @@ sub delete_tag {
   }
 }
 
-sub list_tag {
-  my ($tag) = @_;
-
-  if ($no_cosign_info && $tag =~ /^[a-z0-9]+-[a-f0-9]+\.(?:sig|att)$/) {
-    printf "%-20s -\n", $tag;
-    return;
-  }
-  my ($mani, $maniid) = get_manifest_for_tag($tag);
+sub manifest2extrainfo {
+  my ($mani, $tag) = @_;
   my $extra = '';
   if ($tag =~ /^[a-z0-9]+-[a-f0-9]+\.sig$/ && $mani && $mani->{'mediaType'} && $mani->{'mediaType'} eq $BSContar::mt_oci_manifest) {
     if (@{$mani->{'layers'} || []} == 1 && $mani->{'layers'}->[0]->{'mediaType'} eq 'application/vnd.dev.cosign.simplesigning.v1+json') {
       my $annotations = $mani->{'layers'}->[0]->{'annotations'} || {};
       my $cookie = $annotations->{$cosign_cookie_name};
-      $extra = " cosigncookie=$cookie" if $cookie;
+      $extra = "cosigncookie=$cookie" if $cookie;
     }
   }
   if ($tag =~ /^[a-z0-9]+-[a-f0-9]+\.att$/ && $mani && $mani->{'mediaType'} && $mani->{'mediaType'} eq $BSContar::mt_oci_manifest) {
     if (@{$mani->{'layers'} || []} >= 1 && $mani->{'layers'}->[0]->{'mediaType'} eq 'application/vnd.dsse.envelope.v1+json') {
       my $annotations = $mani->{'layers'}->[0]->{'annotations'} || {};
       my $cookie = $annotations->{$cosign_cookie_name};
-      $extra = " cosigncookie=$cookie" if $cookie;
+      $extra = "cosigncookie=$cookie" if $cookie;
     }
   }
-  if (!$mani) {
-    printf "%-20s -\n", $tag;
-  } elsif (!$mani->{'mediaType'}) {
-    printf "%-20s %s %s\n", $tag, $maniid, 'v1image';
-  } elsif ($mani->{'mediaType'} eq $BSContar::mt_docker_manifestlist) {
-    printf "%-20s %s %s\n", $tag, $maniid, 'list';
-  } elsif ($mani->{'mediaType'} eq $BSContar::mt_docker_manifest) {
-    printf "%-20s %s %s%s\n", $tag, $maniid, 'image', $extra;
-  } elsif ($mani->{'mediaType'} eq $BSContar::mt_oci_manifest) {
-    printf "%-20s %s %s%s\n", $tag, $maniid, 'ociimage', $extra;
-  } elsif ($mani->{'mediaType'} eq $BSContar::mt_oci_index) {
-    printf "%-20s %s %s\n", $tag, $maniid, 'ocilist';
-  } else {
-    printf "%-20s %s %s\n", $tag, $maniid, 'unknown';
+  return $extra;
+}
+
+sub platform2str {
+  my ($platform) = @_;
+  return $platform ? BSContar::make_platformstr($platform->{'architecture'}, $platform->{'variant'}, $platform->{'os'}) : 'any';
+}
+
+sub manifest2platformsinfo {
+  my ($mani, $tag) = @_;
+  return '' unless $mani;
+  if ($mani->{'mediaType'} eq $BSContar::mt_docker_manifestlist || $mani->{'mediaType'} eq $BSContar::mt_oci_index) {
+    my %plats;
+    $plats{platform2str($_->{'platform'})} = 1 for @{$mani->{'manifests'} || []};
+    return "platforms=".join(',', sort keys %plats) if %plats;
   }
+  return '';
+}
+
+sub list_manifestinfo {
+  my ($maniid, $indent) = @_;
+  my $g = $gun ? "$gun/" : '';
+  my $param = {
+    'uri' => ($manifestinfoserver || $registryserver)."/v2/$g$repository/manifestinfos/$maniid",
+    'timeout' => $registry_timeout,
+  };
+  $param->{'authenticator'} = $registry_authenticator unless $manifestinfoserver;
+  my $manifestinfo_json = eval { BSRPC::rpc($param, undef) };
+  return unless $manifestinfo_json;
+  $indent ||= '';
+  my $manifestinfo = JSON::XS::decode_json($manifestinfo_json);
+  print "${indent}[$manifestinfo->{'project'}/$manifestinfo->{'repository'}/$manifestinfo->{'arch'}/$manifestinfo->{'package'}]\n";
+}
+
+sub list_tag {
+  my ($tag, $maniids, $old_datas, $disptag) = @_;
+
+  my $indent = $disptag ? '        ' : '    ';
+
+  if ($no_info || ($no_cosign_info && $tag =~ /^[a-z0-9]+-[a-f0-9]+\.(?:sig|att)$/)) {
+    $disptag = $tag unless defined $disptag;
+    printf "%-20s -\n", $disptag;
+    return;
+  }
+
+  # extract information from the old data
+  my $old_data = ($old_datas || {})->{$tag};
+  undef $old_data if @{$old_data || []} <= 1;	# at least the digest and the type
+  my $old_data_mtype = @{$old_data || []} > 1 ? $old_data->[1] : '';
+  my $old_data_extra = @{$old_data || []} > 2 ? $old_data->[2] : '';
+
+  # check if we can use the If-None-Match header
+  my $ifnonematch;
+  $ifnonematch = "\"$old_data->[0]\"" if $old_data;
+  $ifnonematch = undef if $maniids;
+  $ifnonematch = undef if $list_manifestinfo;
+  if ($with_platforms && $tag !~ /^[a-z0-9]+-[a-f0-9]+\.(?:sig|att)$/) {
+    $ifnonematch = undef if ($old_data_mtype eq 'list' || $old_data_mtype eq 'ocilist') && $old_data_extra !~ /^platforms=/;
+  }
+  if ($listidx && ($old_data_mtype eq 'list' || $old_data_mtype eq 'ocilist')) {
+    # we will need to list submanifests
+    $ifnonematch = undef unless $old_datas->{"$old_data->[0]/"} && $listidx_no_info;
+  }
+
+  my ($mani, $maniid) = eval { get_manifest_for_tag($tag, $ifnonematch) };
+  if ($@) {
+    if ($ifnonematch && $@ =~ /^304/) {
+      $tag = '-' if $tag eq $old_data->[0];
+      $maniid = $old_data->[0];
+      my ($mtype, $extra) = ($old_data_mtype, $old_data_extra);
+      if ($tag !~ /^[a-z0-9]+-[a-f0-9]+\.(?:sig|att)$/) {
+	$extra = '' unless $with_platforms;
+      }
+      $disptag = $tag unless defined $disptag;
+      printf "%-20s %s %s%s\n", $disptag, $maniid, $mtype, $extra ? " $extra" : '';
+      if ($listidx && ($mtype eq 'list' || $mtype eq 'ocilist')) {
+	for (@{$old_datas->{"$maniid/"}}) {
+	  my $dtag = $indent.$_->[0];
+	  if ($listidx_no_info) {
+            printf "%-20s %s -\n", $dtag, $_->[1];
+	  } else {
+	    die;	# not implemented
+	  }
+	}
+      }
+      return;
+    }
+    die($@);
+  }
+
+  if (!$mani) {
+    $disptag = $tag unless defined $disptag;
+    printf "%-20s -\n", $disptag;
+    return;
+  }
+
+  die unless $mani && $maniid =~ /^[a-z0-9]+:[a-f0-9]+$/;
+
+  # collect digests if requested
+  if ($maniids && $tag !~ /^[a-z0-9]+-[a-f0-9]+\.(?:sig|att)$/) {
+    $maniids->{$maniid} = 1;
+    if ($mani->{'mediaType'} eq $BSContar::mt_docker_manifestlist || $mani->{'mediaType'} eq $BSContar::mt_oci_index) {
+      $maniids->{$_->{'digest'}} = 1 for @{$mani->{'manifests'} || []};
+    }
+  }
+
+  my $mtype = contenttype2manitype($mani->{'mediaType'});
+  my $extra = '';
+  $extra = manifest2extrainfo($mani, $tag) if $tag =~ /^[a-z0-9]+-[a-f0-9]+\.(?:sig|att)$/;
+  $extra = manifest2platformsinfo($mani, $tag) if $with_platforms && $tag !~ /^[a-z0-9]+-[a-f0-9]+\.(?:sig|att)$/;
+
+  $disptag = ($tag eq $maniid ? '-' : $tag) unless defined $disptag;
+  printf "%-20s %s %s%s\n", $disptag, $maniid, $mtype, $extra ne '' ? " $extra" : '';
+  list_manifestinfo($maniid, $indent) if $list_manifestinfo && $mtype eq 'image' || $mtype eq 'ociimage';
+
+  if ($listidx && ($mtype eq 'list' || $mtype eq 'ocilist')) {
+    for (@{$mani->{'manifests'} || []}) {
+      my $dtag = $indent.'/'.platform2str($_->{'platform'});
+      if ($listidx_no_info) {
+	printf "%-20s %s -\n", $dtag, $_->{'digest'};
+      } else {
+	list_tag($_->{'digest'}, undef, undef, $dtag);
+      }
+    }
+  }
+}
+
+sub read_old_listfile {
+  local *F;
+  open(F, '<', $old_listfile) || die("$old_listfile: $!\n");
+  my $old = {} ;
+  my $lasttag;
+  while (<F>) {
+    chomp;
+    next if /^#/ || /^\s*$/;
+    my @s = split(' ', $_, 4);
+    my $tag = shift @s;
+    next if $tag && $tag =~ /^\[/;	# ignore manifestinfo
+    $lasttag = undef unless $tag && $tag =~ /^\//;
+    next if !@s || $tag eq '-';
+    if ($tag =~ /^\//) {
+      push @{$old->{"$lasttag/"}}, [ $tag, @s] if defined($lasttag);
+    } else {
+      $old->{$tag} = \@s;
+      $lasttag = $s[0];
+      delete $old->{"$lasttag/"} if defined($lasttag);
+    }
+  }
+  close F;
+  return $old;
 }
 
 sub tags_from_digestfile {
@@ -567,9 +752,10 @@ while (@ARGV) {
   } elsif ($ARGV[0] eq '-t') {
     push @tags, $ARGV[1];
     splice(@ARGV, 0, 2);
-  } elsif ($ARGV[0] eq '-F') {
-    $digestfile = $ARGV[1];
-    splice(@ARGV, 0, 2);
+  } elsif ($ARGV[0] eq '-F' || $ARGV[0] eq '--digestfile') {
+    (undef, $digestfile) = splice(@ARGV, 0, 2);
+  } elsif ($ARGV[0] eq '--listfile') {
+    (undef, $listfile) = splice(@ARGV, 0, 2);
   } elsif ($ARGV[0] eq '--write-info') {
     (undef, $writeinfofile) = splice(@ARGV, 0, 2);
   } elsif ($ARGV[0] eq '-D') {
@@ -578,9 +764,20 @@ while (@ARGV) {
   } elsif ($ARGV[0] eq '-l') {
     $list_mode = 1;
     shift @ARGV;
+  } elsif ($ARGV[0] eq '--no-info') {
+    $no_info = 1;
+    shift @ARGV;
   } elsif ($ARGV[0] eq '--no-cosign-info') {
     $no_cosign_info = 1;
     shift @ARGV;
+  } elsif ($ARGV[0] eq '--with-platforms') {
+    $with_platforms = 1;
+    shift @ARGV;
+  } elsif ($ARGV[0] eq '--missingok') {
+    $missingok = 1;
+    shift @ARGV;
+  } elsif ($ARGV[0] eq '--old-listfile') {
+    (undef, $old_listfile) = splice(@ARGV, 0, 2);
   } elsif ($ARGV[0] eq '-X') {
     $delete_except_mode = 1;
     shift @ARGV;
@@ -610,9 +807,22 @@ while (@ARGV) {
   } elsif ($ARGV[0] eq '--dest-creds') {
     $dest_creds = BSBearer::get_credentials($ARGV[1]);
     splice(@ARGV, 0, 2);
-  } elsif ($ARGV[0] eq '-P' || $ARGV[0] eq '--project' || $ARGV[0] eq '-u' || $ARGV[0] eq '--signtype' ||  $ARGV[0] eq '-h') {
+  } elsif ($ARGV[0] eq '-P' || $ARGV[0] eq '--project' || $ARGV[0] eq '-u' || $ARGV[0] eq '--signtype' || $ARGV[0] eq '--signflavor' || $ARGV[0] eq '-h') {
     my @signopts = splice(@ARGV, 0, 2);
     push @signcmd, @signopts unless $signopts[0] eq '-h';
+  } elsif ($ARGV[0] eq '--manifestinfo') {
+    $list_manifestinfo = 1;
+    shift @ARGV;
+  } elsif ($ARGV[0] eq '--manifestinfoserver') {
+    (undef, $manifestinfoserver) = splice(@ARGV, 0, 2);
+    $list_manifestinfo = 1;
+  } elsif ($ARGV[0] eq '--listidx') {
+    $listidx = 1;
+    shift @ARGV;
+  } elsif ($ARGV[0] eq '--listidx-no-info') {
+    $listidx = 1;
+    $listidx_no_info = 1;
+    shift @ARGV;
   } else {
     last;
   }
@@ -628,11 +838,25 @@ if ($list_mode) {
       print "$repo\n";
     }
   } elsif (@ARGV == 2) {
+    my $old_datas = {};
+    $old_datas = read_old_listfile() if $old_listfile;
     $keepalive = {};
     my %tags = map {$_ => 1} @tags;
     $tags{$_} = 1 for tags_from_digestfile();
-    %tags = map {$_ => 1} get_all_tags() unless %tags;
-    list_tag($_) for sort keys %tags;
+    if (%tags && $cosign) {
+      my %maniids;
+      list_tag($_, \%maniids, $old_datas) for sort keys %tags;
+      %tags = ();
+      if (%maniids) {
+        for (get_all_tags()) {
+          $tags{$_} = 1 if /^([a-z0-9]+)-([a-f0-9]+)\.(?:sig|att)$/ && $maniids{"$1:$2"}
+        }
+      }
+      list_tag($_, undef, $old_datas) for sort keys %tags;
+    } else {
+      %tags = map {$_ => 1} get_all_tags($missingok) unless %tags;
+      list_tag($_, undef, $old_datas) for sort keys %tags;
+    }
   } elsif (@ARGV == 3) {
     my ($mani, $maniid, $mani_json) = get_manifest_for_tag($ARGV[2]);
     print "$mani_json\n" if $mani_json;
@@ -781,8 +1005,7 @@ for my $tarfile (@tarfiles) {
   my $govariant = $config->{'variant'} || $containerinfo->{'govariant'} || undef;
   if ($multiarch) {
     # see if a already have this arch/os combination
-    my $platformstr = "architecture:$goarch os:$goos";
-    $platformstr .= " variant:$govariant" if $govariant;
+    my $platformstr = BSContar::make_platformstr($goarch, $govariant, $goos);
     if ($multiplatforms{$platformstr}) {
       print "ignoring $tarfile, already have $platformstr\n";
       next;
@@ -916,17 +1139,18 @@ if ($cosign && %digests_to_sign) {
     my ($att_mani, $att_maniid, $att_mani_json) = get_manifest_for_tag($att_tag);
     my $numlayers = ($provenance ? 1 : 0) + ($spdx_json ? 1 : 0) + ($cyclonedx_json ? 1 : 0) + scalar(@intoto_json);
     if ($att_mani && $att_mani->{'mediaType'} && $att_mani->{'mediaType'} eq $BSContar::mt_oci_manifest && @{$att_mani->{'layers'} || []} == $numlayers && $BSConSign::mt_dsse) {
-      next unless grep {$_->{'mediaType'} eq $BSConSign::mt_dsse && (($_->{'annotations'} || {})->{$cosign_cookie_name} || '') eq $cosigncookie} @{$att_mani->{'layers'}};
+      next unless grep {$_->{'mediaType'} ne $BSConSign::mt_dsse || (($_->{'annotations'} || {})->{$cosign_cookie_name} || '') ne $cosigncookie} @{$att_mani->{'layers'}};
     }
     print "creating $numlayers cosign attestations for $gun $digest\n";
     my $signfunc =  sub { BSUtil::xsystem($_[0], @signcmd, '-O', '-h', 'sha256') };
     my $annotations = { $cosign_cookie_name => $cosigncookie };
+    my %predicatetypes;
     my @attestations;
-    push @attestations, BSConSign::fixup_intoto_attestation($provenance, $signfunc, $digest, $gun) if $provenance;
-    push @attestations, BSConSign::fixup_intoto_attestation($spdx_json, $signfunc, $digest, $gun) if $spdx_json;
-    push @attestations, BSConSign::fixup_intoto_attestation($cyclonedx_json, $signfunc, $digest, $gun) if $cyclonedx_json;
-    push @attestations, BSConSign::fixup_intoto_attestation($_, $signfunc, $digest, $gun) for @intoto_json;
-    my @attestation_ents = BSConSign::create_cosign_attestation_ents(\@attestations, $annotations);
+    push @attestations, BSConSign::fixup_intoto_attestation($provenance, $signfunc, $digest, $gun, \%predicatetypes) if $provenance;
+    push @attestations, BSConSign::fixup_intoto_attestation($spdx_json, $signfunc, $digest, $gun, \%predicatetypes) if $spdx_json;
+    push @attestations, BSConSign::fixup_intoto_attestation($cyclonedx_json, $signfunc, $digest, $gun, \%predicatetypes) if $cyclonedx_json;
+    push @attestations, BSConSign::fixup_intoto_attestation($_, $signfunc, $digest, $gun, \%predicatetypes) for @intoto_json;
+    my @attestation_ents = BSConSign::create_cosign_attestation_ents(\@attestations, $annotations, \%predicatetypes);
     cosign_upload($att_tag, @attestation_ents);
     if ($rekorserver) {
       print "uploading cosign attestations to $rekorserver\n";

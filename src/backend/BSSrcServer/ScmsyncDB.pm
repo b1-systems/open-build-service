@@ -69,7 +69,11 @@ sub deletescmsync {
   my $h = $db->{'sqlite'} || BSSrcServer::SQLite::connectdb($db);
 
   BSSQLite::begin_work($h);
-  BSSQLite::dbdo_bind($h, 'DELETE FROM scmsync WHERE project = ? AND package = ?', [$projid], [$packid]);
+  if ($packid eq '_project') {
+    BSSQLite::dbdo_bind($h, 'DELETE FROM scmsync WHERE project = ?', [$projid]);
+  } else {
+    BSSQLite::dbdo_bind($h, 'DELETE FROM scmsync WHERE project = ? AND package = ?', [$projid], [$packid]);
+  }
   BSSQLite::commit($h);
 }
 
@@ -81,16 +85,17 @@ sub getscmsyncpackages {
   my $h = $db->{'sqlite'} || BSSrcServer::SQLite::connectdb($db);
 
   $scmsync_repo   =~ s/\.git$//;
+  $scmsync_repo   = lc($scmsync_repo);
 
   my $sh;
   if ($scmsync_branch) {
-    $sh = BSSQLite::dbdo_bind($h, 'SELECT project, package FROM scmsync WHERE scmsync_repo = ? AND scmsync_branch = ?', [$scmsync_repo], [$scmsync_branch]);
+    $sh = BSSQLite::dbdo_bind($h, 'SELECT project, package FROM scmsync WHERE LOWER(scmsync_repo) = ? AND scmsync_branch = ?', [$scmsync_repo], [$scmsync_branch]);
   } elsif ($scmsync_branch eq '') {
     # default branch only
-    $sh = BSSQLite::dbdo_bind($h, 'SELECT project, package FROM scmsync WHERE scmsync_repo = ? AND scmsync_branch IS NULL', [$scmsync_repo]);
+    $sh = BSSQLite::dbdo_bind($h, 'SELECT project, package FROM scmsync WHERE LOWER(scmsync_repo) = ? AND scmsync_branch IS NULL', [$scmsync_repo]);
   } else {
     # all branches
-    $sh = BSSQLite::dbdo_bind($h, 'SELECT project, package FROM scmsync WHERE scmsync_repo = ?', [$scmsync_repo]);
+    $sh = BSSQLite::dbdo_bind($h, 'SELECT project, package FROM scmsync WHERE LOWER(scmsync_repo) = ?', [$scmsync_repo]);
   };
   my ($project, $package);
   $sh->bind_columns(\$project, \$package);

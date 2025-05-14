@@ -28,6 +28,7 @@ use Digest::MD5 ();
 use Compress::Zlib ();
 use Scalar::Util;
 use POSIX;
+use Encode;
 
 use BSUtil;
 use BSTar;
@@ -56,6 +57,7 @@ sub blobid {
 
 sub make_blob_entry {
   my ($name, $blob, %extra) = @_;
+  Encode::_utf8_off($blob);
   my $blobid = blobid($blob);
   my $ent = { %extra, 'name' => $name, 'size' => length($blob), 'data' => $blob, 'blobid' => $blobid };
   return ($ent, $blobid);
@@ -615,6 +617,15 @@ sub create_dist_manifest_list_data {
     'manifests' => $multimanifest_data,
   };
   return $manilist;
+}
+
+sub make_platformstr {
+  my ($goarch, $govariant, $goos) = @_;
+  my $str = $goarch || 'any';
+  $str .= "-$govariant" if defined $govariant;
+  $str .= "\@$goos" if $goos && $goos ne 'linux';
+  $str =~ s/[\/\s,]/_/g;
+  return $str;
 }
 
 1;

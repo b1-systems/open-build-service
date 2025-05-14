@@ -51,7 +51,7 @@ RSpec.describe BsRequestAction do
 
     it 'does not validate uniqueness for different types' do
       bs_request.bs_request_actions << build(:bs_request_action_add_bugowner_role)
-      expect { bs_request.send(:check_uniq_actions!) }.not_to raise_error(BsRequest::Errors::ConflictingActions)
+      expect { bs_request.send(:check_uniq_actions!) }.not_to raise_error
     end
   end
 
@@ -130,16 +130,16 @@ RSpec.describe BsRequestAction do
     end
   end
 
-  describe '#is_target_maintainer?' do
+  describe '#target_maintainer?' do
     context 'without target' do
       let(:action_without_target) { build(:bs_request_action) }
 
       it 'is false' do
-        expect(action_without_target).not_to be_is_target_maintainer(user)
+        expect(action_without_target).not_to be_target_maintainer(user)
       end
 
       it 'works on nil' do
-        expect(action_without_target).not_to be_is_target_maintainer(nil)
+        expect(action_without_target).not_to be_target_maintainer(nil)
       end
     end
 
@@ -151,15 +151,15 @@ RSpec.describe BsRequestAction do
       let(:bs_request_action) { bs_request.bs_request_actions.first }
 
       it 'is true for user' do
-        expect(bs_request_action).to be_is_target_maintainer(user)
+        expect(bs_request_action).to be_target_maintainer(user)
       end
 
       it 'works on nil' do
-        expect(bs_request_action).not_to be_is_target_maintainer(nil)
+        expect(bs_request_action).not_to be_target_maintainer(nil)
       end
 
       it 'is false for another user' do
-        expect(bs_request_action).not_to be_is_target_maintainer(another_user)
+        expect(bs_request_action).not_to be_target_maintainer(another_user)
       end
     end
   end
@@ -392,13 +392,13 @@ RSpec.describe BsRequestAction do
   end
 
   describe '#toggle_seen_by' do
-    let(:bs_request) { create(:bs_request_with_submit_action, creator: user) }
-    let(:bs_request_action) { bs_request.bs_request_actions.first }
-
     subject do
       bs_request_action.toggle_seen_by(user)
       bs_request_action.seen_by_users
     end
+
+    let(:bs_request) { create(:bs_request_with_submit_action, creator: user) }
+    let(:bs_request_action) { bs_request.bs_request_actions.first }
 
     context 'mark the action as seen by the user' do
       it 'adds the user to the seen_by_users association' do

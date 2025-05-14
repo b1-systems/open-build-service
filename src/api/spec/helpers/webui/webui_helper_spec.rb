@@ -61,37 +61,6 @@ RSpec.describe Webui::WebuiHelper do
     end
   end
 
-  describe '#bugzilla_url' do
-    let(:expected_attributes) do
-      {
-        classification: 7340,
-        product: 'openSUSE.org',
-        component: '3rd%20party%20software',
-        assigned_to: '',
-        short_desc: ''
-      }
-    end
-
-    before do
-      @configuration = { 'bugzilla_url' => 'https://bugzilla.example.org' }
-    end
-
-    it 'returns link to a prefilled bugzilla enter bug form' do
-      expected_url = 'https://bugzilla.example.org/enter_bug.cgi?' +
-                     expected_attributes.map { |key, value| "#{key}=#{value}" }.join('&')
-      expect(bugzilla_url).to eq(expected_url)
-    end
-
-    it 'adds an assignee and description if parameters where given' do
-      expected_attributes[:short_desc] = 'some_description'
-      expected_attributes[:assigned_to] = 'assignee@example.org'
-
-      expected_url = 'https://bugzilla.example.org/enter_bug.cgi?' +
-                     expected_attributes.map { |key, value| "#{key}=#{value}" }.join('&')
-      expect(bugzilla_url(['assignee@example.org'], 'some_description')).to eq(expected_url)
-    end
-  end
-
   describe '#format_projectname' do
     it "shortens project pathes by replacing home projects with '~'" do
       expect(format_projectname('home:bob', 'bob')).to eq('~')
@@ -186,23 +155,10 @@ RSpec.describe Webui::WebuiHelper do
     skip('Please add some tests')
   end
 
-  describe '#replace_jquery_meta_characters' do
-    context 'with meta character in string' do
-      it { expect(replace_jquery_meta_characters('openSUSE_Leap_42.2')).to eq('openSUSE_Leap_42_2') }
-      it { expect(replace_jquery_meta_characters('openSUSE.Leap.42.2')).to eq('openSUSE_Leap_42_2') }
-      it { expect(replace_jquery_meta_characters('openSUSE_Leap_42\2')).to eq('openSUSE_Leap_42_2') }
-      it { expect(replace_jquery_meta_characters('openSUSE_Leap_42/2')).to eq('openSUSE_Leap_42_2') }
-    end
-
-    context 'without meta character in string' do
-      it { expect(replace_jquery_meta_characters('openSUSE_Tumbleweed')).to eq('openSUSE_Tumbleweed') }
-    end
-  end
-
   describe '#pick_max_problems' do
-    let(:max_shown) { 5 }
-
     subject { pick_max_problems(checks, builds, max_shown) }
+
+    let(:max_shown) { 5 }
 
     context 'with no failed checks' do
       let(:checks) { [] }

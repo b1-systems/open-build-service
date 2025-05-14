@@ -30,14 +30,14 @@ class Webui::SessionController < Webui::WebuiController
   end
 
   def check_user_active
-    return true if @session_creator.user.is_active?
+    return if @session_creator.user.active?
 
     send_login_information_rabbitmq(:disabled)
     redirect_to(root_path, error: 'Your account is disabled. Please contact the administrator for details.')
   end
 
   def authenticate
-    return true if @session_creator.valid? && @session_creator.exist?
+    return if @session_creator.valid? && @session_creator.exist?
 
     send_login_information_rabbitmq(:unauthenticated)
     redirect_to(new_session_path, error: 'Authentication failed')
@@ -45,9 +45,9 @@ class Webui::SessionController < Webui::WebuiController
 
   def redirect_on_login
     if referer_was_login?
-      redirect_to user_path(User.session!)
+      redirect_to user_path(User.session)
     else
-      redirect_back(fallback_location: root_path)
+      redirect_back_or_to root_path
     end
   end
 
@@ -55,7 +55,7 @@ class Webui::SessionController < Webui::WebuiController
     if ::Configuration.proxy_auth_mode_enabled?
       redirect_to CONFIG['proxy_auth_logout_page']
     elsif ::Configuration.anonymous
-      redirect_back(fallback_location: root_path)
+      redirect_back_or_to root_path
     else
       redirect_to root_path
     end

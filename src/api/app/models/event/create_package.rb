@@ -1,7 +1,9 @@
 module Event
   class CreatePackage < Base
+    include EventObjectPackage
+
     self.message_bus_routing_key = 'package.create'
-    self.description = 'Package was created'
+    self.description = 'Package created'
     payload_keys :project, :package, :sender
 
     def subject

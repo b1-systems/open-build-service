@@ -1,3 +1,5 @@
+require 'ostruct' # for OpenStruct
+
 RSpec.describe Webui::Projects::ProjectConfigurationController, :vcr do
   let(:user) { create(:confirmed_user, :with_home, login: 'tom') }
   let(:apache_project) { create(:project, name: 'Apache') }
@@ -43,7 +45,7 @@ RSpec.describe Webui::Projects::ProjectConfigurationController, :vcr do
       end
 
       it { expect(flash[:success]).to eq('Config successfully saved!') }
-      it { expect(response.status).to eq(200) }
+      it { expect(response).to have_http_status(:ok) }
     end
 
     context 'cannot save a project config' do
@@ -55,7 +57,7 @@ RSpec.describe Webui::Projects::ProjectConfigurationController, :vcr do
       end
 
       it { expect(flash[:error]).not_to be_nil }
-      it { expect(response.status).to eq(400) }
+      it { expect(response).to have_http_status(:bad_request) }
     end
 
     context 'cannot save with an unauthorized user' do
@@ -64,7 +66,7 @@ RSpec.describe Webui::Projects::ProjectConfigurationController, :vcr do
       end
 
       it { expect(flash[:error]).to eq('Sorry, you are not authorized to update this project.') }
-      it { expect(response.status).to eq(302) }
+      it { expect(response).to have_http_status(:found) }
       it { expect(response).to redirect_to(root_path) }
     end
   end

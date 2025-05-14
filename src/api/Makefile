@@ -11,6 +11,7 @@ install: prepare_dirs prepare_rake docs config log_files build
 prepare_dirs:
 	$(INSTALL) -d -m 755 $(DESTDIR)$(OBS_API_PREFIX)
 	$(INSTALL) -d -m 755 $(DESTDIR)$(OBS_API_PREFIX)/log
+	$(INSTALL) -d -m 755 $(DESTDIR)$(OBS_API_PREFIX)/storage
 	$(INSTALL) -d -m 755 $(DESTDIR)$(OBS_API_PREFIX)/tmp
 	$(INSTALL) -d -m 755 $(DESTDIR)$(OBS_API_PREFIX)/config
 	# prepare for running sphinx daemon
@@ -23,17 +24,14 @@ prepare_rake: prepare_dirs
 	rm $(DESTDIR)$(OBS_API_PREFIX)/Procfile
 	touch $(DESTDIR)$(OBS_API_PREFIX)/log/production.log
 	touch $(DESTDIR)$(OBS_API_PREFIX)/config/production.sphinx.conf
-	sed -i -e 's,#!/usr/bin/ruby.ruby3.1,#!$(OBS_RUBY_BIN),' $(DESTDIR)$(OBS_API_PREFIX)/bin/* $(DESTDIR)$(OBS_API_PREFIX)/script/*
-	sed -i -e 's,#!/usr/bin/rake.ruby3.1,#!$(OBS_RAKE_BIN),' $(DESTDIR)$(OBS_API_PREFIX)/Rakefile
+	sed -i -e 's,#!/usr/bin/ruby.ruby3.4,#!$(OBS_RUBY_BIN),' $(DESTDIR)$(OBS_API_PREFIX)/bin/* $(DESTDIR)$(OBS_API_PREFIX)/script/*
+	sed -i -e 's,#!/usr/bin/rake.ruby3.4,#!$(OBS_RAKE_BIN),' $(DESTDIR)$(OBS_API_PREFIX)/Rakefile
 
 
 docs:
 	$(INSTALL) -d -m 755 $(DESTDIR)$(OBS_APIDOCS_PREFIX)/api
-	$(INSTALL) -d -m 755 $(DESTDIR)$(OBS_APIDOCS_PREFIX)/api/html
 	cp -av ../../docs/api/api $(DESTDIR)$(OBS_APIDOCS_PREFIX)
-	cp -av ../../docs/api/html/* $(DESTDIR)$(OBS_APIDOCS_PREFIX)/api/html/
 	ln -sf $(OBS_APIDOCS_PREFIX)/api/ $(DESTDIR)$(OBS_API_PREFIX)/public/schema
-	echo 'CONFIG["apidocs_location"] ||= File.expand_path("../docs/api/html/")' >> $(DESTDIR)$(OBS_API_PREFIX)/config/environment.rb
 	echo 'CONFIG["schema_location"] ||= File.expand_path("../docs/api/")' >> $(DESTDIR)$(OBS_API_PREFIX)/config/environment.rb
 
 config: prepare_dirs
@@ -73,18 +71,18 @@ test_unit:
 	# rspec runs independently
 
 test_rake:
-	$(eval SYSTEM_RAKE_VERSION:=$(shell basename `gem.ruby3.1 which -g rake | sed 's,/lib/rake.rb$$,,'`))
+	$(eval SYSTEM_RAKE_VERSION:=$(shell basename `gem.ruby3.4 which -g rake | sed 's,/lib/rake.rb$$,,'`))
 	$(eval BUNDLE_RAKE_VERSION:=$(shell basename `bundle show rake`))
 	@if [ "$(SYSTEM_RAKE_VERSION)" != "$(BUNDLE_RAKE_VERSION)" ]; then echo "rake version mismatch! System: $(SYSTEM_RAKE_VERSION) / Bundle: $(BUNDLE_RAKE_VERSION)"; exit 1; fi
 
 test_rack:
-	$(eval SYSTEM_RACK_VERSION:=$(shell basename `gem.ruby3.1 which -g rack | sed 's,/lib/rack.rb$$,,'`))
+	$(eval SYSTEM_RACK_VERSION:=$(shell basename `gem.ruby3.4 which -g rack | sed 's,/lib/rack.rb$$,,'`))
 	$(eval BUNDLE_RACK_VERSION:=$(shell basename `bundle show rack`))
 	@if [ "$(SYSTEM_RACK_VERSION)" != "$(BUNDLE_RACK_VERSION)" ]; then echo "rack version mismatch! System: $(SYSTEM_RACK_VERSION) / Bundle: $(BUNDLE_RACK_VERSION)"; exit 1; fi
 
 test_base64_gem:
-	$(eval RUBY_DEFAULT_BASE64_VERSION:=$(shell gem.ruby3.1 list --local base64 | grep -Po 'default:\s\K[0-9]\.[0-9]\.[0-9]+'))
-	$(eval BUNDLE_BASE64_VERSION:=$(shell bundle show base64 | xargs basename | grep -Eo '[0-9]\.[0-9]\.[0-9]+'))
+	$(eval RUBY_DEFAULT_BASE64_VERSION:=$(shell basename `gem.ruby3.4 which -g base64 | sed 's,/lib/base64.rb$$,,'`))
+	$(eval BUNDLE_BASE64_VERSION:=$(shell basename `bundle show base64`))
 	@if [ "$(RUBY_DEFAULT_BASE64_VERSION)" != "$(BUNDLE_BASE64_VERSION)" ]; then echo "base64 version mismatch! System Ruby Default: $(RUBY_DEFAULT_BASE64_VERSION) / Bundle: $(BUNDLE_BASE64_VERSION)"; exit 1; fi
 
 clean:

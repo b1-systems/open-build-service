@@ -16,7 +16,7 @@ RSpec.describe Person::NotificationsController do
     end
 
     context 'bad filter' do
-      let(:params) { { format: :xml, notifications_type: 'foobar' } }
+      let(:params) { { format: :xml, kind: 'foobar' } }
 
       it { expect(response).to have_http_status(:bad_request) }
     end
@@ -24,7 +24,7 @@ RSpec.describe Person::NotificationsController do
 
   describe 'index' do
     context 'called by authorized user' do
-      let!(:notifications) { create_list(:web_notification, 2, :request_state_change, subscriber: user) }
+      let!(:notifications) { create_list(:notification_for_request, 2, :web_notification, :request_state_change, subscriber: user) }
 
       before do
         login user
@@ -39,12 +39,12 @@ RSpec.describe Person::NotificationsController do
       it { expect(response).to have_http_status(:success) }
       it { expect(response.body).to include('<notifications count="2">') }
 
-      context 'filter by notifications_type' do
-        let!(:notifications) { create_list(:web_notification, 2, :request_state_change, subscriber: user, delivered: true) }
+      context 'filter by kind' do
+        let!(:notifications) { create_list(:notification_for_request, 2, :web_notification, :request_state_change, subscriber: user, delivered: true) }
 
         before do
           login user
-          get :index, params: { format: :xml, notifications_type: 'read' }
+          get :index, params: { format: :xml, state: 'read' }
         end
 
         it { expect(response).to have_http_status(:success) }
@@ -82,7 +82,7 @@ RSpec.describe Person::NotificationsController do
   end
 
   describe '#update' do
-    let!(:notification) { create(:web_notification, :comment_for_package, subscriber: user) }
+    let!(:notification) { create(:notification_for_comment, :web_notification, :comment_for_package, subscriber: user) }
 
     context 'called by an unauthorized user' do
       let(:other_user) { create(:confirmed_user, :in_beta) }
@@ -92,7 +92,7 @@ RSpec.describe Person::NotificationsController do
         put :update, params: { format: :xml, id: notification.id }
       end
 
-      it { expect(response).to have_http_status(:forbidden) }
+      it { expect(response).to have_http_status(:not_found) }
     end
 
     context 'called by an authorized user' do

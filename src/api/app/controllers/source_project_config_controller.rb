@@ -1,7 +1,8 @@
 class SourceProjectConfigController < SourceController
-  # GET /source/:project/_config
+  before_action :require_valid_project_name
   before_action :ensure_project_exist, only: %i[show update]
 
+  # GET /source/:project/_config
   def show
     config = get_config(@project)
 
@@ -12,7 +13,7 @@ class SourceProjectConfigController < SourceController
     content = config.content(sliced_params)
 
     unless content
-      render_404(config.errors.full_messages.to_sentence)
+      render_error status: 404, message: config.errors.full_messages.to_sentence
       return
     end
     send_config(content, config.response[:type])
@@ -24,13 +25,13 @@ class SourceProjectConfigController < SourceController
     # if its remote prj is a string
     authorize @project, :update?, policy_class: ProjectPolicy
 
-    params[:user] = User.session!.login
+    params[:user] = User.session.login
     @project.config.file = request.body
 
     response = @project.config.save(slice_and_permit(params, %i[user comment]))
 
     unless response
-      render_404(@project.config.errors.full_messages.to_sentence)
+      render_error status: 404, message: @project.config.errors.full_messages.to_sentence
       return
     end
 
@@ -51,15 +52,11 @@ class SourceProjectConfigController < SourceController
     send_data(content, type: content_type, disposition: :inline)
   end
 
-  def render_404(message)
-    render_error status: 404, message: message
-  end
-
   def ensure_project_exist
     # 'project' can be a local Project in database or a
     #  String that's the name of a remote project, or even raise exceptions
     @project = Project.get_by_name(params[:project])
   rescue Project::ReadAccessError, Project::UnknownObjectError => e
-    render_404(e)
+    render_error status: 404, message: e
   end
 end

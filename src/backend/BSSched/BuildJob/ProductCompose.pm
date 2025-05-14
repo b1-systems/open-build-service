@@ -104,7 +104,6 @@ sub check {
   } else {
      @archs = grep {$imagearch{$_}} @{$repo->{'arch'} || []};
   };
-  unshift @archs, 'local' if $BSConfig::localarch && !grep {$_ eq 'local'} @archs;
 
   # sort archs like in bs_worker
   @archs = sort(@archs);
@@ -113,6 +112,12 @@ sub check {
       @archs = grep {$_ ne $1} @archs;
       push @archs, $1;
     }
+  }
+
+  # always add 'local' to the end
+  if ($BSConfig::localarch) {
+    @archs = grep {$_ ne 'local'} @archs;
+    push @archs, 'local';
   }
 
   if ($myarch ne $buildarch && $myarch ne $localbuildarch) {
@@ -137,11 +142,17 @@ sub check {
   delete $deps{''};
   delete $deps{"-$_"} for grep {!/^-/} keys %deps;
 
-  my @bprps = @{$ctx->{'prpsearchpath'}};
+  my @aprps = @{$ctx->{'prpsearchpath'}};
+  my @bprps = @aprps;
   my $bconf = $ctx->{'conf'};
 
   if (!@{$repo->{'path'} || []}) {
     return ('broken', 'require path entries');
+  }
+
+  if ($bconf->{'buildflags:productcompose-onlydirectrepos'}) {
+    @aprps = map {"$_->{'project'}/$_->{'repository'}"} @{$repo->{'path'} || []};
+    @aprps = BSUtil::unify($prp, @aprps);
   }
 
   my @blocked;
@@ -151,7 +162,14 @@ sub check {
   my $neverblock = $ctx->{'isreposerver'};
   my $remoteprojs = $gctx->{'remoteprojs'};
 
-  #print "prps: @bprps\n";
+  # setup binary architecture filter (this must match what the product composer does)
+  my %binarchs = %imagearch;
+  $binarchs{$myarch} = 1 unless %imagearch;
+  $binarchs{'noarch'} = 1;
+  $binarchs{'src'} = 1;
+  $binarchs{'nosrc'} = 1;
+
+  #print "prps: @aprps\n";
   #print "archs: @archs\n";
   #print "deps: @deps\n";
   my $pool;
@@ -191,7 +209,7 @@ sub check {
       $dep2pkg{$pool->pkg2name($p)} = $p;
     }
     # check access
-    for my $aprp (@bprps) {
+    for my $aprp (@aprps) {
       if (!$ctx->checkprpaccess($aprp)) {
 	if ($ctx->{'verbose'}) {
 	  print "      - $packid (productcompose)\n";
@@ -203,7 +221,7 @@ sub check {
     # check if we are blocked
     if ($myarch ne $localbuildarch) {
       my %used;
-      for my $aprp (@bprps) {
+      for my $aprp (@aprps) {
 	my ($aprojid, $arepoid) = split('/', $aprp, 2);
 	next if $remoteprojs->{$aprojid};	# FIXME: should do something here
 	my %pnames = map {$_ => 1} @{$used{$aprp}};
@@ -226,6 +244,13 @@ sub check {
     } else {
       my $notready = $ctx->{'notready'};
       my $prpnotready = $gctx->{'prpnotready'};
+      for my $bin (@kdeps) {
+        my $p = $dep2pkg{$bin};
+        my $aprp = $pool->pkg2reponame($p);
+        my $pname = $pool->pkg2srcname($p);
+        my $nr = ($prp eq $aprp ? $notready : $prpnotready->{$aprp}) || {};
+        push @blocked, $bin if $nr->{$pname};
+      }
     }
     @blocked = () if $neverblock;
     if (@blocked) {
@@ -241,7 +266,7 @@ sub check {
   # check right away if some gbininfo fetch is in progress
   my $delayed_errors = '';
   if (!$ctx->{'isreposerver'}) {
-    for my $aprp (@bprps) {
+    for my $aprp (@aprps) {
       my ($aprojid, $arepoid) = split('/', $aprp, 2);
       next unless $remoteprojs->{$aprojid};
       for my $arch (reverse @archs) {
@@ -270,14 +295,17 @@ sub check {
   $mode |= 2 if $nosrcpkgs;
   $mode |= 4 if $allpacks;
   $mode |= 8 if $versioned_deps;
+  my $no_repo_layering;
+  $no_repo_layering = 1 if $deps{'--unorderedproductrepos'} || $deps{'--use-newest-package'};
 
   my $maxblocked = 20;
   my %blockedarch;
   my $projpacks = $gctx->{'projpacks'};
   my %unneeded_na;
   my %archs = map {$_ => 1} @archs;
+  my $dobuildinfo = $ctx->{'dobuildinfo'};
 
-  for my $aprp (@bprps) {
+  for my $aprp (@aprps) {
     my %seen_fn;	# resolve file conflicts in this prp
     my %known;
     my ($aprojid, $arepoid) = split('/', $aprp, 2);
@@ -330,10 +358,13 @@ sub check {
 	# all packages not yet in gbininfo
 	# this is a bit of code duplication, but can't be helped (perl function calls are slow)
 	for my $apackid (grep {$blocked_cache->{$_} && !exists($gbininfo->{$_})} @apackids) {
-	  next if ($pdatas->{$apackid} || {})->{'patchinfo'};
 	  if (!exists($known{$apackid})) {
 	    my $info = (grep {$_->{'repository'} eq $arepoid} @{$pdatas->{$apackid}->{'info'} || []})[0];
 	    $known{$apackid} = ($info || {})->{'name'} || $apackid;
+	  }
+	  if ($allpacks) {
+	    my $info = (grep {$_->{'repository'} eq $arepoid} @{$pdatas->{$apackid}->{'info'} || []})[0];
+	    next if $info && $info->{'file'} && $info->{'file'} =~ /\.productcompose$/;
 	  }
 	  my $apackid2 = $known{$apackid} || $apackid;
 	  # crude check if the "main" binary is needed
@@ -356,7 +387,24 @@ sub check {
       my $seen_binary = $is_maintenance_release ? {} : undef;
       my @unneeded_na_revert;
 
-      for my $apackid (BSSched::ProjPacks::orderpackids($aproj, @apackids)) {
+      @apackids = BSSched::ProjPacks::orderpackids($aproj, @apackids);
+
+      # bring patchinfos to the front
+      if ($gbininfo) {
+        my %patchinfos;
+	for (@apackids) {
+	  $patchinfos{$_} = 1 if $gbininfo->{$_}->{'updateinfo.xml'};
+	}
+        if (%patchinfos) {
+          my @apackids_patchinfos = grep {$patchinfos{$_}} @apackids;
+          if (@apackids_patchinfos) {
+	    @apackids = grep {!$patchinfos{$_}} @apackids;
+	    unshift @apackids, @apackids_patchinfos;
+	  }
+        }
+      }
+
+      for my $apackid (@apackids) {
 	next if $apackid eq '_volatile';
 
 	# fast blocked check
@@ -364,6 +412,10 @@ sub check {
 	  if (!exists($known{$apackid})) {
 	    my $info = (grep {$_->{'repository'} eq $arepoid} @{($pdatas->{$apackid} || {})->{'info'} || []})[0];
 	    $known{$apackid} = ($info || {})->{'name'} || $apackid;
+	  }
+	  if ($allpacks) {
+	    my $info = (grep {$_->{'repository'} eq $arepoid} @{$pdatas->{$apackid}->{'info'} || []})[0];
+	    next if $info && $info->{'file'} && $info->{'file'} =~ /\.productcompose$/;
 	  }
 	  my $apackid2 = $known{$apackid} || $apackid;
 	  # crude check if the "main" binary is needed
@@ -433,14 +485,56 @@ sub check {
 	  push @bi, @ibi;
 	}
 
-	# we need the package, add all rpms
+	# setup binary name filter.
+	my $nafilter;
+	if (!$allpacks) {
+	  $nafilter = {};
+	  for my $fn (@bi) {
+	    next unless $fn =~ /^(?:::import::.*::)?(.+)-(?:[^-]+)-(?:[^-]+)\.([a-zA-Z][^\.\-]*)\.rpm$/;
+	    my ($bn, $ba) = ($1, $2);
+	    next if $ba eq 'src' || $ba eq 'nosrc';
+	    next if $nodbgpkgs && $fn =~ /-(?:debuginfo|debugsource)-/;
+	    my $d = $deps{$bn};
+	    next unless $d;
+	    if ($d && $d ne '1') {
+	      my $bi = $bininfo->{$fn};
+	      my $evr = "$bi->{'version'}-$bi->{'release'}";
+	      $evr = "$bi->{'epoch'}:$evr" if $bi->{'epoch'};
+	      next unless Build::matchsingledep("$bn=$evr", "$bn$d", 'rpm');
+	    }
+	    $nafilter->{"$bn.$ba"} = 1;
+	    next if $nosrcpkgs && $nodbgpkgs;
+	    my $bi = $bininfo->{$fn};
+	    my $srcbn = $bi->{'source'};
+	    if (!defined($srcbn)) {
+	      # missing data probably from a remote server, cannot set up filter.
+	      undef $nafilter;
+	      last;
+	    }
+	    $nafilter->{"$srcbn.src"} = $nafilter->{"$srcbn.nosrc"} = 1 unless $nosrcpkgs;
+	    $nafilter->{"$srcbn-debugsource.$ba"} = $nafilter->{"$bn-debuginfo.$ba"} = 1 unless $nodbgpkgs;
+	  }
+	}
+
+	# we need the package, add the rpms we need
 	for my $fn (@bi) {
+	  if ($fn eq 'updateinfo.xml' || $fn eq '_modulemd.yaml') {
+	    my $b = $bininfo->{$fn};
+	    next if !$b || !$b->{'md5sum'};
+	    my $rpm = "$aprp/$arch/$apackid/$fn";
+	    push @rpms, $rpm;
+	    $rpms_hdrmd5{$rpm} = $b->{'md5sum'};
+	    $rpms_meta{$rpm} = $rpm;
+	    next;
+	  }
 	  next unless $fn =~ /^(?:::import::.*::)?(.+)-(?:[^-]+)-(?:[^-]+)\.([a-zA-Z][^\.\-]*)\.rpm$/;
 	  my ($bn, $ba) = ($1, $2);
+	  next unless exists $binarchs{$ba};
 	  next if $nosrcpkgs && ($ba eq 'src' || $ba eq 'nosrc');
 	  next if $nodbgpkgs && $fn =~ /-(?:debuginfo|debugsource)-/;
 	  next if $fn =~ /^::import::(.*?):/ && $archs{$1};	# we pick it up from the real arch
 	  my $na = "$bn.$ba";
+	  next if $nafilter && !$nafilter->{$na};
 
 	  if ($seen_binary && ($ba ne 'src' && $ba ne 'nosrc')) {
 	    next if $seen_binary->{$na}++;
@@ -466,7 +560,7 @@ sub check {
 	}
 
 	# our buildinfo data also includes special files like appdata
-	if ($ctx->{'isreposerver'}) {
+	if ($dobuildinfo) {
 	  for my $fn (@bi) {
 	    next unless ($fn =~ /[-.]appdata\.xml$/) || $fn eq '_modulemd.yaml' || $fn eq 'updateinfo.xml';
 	    next if $seen_fn{$fn};
@@ -483,13 +577,15 @@ sub check {
 	}
       }
       last if @blocked > $maxblocked;
+      # revert unneeded_na decisions for the next architecture
       if (@unneeded_na_revert) {
 	delete $unneeded_na{$_} for @unneeded_na_revert;
       }
     }
-    @next_unneeded_na = () if $deps{'--use-newest-package'};
     # now commit all name.arch entries to the unneeded_na hash
-    $unneeded_na{$_} = 1 for @next_unneeded_na;
+    if (!$no_repo_layering) {
+      $unneeded_na{$_} = 1 for @next_unneeded_na;
+    }
     last if @blocked > $maxblocked;
   }
 
@@ -524,9 +620,9 @@ sub check {
   }
 
   if (1) {
-    my $nbprps = scalar(@bprps);
+    my $naprps = scalar(@aprps);
     my $narchs = scalar(@archs);
-    print "      - stats for $packid: $pkgs_taken/$pkgs_checked, $nbprps bprps, $narchs archs\n";
+    print "      - stats for $packid: $pkgs_taken/$pkgs_checked, $naprps bprps, $narchs archs\n";
   }
 
   if ($myarch ne $buildarch) {
@@ -567,6 +663,7 @@ sub check {
 
 sub build {
   my ($self, $ctx, $packid, $pdata, $info, $data) = @_;
+  my ($bconf, $rpms, $pool, $dep2pkg, $rpms_hdrmd5, $reason) = @$data;
 
   my $gctx = $ctx->{'gctx'};
   my $myarch = $gctx->{'arch'};
@@ -576,9 +673,8 @@ sub build {
   my $relsyncmax = $ctx->{'relsyncmax'};
   my $remoteprojs = $gctx->{'remoteprojs'};
   my $gdst = $ctx->{'gdst'};
-
-  my ($bconf, $rpms, $pool, $dep2pkg, $rpms_hdrmd5, $reason) = @$data;
   my $prp = "$projid/$repoid";
+
   my $dobuildinfo = $ctx->{'dobuildinfo'};
   my @bdeps;
   for my $rpm (BSUtil::unify(@{$rpms || []})) {

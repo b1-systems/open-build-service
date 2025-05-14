@@ -22,11 +22,6 @@ module HasRelationships
     relationships.groups.includes(:group).map(&:group).uniq
   end
 
-  def bugowner_emails
-    # TODO: why on User.rb we accept email blank?
-    relationships.bugowners_with_email.pluck(:email)
-  end
-
   def render_relationships(xml)
     relationships.with_users_and_roles.each do |user, role|
       xml.person(userid: user, role: role)
@@ -35,6 +30,13 @@ module HasRelationships
     relationships.with_groups_and_roles.each do |group, role|
       xml.group(groupid: group, role: role)
     end
+  end
+
+  def local_roles_for_user(user)
+    Role.joins(:relationships).where(
+      id: Role.local_roles,
+      relationships: relationships.where(id: Relationship.where(user: user).or(Relationship.where(group: user.group_ids)))
+    ).distinct
   end
 
   def user_has_role?(user, role)
@@ -159,12 +161,7 @@ module HasRelationships
       group = Group.find_by_title(id)
       return group if group
 
-      # check with LDAP
-      raise SaveError, "unknown group '#{id}'" unless CONFIG['ldap_mode'] == :on && CONFIG['ldap_group_support'] == :on
-      raise SaveError, "unknown group '#{id}' on LDAP server" unless UserLdapStrategy.find_group_with_ldap(id)
-
-      logger.debug "Find and Create group '#{id}' from LDAP"
-      Group.create!(title: id)
+      raise SaveError, "unknown group '#{id}'"
     end
   end
 

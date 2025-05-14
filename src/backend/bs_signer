@@ -65,6 +65,7 @@ $maxchild_flavor = $BSConfig::signer_maxchild_flavor if defined $BSConfig::signe
 
 my $sign_supports_S;
 my $sign_supports_bulk_cpio;
+my $sign_supports_delsign;
 
 sub check_sign_S {
   my $pid = BSUtil::xfork();
@@ -92,6 +93,20 @@ sub check_sign_bulk_cpio {
     die("$BSConfig::sign: $!\n");
   }
   $sign_supports_bulk_cpio = 1 if waitpid($pid, 0) == $pid && !$?;
+}
+
+sub check_sign_delsign {
+  my $pid = BSUtil::xfork();
+  return unless defined $pid;
+  if (!$pid) {
+    open(STDOUT, ">/dev/null");
+    open(STDERR, ">&STDOUT");
+    my @signargs;
+    push @signargs, '--project', 'dummy' if $BSConfig::sign_project;
+    exec($BSConfig::sign, @signargs, '--delsign', '--hashfile', '/dev/null');
+    die("$BSConfig::sign: $!\n");
+  }
+  $sign_supports_delsign = 1 if waitpid($pid, 0) == $pid && !$?;
 }
 
 sub readblk {
@@ -436,7 +451,7 @@ sub signappx {
     # special signkey, ask for cert again with signtype appx
     $cert = getsslcert($data->{'projid'}, 'appx', $data->{'signflavor'});
   }
-  splice(@signargs, $BSConfig::sign_project ? 2 : 0, 0, '--signtype', 'appx') if $BSConfig::sign_type;
+  setsigntype(\@signargs, 'appx') if $BSConfig::sign_type;
   my $jobdir = $data->{'jobdir'};
   my $ocfile = "$jobdir/othercerts.der";
   my @othercerts;
@@ -447,6 +462,28 @@ sub signappx {
   eval { BSUtil::xsystem(undef, $BSConfig::sign, @signargs, '--appx', '--cert', $certfile, @othercerts, $signfile) };
   unlink($certfile);
   die($@) if $@;
+}
+
+sub signapk {
+  my ($data, $signfile, @signargs) = @_;
+  my $pk = BSPGP::unarmor($data->{'pubkey'});
+  my $keydata = BSPGP::pk2keydata($pk);
+  my $algo = $keydata->{'algo'};
+  die("signapk: unsupported signing algo '$algo'\n") if $algo ne 'rsa';
+  my $times = BSPGP::pk2times($pk);
+  my $userid = BSPGP::pk2userid($pk);
+  die("signapk: missing userid\n") unless $userid;
+  die("signapk: missing email in userid\n") unless $userid =~ /\<(.+?)\>/;
+  my $email = $1;
+  my $tbsdata = Build::Apk::gettbsdata($signfile);
+  # if the first byte of tbsdata is not 0x1f, it's an apkv3 package
+  my $hash = ord($tbsdata) == 0x1f ? 'sha1' : 'sha512';
+  my $sig = BSUtil::xsystem($tbsdata, $BSConfig::sign, @signargs, '-O', '-h', $hash);
+  my $keyname = sprintf("%s-%08x.%s.pub", $email, $times->{'key_create'}, $algo);
+  my $tmpfile = "$signfile.sIgN$$";
+  unlink($tmpfile);
+  Build::Apk::replacesignature($signfile, $tmpfile, $sig, $data->{'time'}, $algo, $hash, $keyname);
+  rename($tmpfile, $signfile) || die("rename $tmpfile $signfile: $!\n");
 }
 
 sub signhelm {
@@ -478,7 +515,7 @@ sub signhelm {
   }
   # generate provenance file and clearsign it
   my $prov = "$config_yaml\n...\nfiles:\n  $chart: sha256:$chart_sha256\n";
-  splice(@signargs, $BSConfig::sign_project ? 2 : 0, 0, '--signtype', 'helm') if $BSConfig::sign_type;
+  setsigntype(\@signargs, 'helm') if $BSConfig::sign_type;
   my $prov_signed = BSUtil::xsystem($prov, $BSConfig::sign, @signargs, '-c');
   writestr("$jobdir/$chart.prov", undef, $prov_signed);
 }
@@ -503,13 +540,31 @@ sub dsse_sign {
   return $envelope_json;
 }
 
+# this works for both v02 and v1 predicates
 my $slsa_json_template = {
   '_order' => [ '_type', 'subject', 'predicateType', 'predicate' ],
   'subject' => {
     '_order' => [ 'name', 'digest' ],
   },
   'predicate' => {
-    '_order' => [ 'builder', 'buildType', 'invocation', 'buildConfig', 'metadata', 'materials' ],
+    '_order' => [ 'buildDefinition', 'runDetails', 'builder', 'buildType', 'invocation', 'buildConfig', 'metadata', 'materials' ],
+    # v1
+    'buildDefinition' => {
+      '_order' => [ 'buildType', 'externalParameters', 'internalParameters', 'resolvedDependencies' ],
+      'resolvedDependencies' => {
+	'_order' => [ 'name', 'uri', 'digest', 'content', 'downloadLocation', 'mediaType', 'annotations' ],
+      }
+    },
+    'runDetails' => {
+      '_order' => [ 'builder', 'metadata', 'byproducts' ],
+      'builder' => {
+	'_order' => [ 'id', 'builderDependencies', 'version' ],
+      },
+      'metadata' => {
+	'_order' => [ 'invocationId', 'startedOn', 'finishedOn' ],
+      },
+    },
+    # v02
     'invocation' => {
       '_order' => [ 'configSource', 'parameters', 'environment' ],
       'configSource' => {
@@ -525,7 +580,7 @@ my $slsa_json_template = {
       'reproducible' => 'bool',
     },
     'materials' => {
-      '_order' => ['uri', 'digest' ],
+      '_order' => ['uri', 'digest', 'intent' ],
     }
   }
 };
@@ -552,11 +607,12 @@ sub signslsaprovenance {
     $provenance_json = MIME::Base64::decode_base64($provenance->{'payload'});
     $provenance = JSON::XS::decode_json($provenance_json);
   }
-  die("no predicate in provenance file?\n") unless ref($provenance->{'predicate'}) eq 'HASH';
+  my $predicate = $provenance->{'predicate'};
+  die("no predicate in provenance file?\n") unless $predicate && ref($predicate) eq 'HASH';
 
   # pin all binaries from the materials
-  my $materials = $provenance->{'predicate'}->{'materials'};
-  die("no materials in provenance file?\n") unless ref($materials) eq 'ARRAY';
+  my $materials = $predicate->{'buildDefinition'} ? $predicate->{'buildDefinition'}->{'resolvedDependencies'} : $predicate->{'materials'};
+  die("no resolvedDependencies/materials in provenance file?\n") unless ref($materials) eq 'ARRAY';
   my %todo;
   for my $material (@$materials) {
     die("bad material in provenance file?\n") unless ref($material) eq 'HASH';
@@ -667,7 +723,7 @@ sub getsslcert {
 }
 
 sub getsignkey {
-  my ($projid, $needpubkey, $needcert, $signtype, $signflavor) = @_;
+  my ($projid, $packid, $needpubkey, $needcert, $signtype, $signflavor) = @_;
   my $param = {
     'uri' => "$BSConfig::srcserver/getsignkey",
     'timeout' => 60,
@@ -692,6 +748,7 @@ sub getsignkey {
     if ($BSConfig::sign_project && $BSConfig::sign) {
       my @signargs;
       push @signargs, '--project', $projid;
+      push @signargs, '--package', $packid if $packid && $BSConfig::sign_package;
       push @signargs, '--signtype', $signtype if $signtype;
       push @signargs, '--signflavor', $signflavor if $signflavor;
       local *S;
@@ -715,6 +772,19 @@ sub getsignkey {
   # this is kind of racy. should add a "withcert" option to the above call.
   my $cert = $needcert ? getsslcert($projid, $signtype, $signflavor) : undef;
   return ($algo, $signkey, $pubkey, $cert);
+}
+
+sub setsigntype {
+  my ($signargs, $signtype) = @_;
+  return unless $BSConfig::sign_type;
+  my $off = 0;
+  $off += 2 if @$signargs >= $off + 2 && $signargs->[$off] eq '--project';
+  $off += 2 if @$signargs >= $off + 2 && $signargs->[$off] eq '--package';
+  if (@$signargs >= $off + 2 && $signargs->[$off] eq '--signtype') {
+    $signargs->[$off + 1] = $signtype;
+  } else {
+    splice(@$signargs, $off, 0, '--signtype', $signtype);
+  }
 }
 
 sub getsigdata {
@@ -778,9 +848,10 @@ sub signjob {
   die("jobdir does not exist\n") unless -d $jobdir;
   my $info = readxml("$jobsdir/$arch/$job", $BSXML::buildinfo);
   my $projid = $info->{'project'};
+  my $packid = $info->{'package'};
   $prpa_stats = "$projid/$info->{'repository'}/$arch";
   my @files = sort(ls($jobdir));
-  my @signfiles = grep {$_ eq '_slsa_provenance.json' || /\.(?:d?rpm|sha256|iso|pkg\.tar\.gz|pkg\.tar\.xz|pkg\.tar\.zst|rsasign|AppImage|appx|helminfo)$/} @files;
+  my @signfiles = grep {$_ eq '_slsa_provenance.json' || /\.(?:d?rpm|sha256|iso|pkg\.tar\.gz|pkg\.tar\.xz|pkg\.tar\.zst|rsasign|AppImage|appx|helminfo|apk)$/} @files;
   my $needpubkey;
   if (grep {$_ eq '.kiwitree_tosign'} @files) {
     for my $f (split("\n", readstr("$jobdir/.kiwitree_tosign"))) {
@@ -805,12 +876,13 @@ sub signjob {
       die("Illegal signflavor '$signflavor'\n") unless grep {$_ eq $signflavor} @{$BSConfig::sign_flavor || []};
     }
     my $needcert = grep {/\.appx$/} @signfiles;
-    $needpubkey ||= grep {/\.iso$/} @signfiles;
+    $needpubkey ||= grep {/\.(?:iso|apk)$/} @signfiles;
     $needpubkey = 1 if $info->{'file'} eq '_aggregate' && grep {/\.d?rpm$/} @signfiles;
-    my ($algo, $signkey, $pubkey, $cert) = getsignkey($projid, $needpubkey, $needcert, undef, $signflavor);
+    my ($algo, $signkey, $pubkey, $cert) = getsignkey($projid, $packid, $needpubkey, $needcert, undef, $signflavor);
     my $pubkey_create_time;
     my @signargs;
     push @signargs, '--project', $projid if $BSConfig::sign_project;
+    push @signargs, '--package', $packid if $BSConfig::sign_project && $BSConfig::sign_package && $packid;
     push @signargs, '--signflavor', $signflavor if $signflavor;
     if ($signkey) {
       mkdir_p($uploaddir);
@@ -822,8 +894,8 @@ sub signjob {
     unlink("$jobdir/.checksums");
 
     my $followupfile;
-    # check for followup files
-    if (!$info->{'followupfile'} && ($info->{'file'} || '') ne '_aggregate') {
+    # check for followup files, but don't allow more than 3 steps to avoid loops
+    if (($info->{'followupsteps'} || 0) < 3 && ($info->{'file'} || '') ne '_aggregate') {
       if (grep {/\.rsasign$/} @signfiles) {
         $followupfile = (grep {/\.(spec|dsc)$/} @files)[0];
         @signfiles = grep {/\.rsasign$/} @signfiles if $followupfile;
@@ -853,6 +925,7 @@ sub signjob {
       'signkey' => $signkey,
       'cert' => $cert,
       'signflavor' => $signflavor,
+      'time' => time(),
     };
 
     eval {
@@ -869,6 +942,10 @@ sub signjob {
 	  signappx($data, "$jobdir/$signfile", @signargs);
 	  next;
         }
+	if ($signfile =~ /\.apk$/) {
+	  signapk($data, "$jobdir/$signfile", @signargs);
+	  next;
+	}
 	if ($signfile =~ /\.iso$/) {
 	  signiso($data, "$jobdir/$signfile", @signargs);
 	  next;
@@ -880,18 +957,24 @@ sub signjob {
 	my $signfilefinal;
 	my ($signtime, $signissuer);
 	if ($info->{'file'} eq '_aggregate' && ($signfile =~ /\.d?rpm$/)) {
-	  # newer rpm versions sometimes do in-place signature replacement,
-	  # so create a copy first
-	  # (we should add a delsign option to our sign utility...)
-	  BSUtil::cp("$jobdir/$signfile", "$jobdir/.$signfile");
-	  $signfilefinal = $signfile;
-	  $signfile = ".$signfile";
 	  # special aggregate handling: remove old sigs
 	  # but get old sig time first
 	  my $sigdata = getsigdata("$jobdir/$signfile");
 	  $signtime = $sigdata->{'signtime'};
 	  $signissuer = $sigdata->{'issuer'};
-	  rpmdelsign("$jobdir/$signfile");
+	  if ($sign_supports_delsign) {
+	    if (system($BSConfig::sign, @signargs, '--delsign', '-r', "$jobdir/$signfile")) {
+	      die("sign --delsign $jobdir/$signfile failed\n");
+	    }
+	  } else {
+	    # newer rpm versions sometimes do in-place signature replacement,
+	    # so create a copy first
+	    # (we should add a delsign option to our sign utility...)
+	    BSUtil::cp("$jobdir/$signfile", "$jobdir/.$signfile");
+	    $signfilefinal = $signfile;
+	    $signfile = ".$signfile";
+	    rpmdelsign("$jobdir/$signfile");
+	  }
 	  if ($signtime && $pubkey) {
 	    if (!defined($pubkey_create_time)) {
 	      eval {
@@ -1012,6 +1095,8 @@ sub signjob {
       # we need to create a followup job to integrate the signatures
       $info->{'followupfile'} = $followupfile;
       $info->{'readytime'} = time();
+      # to avoid loops keep track of how many steps we have done for this job
+      $info->{'followupsteps'}++;
       writexml("$jobsdir/$arch/.$job", "$jobsdir/$arch/$job", $info, $BSXML::buildinfo);
       updateredisjobstatus($arch, $job, $info);
       unlink("$jobsdir/$arch/$job:status");
@@ -1132,6 +1217,8 @@ check_sign_S();
 print "warning: sign does not seem to support checksum files, please update\n" unless $sign_supports_S;
 check_sign_bulk_cpio();
 print "warning: sign does not seem to support bulk-cpio mode, please update\n" unless $sign_supports_bulk_cpio;
+check_sign_delsign();
+print "warning: sign does not seem to support delsign mode, please update\n" unless $sign_supports_delsign;
 
 BSStdRunner::run('signer', \@ARGV, $conf);
 

@@ -70,13 +70,12 @@ sub expand {
 =cut
 
 sub check {
-  my ($self, $ctx, $packid, $pdata, $info) = @_;
+  my ($self, $ctx, $packid, $pdata, $info, $buildtype, $edeps) = @_;
 
   my $projid = $ctx->{'project'};
   my $repoid = $ctx->{'repository'};
 
   # check if we're blocked
-  my $edeps = $info->{'edeps'} || $ctx->{'edeps'}->{$packid} || [];
   my $notready = $ctx->{'notready'};
   my $dep2src = $ctx->{'dep2src'};
   my $dep2pkg = $ctx->{'dep2pkg'};
@@ -118,8 +117,7 @@ sub check {
 
 sub build {
   my ($self, $ctx, $packid, $pdata, $info, $data) = @_;
-  my $bdeps = $data->[0];
-  my $reason = $data->[1];
+  my ($bdeps, $reason) = @$data;
   return BSSched::BuildJob::create($ctx, $packid, $pdata, $info, [], $bdeps, $reason, 0);
 }
 

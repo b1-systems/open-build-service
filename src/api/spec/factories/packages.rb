@@ -17,12 +17,16 @@ FactoryBot.define do
 
     factory :package_with_maintainer do
       transient do
-        maintainer { build(:confirmed_user) }
+        maintainer { association :confirmed_user }
       end
 
       after(:build) do |package, evaluator|
         role = Role.find_by_title('maintainer')
-        package.relationships.build(user: evaluator.maintainer, role: role)
+        if evaluator.maintainer.is_a?(User)
+          package.relationships.build(user: evaluator.maintainer, role: role)
+        elsif evaluator.maintainer.is_a?(Group)
+          package.relationships.build(group: evaluator.maintainer, role: role)
+        end
       end
     end
 
@@ -132,9 +136,8 @@ FactoryBot.define do
         remote_package_name { Faker::Lorem.word }
       end
       after(:create) do |package, evaluator|
-        remote_project = create(:remote_project, name: evaluator.remote_project_name)
         PackageKind.create(package_id: package.id, kind: 'link')
-        file_content = "<link package=\"#{evaluator.remote_package_name}\" project=\"#{remote_project.name}\" />"
+        file_content = "<link package=\"#{evaluator.remote_package_name}\" project=\"#{evaluator.remote_project_name}\" />"
 
         if CONFIG['global_write_through']
           Backend::Connection.put(

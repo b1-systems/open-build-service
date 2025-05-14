@@ -24,6 +24,10 @@ class BsRequest
         @parameters[:package]
       end
 
+      def priorities
+        @parameters[:priorities] || []
+      end
+
       def project_name
         @parameters[:project]
       end
@@ -59,6 +63,14 @@ class BsRequest
 
       def quote(str)
         BsRequest.connection.quote(str)
+      end
+
+      def creator
+        @parameters[:creator]
+      end
+
+      def reviewers
+        @parameters[:reviewers]
       end
     end
   end

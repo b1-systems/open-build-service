@@ -20,7 +20,12 @@ class EventSubscription
         receivers = expand_receivers(receivers_before_expand, channel)
         puts "Looking at #{receivers.map(&:to_s).join(', ')} for '#{receiver_role}' and channel '#{channel}'" if @debug && (receivers_before_expand - receivers).any?
 
-        options = { eventtype: event.eventtype, receiver_role: receiver_role, channel: channel }
+        # Allow descendant events to also receive notifications if the subscription only covers the base class
+        # This only supports 1 level of ancestry
+        superclass = event.class.superclass.name
+        eventtypes = [event.eventtype]
+        eventtypes << superclass if superclass != 'Event::Base'
+        options = { eventtype: eventtypes, receiver_role: receiver_role, channel: channel }
         # Find the default subscription for this eventtype and receiver_role
         default_subscription = EventSubscription.defaults.find_by(options)
 
@@ -34,6 +39,11 @@ class EventSubscription
           # Skip if the receiver is the originator of this event
           if receiver == event.originator
             puts "Skipped receiver #{receiver}, since it is the originator of the event..." if @debug
+            next
+          end
+
+          if receiver.is_a?(User) && receiver.blocked_users.include?(event.originator)
+            puts "Skipped the notification for receiver #{receiver}, since the originator is blocked by them..." if @debug
             next
           end
 
@@ -54,7 +64,8 @@ class EventSubscription
             )
           elsif channel == :web && receiver.instance_of?(Group) && receiver.web_users.any? { |u| EventSubscription.for_subscriber(u).find_by(options).present? }
             # There is no default subscription for groups, so we are using the existing details
-            receivers_and_subscriptions[receiver] = EventSubscription.new(options.merge({ subscriber: receiver }))
+            # There can be only one eventtype when creating a subscription, so we use the one that came with the event
+            receivers_and_subscriptions[receiver] = EventSubscription.new(options.merge({ eventtype: event.eventtype, subscriber: receiver }))
           elsif @debug && default_subscription.present? && !default_subscription.enabled?
             puts "Skipped receiver #{receiver} because of a disabled default subscription"
           end
@@ -71,8 +82,8 @@ class EventSubscription
       receivers.inject([]) do |new_receivers, receiver|
         case receiver
         when User
-          new_receivers << receiver if receiver.is_active?
-          puts "Skipped receiver #{receiver} because it's inactive" if @debug && !receiver.is_active?
+          new_receivers << receiver if receiver.active?
+          puts "Skipped receiver #{receiver} because it's inactive" if @debug && !receiver.active?
         when Group
           new_receivers += expand_receivers_for_groups(receiver, channel)
         end

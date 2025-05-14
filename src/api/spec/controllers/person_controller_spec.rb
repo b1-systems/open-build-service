@@ -17,11 +17,11 @@ RSpec.describe PersonController do
     end
   end
 
-  describe 'GET #get_userinfo' do
+  describe 'GET #userinfo' do
     context 'called by a user' do
       before do
         login user
-        get :get_userinfo, params: { login: user.login }
+        get :userinfo, params: { login: user.login }
       end
 
       it { expect(response.body).to have_css('person > login', text: user.login) }
@@ -37,7 +37,7 @@ RSpec.describe PersonController do
     context 'called by an admin' do
       before do
         login admin_user
-        get :get_userinfo, params: { login: user.login }
+        get :userinfo, params: { login: user.login }
       end
 
       it { expect(response.body).to have_css('person > login', text: user.login) }
@@ -66,31 +66,6 @@ RSpec.describe PersonController do
 
       it 'changes the password' do
         expect(old_password_digest).not_to eq(user.reload.password_digest)
-      end
-    end
-
-    context 'when in LDAP mode' do
-      before do
-        request.env['RAW_POST_DATA'] = 'password_has_changed'
-        stub_const('CONFIG', CONFIG.merge('ldap_mode' => :on))
-      end
-
-      context 'and the user is configured to authorize on the LDAP server' do
-        before do
-          post :post_userinfo, params: { login: user.login, cmd: 'change_password', format: :xml }
-        end
-
-        it { expect(response.header['X-Opensuse-Errorcode']).to eq('change_password_no_permission') }
-        it { expect(old_password_digest).to eq(user.reload.password_digest) }
-      end
-
-      context 'and the user is configured to authorize locally' do
-        before do
-          user.update(ignore_auth_services: true)
-          post :post_userinfo, params: { login: user.login, cmd: 'change_password', format: :xml }
-        end
-
-        it { expect(old_password_digest).not_to eq(user.reload.password_digest) }
       end
     end
   end
@@ -127,64 +102,9 @@ RSpec.describe PersonController do
         expect(test_user.watched_items.collect(&:watchable)).to include(project, package, delete_request)
       end
     end
-
-    context 'when in LDAP mode' do
-      before do
-        stub_const('CONFIG', CONFIG.merge('ldap_mode' => :on))
-        request.env['RAW_POST_DATA'] = xml
-      end
-
-      subject { put :put_userinfo, params: { login: user.login, format: :xml } }
-
-      context 'as an admin' do
-        before do
-          login admin_user
-        end
-
-        it_behaves_like 'not allowed to change user details'
-      end
-
-      context 'as a user' do
-        before do
-          login user
-        end
-
-        it_behaves_like 'not allowed to change user details'
-      end
-    end
   end
 
-  describe 'POST #register' do
-    context 'when in LDAP mode' do
-      before do
-        stub_const('CONFIG', CONFIG.merge('ldap_mode' => :on))
-      end
-
-      subject! { post :register }
-
-      it 'sets an error code' do
-        expect(response.header['X-Opensuse-Errorcode']).to eq('permission_denied')
-      end
-    end
-  end
-
-  describe 'POST #command' do
-    context 'with param cmd = register' do
-      context 'when in LDAP mode' do
-        before do
-          stub_const('CONFIG', CONFIG.merge('ldap_mode' => :on))
-        end
-
-        subject! { post :command, params: { cmd: 'register' } }
-
-        it 'sets an error code' do
-          expect(response.header['X-Opensuse-Errorcode']).to eq('permission_denied')
-        end
-      end
-    end
-  end
-
-  describe 'GET #get_watchlist' do
+  describe 'GET #watchlist' do
     context 'user logged-in' do
       let(:xml) do
         <<-XML_DATA
@@ -205,9 +125,9 @@ RSpec.describe PersonController do
         user.watched_items.create(watchable: package)
         user.watched_items.create(watchable: delete_request)
         login user
-      end
 
-      subject! { get :get_watchlist, params: { login: user.login } }
+        get :watchlist, params: { login: user.login }
+      end
 
       it 'returns watchlist' do
         expect(Xmlhash.parse(response.body)).to eq(Xmlhash.parse(xml))

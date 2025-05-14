@@ -11,12 +11,12 @@ class Project
       project.check_write_access!
 
       # check for raising read access permissions, which can't get ensured atm
-      raise ForbiddenError if !(project.new_record? || project.disabled_for?('access', nil, nil)) && (FlagHelper.xml_disabled_for?(xmlhash, 'access') && !User.admin_session?)
-      raise ForbiddenError if !(project.new_record? || project.disabled_for?('sourceaccess', nil, nil)) && (FlagHelper.xml_disabled_for?(xmlhash, 'sourceaccess') && !User.admin_session?)
+      raise ForbiddenError if !(project.new_record? || project.disabled_for?('access', nil, nil)) && FlagHelper.xml_disabled_for?(xmlhash, 'access') && !User.admin_session?
+      raise ForbiddenError if !(project.new_record? || project.disabled_for?('sourceaccess', nil, nil)) && FlagHelper.xml_disabled_for?(xmlhash, 'sourceaccess') && !User.admin_session?
 
       new_record = project.new_record?
-      if ::Configuration.default_access_disabled == true && !new_record && (project.disabled_for?('access', nil,
-                                                                                                  nil) && !FlagHelper.xml_disabled_for?(xmlhash, 'access') && !User.admin_session?)
+      if ::Configuration.default_access_disabled == true && !new_record && project.disabled_for?('access', nil,
+                                                                                                 nil) && !FlagHelper.xml_disabled_for?(xmlhash, 'access') && !User.admin_session?
         raise ForbiddenError
       end
 
@@ -28,7 +28,8 @@ class Project
       project.remoteurl = xmlhash.value('remoteurl')
       project.remoteproject = xmlhash.value('remoteproject')
       project.scmsync = xmlhash.value('scmsync')
-      project.kind = xmlhash.value('kind') if xmlhash.value('kind').present?
+      project.kind = xmlhash.value('kind').presence || 'standard'
+
       #--- update flag group ---#
       project.update_all_flags(xmlhash)
       if ::Configuration.default_access_disabled == true && new_record && xmlhash.elements('access').empty?
@@ -44,6 +45,11 @@ class Project
       project.update_relationships_from_xml(xmlhash)
 
       update_repositories(xmlhash, force)
+
+      return if project.scmsync.blank?
+
+      project.revoke_requests
+      project.cleanup_packages
     end
 
     private
@@ -219,8 +225,8 @@ class Project
     def check_for_empty_repo_list(list, error_prefix)
       return if list.empty?
 
-      linking_repos = list.map { |x| x.repository.project.name + '/' + x.repository.name }.join("\n")
-      raise SaveError, error_prefix + "\n" + linking_repos
+      linking_repos = list.map { |x| "#{x.repository.project.name}/#{x.repository.name}" }.join("\n")
+      raise SaveError, "#{error_prefix}\n#{linking_repos}"
     end
 
     def update_repository_flags(current_repo, xml_hash)

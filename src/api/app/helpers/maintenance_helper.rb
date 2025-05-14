@@ -29,6 +29,7 @@ module MaintenanceHelper
         link = Nokogiri::XML(link, &:strict).root
         links_to_source = link['project'].nil? || link['project'] == source_package.project.name
       rescue Backend::Error
+        # Ignore this exception on purpose
       end
     end
     if links_to_source
@@ -76,7 +77,7 @@ module MaintenanceHelper
             end
 
     # create or update main package linking to incident package
-    release_package_create_main_package(action.bs_request, source_package, target_package_name, target_project) unless source_package.is_patchinfo? || manual
+    release_package_create_main_package(action.bs_request, source_package, target_package_name, target_project) unless source_package.patchinfo? || manual
 
     # publish incident if source is read protect, but release target is not. assuming it got public now.
     f = source_package.project.flags.find_by_flag_and_status('access', 'disable')
@@ -161,8 +162,8 @@ module MaintenanceHelper
     }
     cp_params[:requestid] = action.bs_request.number if action
     # no permission check here on purpose
-    if target_project.is_maintenance_release? && source_package.is_link? && (source_package.linkinfo['project'] == target_project.name &&
-             source_package.linkinfo['package'] == target_package_name.gsub(/\.[^.]*$/, ''))
+    if target_project.maintenance_release? && source_package.link? && source_package.linkinfo['project'] == target_project.name &&
+       source_package.linkinfo['package'] == target_package_name.gsub(/\.[^.]*$/, '')
       # link target is equal to release target. So we freeze our link.
       cp_params[:freezelink] = 1
     end
@@ -173,7 +174,7 @@ module MaintenanceHelper
                                                                        freezelink withacceptinfo])
     result = Backend::Connection.post(cp_path)
     result = Xmlhash.parse(result.body)
-    action.set_acceptinfo(result['acceptinfo']) if action
+    action.fill_acceptinfo(result['acceptinfo']) if action
   end
 
   def copy_binaries(filter_source_repository, filter_architecture, source_package, target_package_name,
@@ -245,7 +246,7 @@ module MaintenanceHelper
   end
 
   def get_updateinfo_id(source_package, target_repo)
-    return unless source_package.is_patchinfo?
+    return unless source_package.patchinfo?
 
     # check for patch name inside of _patchinfo file
     xml = Patchinfo.new.read_patchinfo_xmlhash(source_package)
@@ -263,7 +264,7 @@ module MaintenanceHelper
     # expand a possible defined update info template in release target of channel
     project_filter = nil
     prj = source_package.project.parent
-    project_filter = prj.maintained_projects.map(&:project) if prj && prj.is_maintenance?
+    project_filter = prj.maintained_projects.map(&:project) if prj && prj.maintenance?
     # prefer a channel in the source project to avoid double hits exceptions
     cts = ChannelTarget.find_by_repo(target_repo, [source_package.project])
     cts = ChannelTarget.find_by_repo(target_repo, project_filter) unless cts.any?
@@ -274,7 +275,7 @@ module MaintenanceHelper
     end
     id_template = cts.first.id_template if cts.first && cts.first.id_template
 
-    mi.getUpdateinfoId(id_template, patch_name)
+    mi.get_updateinfo_id(id_template, patch_name)
   end
 
   def create_package_container_if_missing(source_package, target_package_name, target_project)
@@ -287,7 +288,7 @@ module MaintenanceHelper
                          title: source_package.title,
                          description: source_package.description)
       target_project.packages << tpkg
-      if source_package.is_patchinfo?
+      if source_package.patchinfo?
         # publish patchinfos only
         tpkg.flags.create(flag: 'publish', status: 'enable')
       end
@@ -325,7 +326,7 @@ module MaintenanceHelper
   def instantiate_container(project, opackage, opts = {})
     opkg = opackage.origin_container
     pkg_name = opkg_name = opkg.name
-    if opkg.is_a?(Package) && opkg.project.is_maintenance_release?
+    if opkg.is_a?(Package) && opkg.project.maintenance_release?
       # strip incident suffix
       pkg_name = opkg.name.gsub(/\.[^.]*$/, '')
     end
@@ -336,7 +337,7 @@ module MaintenanceHelper
     local_linked_packages = {}
     opkg.find_project_local_linking_packages.each do |p|
       lpkg_name = p.name
-      if opkg_name != pkg_name && p.is_a?(Package) && p.project.is_maintenance_release?
+      if opkg_name != pkg_name && p.is_a?(Package) && p.project.maintenance_release?
         # strip incident suffix
         lpkg_name = p.name.gsub(/\.[^.]*$/, '')
         # skip the base links
@@ -344,7 +345,9 @@ module MaintenanceHelper
       end
       raise PackageAlreadyExists, "package #{p.name} already exists" if Package.exists_by_project_and_name(project.name, lpkg_name, follow_project_links: false)
 
-      local_linked_packages[lpkg_name] = p
+      # only create local link when it also exists in source project
+      # avoid cases with dot's in the package name (eg. go1.19)
+      local_linked_packages[lpkg_name] = p if Package.exists_by_project_and_name(p.project.name, lpkg_name)
     end
 
     pkg = project.packages.create(name: pkg_name, title: opkg.title, description: opkg.description)

@@ -197,6 +197,7 @@ our $packinfo = [
 	    'nodbgpkgs',	# kiwi
 	    'nosrcpkgs',	# kiwi
 	    'nativebuild',	# cross build: native
+	    'nouseforbuild',
 	    'hasbuildenv',
 	    'bcntsynctag',
 	 [[ 'path' =>
@@ -269,6 +270,8 @@ our $patchinfo = [
             'retracted',
             'stopped',
             'seperate_build_arch', # for builds on each scheduler arch
+	    'blocked_in_product',
+	    'embargo_date',
             'zypp_restart_needed',
             'reboot_needed',
             'relogin_needed',
@@ -302,6 +305,7 @@ our $channel = [
 		'package',
 		'arch',
 		'supportstatus',
+		'superseded_by',
 	 ]],
      ]],
 ];
@@ -340,6 +344,8 @@ our $projpack = [
 	 ]],
 	    'remoteurl',
 	    'remoteproject',
+	    'scmsync',
+	    'scminfo',
 	    @flags,
 	    @roles,
 	  [ $repo ],
@@ -351,6 +357,7 @@ our $projpack = [
 		'versrel',
 		'verifymd5',	# tree id
 		'scmsync',
+		'scminfo',
 		'originproject',
 		'revtime',
 		'constraintsmd5',	# md5sum of constraints file in srcmd5
@@ -469,6 +476,7 @@ our $fileinfo = [
 	'source',
 	'summary',
 	'description',
+	'disturl',
 	'size',
 	'mtime',
       [ 'provides' ],
@@ -480,6 +488,7 @@ our $fileinfo = [
       [ 'supplements' ],
       [ 'suggests' ],
       [ 'enhances' ],
+      [ 'filelist' ],
 
      [[ 'provides_ext' =>
 	    'dep',
@@ -585,6 +594,7 @@ our $buildinfo = [
 	'logidlelimit',	# internal
 	'logsizelimit',	# internal
 	'genbuildreqs',	# internal
+	'nouseforbuild',	# internal
       [ 'obsgendiff' =>
 	    'project',
 	    'repository',
@@ -637,7 +647,8 @@ our $buildinfo = [
      ]],
 	'containerannotation',	# temporary hack
 	'expanddebug',
-	'followupfile',	# for two-stage builds
+	'followupfile',	# for multi-stage builds
+	'followupsteps',# for multi-stage builds, to avoid loops
 	'masterdispatched',	# dispatched through a master dispatcher
 	'nounchanged',	# do not check for "unchanged" builds
       [ 'module' ],	# list of modules to use
@@ -1056,6 +1067,7 @@ our $ajaxjob = [
 
 our $ajaxstatus = [
     'ajaxstatus' =>
+	'aidx',
 	'starttime',
 	'pid',
 	'ev',
@@ -1079,6 +1091,11 @@ our $ajaxstatus = [
       [ 'joblist' =>
 	  [ $ajaxjob ],
       ],
+];
+
+our $ajaxstatuslist = [
+    'ajaxstatuslist' =>
+	[ $ajaxstatus ],
 ];
 
 our $serverstatus = [
@@ -1132,6 +1149,9 @@ our $result = [
 	'state', # old name of 'code', to be removed
 	'details',
 	'dirty', # marked for re-scheduling if element exists, state might not be correct anymore
+	[],
+	'scmsync',
+	'scminfo',
       [ $buildstatus ],
       [ $binarylist ],
         $summary,
@@ -1639,7 +1659,10 @@ our $updateinfoitem = [
 		    'release',
 		    'arch',
 		    'src',
-		    'supportstatus',	# extension
+		    # extensions for OBS internal only
+		    'embargo_date',
+		    'supportstatus',
+		    'superseded_by',
 		    [],
 		    'filename',
 		  [ 'sum' =>	# obsolete?
@@ -1652,7 +1675,9 @@ our $updateinfoitem = [
 	     ]],
 	 ]],
       ],
-	'patchinforef',			# extension, "project/package"
+        # extensions
+	'patchinforef',		# "project/package"
+	'blocked_in_product',   # filter in product builds
 ];
 
 our $updateinfo = [
@@ -2036,6 +2061,7 @@ our $report = [
 	    'license',
 	    'binaryid',
 	    'supportstatus',
+	    'superseded_by',
 	    'cpeid',
 	    'summary',
 	    'isbase',
@@ -2111,6 +2137,9 @@ our $binannotation = [
 	'buildhost',
 	'disturl',
 	'binaryid',
+	'registry_refname',	# in DoD containers
+	'registry_digest',	# in DoD containers
+	'registry_fatdigest',	# in DoD containers
 	'package',		# only in build job annotation
 	'epoch',		# only in build job annotation
 	'version',		# only in build job annotation

@@ -5,7 +5,7 @@ class IssueTracker::CVEParser < Nokogiri::XML::SAX::Document
   @my_summary = ''
   @is_desc = false
 
-  def set_tracker(tracker)
+  def tracker=(tracker)
     @my_tracker = tracker
   end
 
@@ -15,7 +15,7 @@ class IssueTracker::CVEParser < Nokogiri::XML::SAX::Document
       @my_issue = Issue.find_or_create_by_name_and_tracker(cve.gsub(/^CVE-/, ''), @my_tracker.name)
       reset_values
     end
-    @isc_issue = my_issue_and_desc_name(name) ? true : false
+    @isc_issue = my_issue_and_desc_name(name) || false
   end
 
   def characters(content)

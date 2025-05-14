@@ -4,6 +4,7 @@ class BsRequestAction < ApplicationRecord
   include BsRequestAction::Errors
   #### Constants
   VALID_SOURCEUPDATE_OPTIONS = %w[update noupdate cleanup].freeze
+  TYPES = %w[set_bugowner change_devel delete maintenance_incident maintenance_release release add_role submit].freeze
 
   #### Self config
 
@@ -17,6 +18,9 @@ class BsRequestAction < ApplicationRecord
 
   belongs_to :target_package_object, class_name: 'Package', foreign_key: 'target_package_id', optional: true
   belongs_to :target_project_object, class_name: 'Project', foreign_key: 'target_project_id', optional: true
+
+  belongs_to :source_package_object, class_name: 'Package', foreign_key: 'source_package_id', optional: true
+  belongs_to :source_project_object, class_name: 'Project', foreign_key: 'source_project_id', optional: true
 
   has_many :bs_request_actions_seen_by_users, dependent: :nullify
   has_many :seen_by_users, through: :bs_request_actions_seen_by_users, source: :user
@@ -35,7 +39,7 @@ class BsRequestAction < ApplicationRecord
   validates :sourceupdate, inclusion: { in: VALID_SOURCEUPDATE_OPTIONS, allow_nil: true }
   validate :check_sanity
   validates :type, presence: true
-  before_validation :set_target_associations
+  before_validation :set_source_and_target_associations
   after_create :cache_diffs
 
   #### Class methods using self. (public and then private)
@@ -72,7 +76,7 @@ class BsRequestAction < ApplicationRecord
   def check_sanity
     if action_type.in?(%i[submit release maintenance_incident maintenance_release change_devel])
       errors.add(:source_project, "should not be empty for #{action_type} requests") if source_project.blank?
-      errors.add(:source_package, "should not be empty for #{action_type} requests") if !is_maintenance_incident? && source_package.blank?
+      errors.add(:source_package, "should not be empty for #{action_type} requests") if !maintenance_incident? && source_package.blank?
       errors.add(:target_project, "should not be empty for #{action_type} requests") if target_project.blank?
       errors.add(:target_package, 'No source changes are allowed, if source and target is identical') if source_package == target_package && source_project == target_project && (sourceupdate || updatelink)
     end
@@ -90,28 +94,24 @@ class BsRequestAction < ApplicationRecord
   end
 
   # convenience functions to check types
-  def is_submit?
+  def submit?
     false
   end
 
-  def is_release?
+  def release?
     false
   end
 
-  def is_maintenance_release?
+  def maintenance_release?
     false
   end
 
-  def is_maintenance_incident?
+  def maintenance_incident?
     false
   end
 
   def matches_package?(source_or_target, pkg)
     send(:"#{source_or_target}_project") == pkg.project.name && send(:"#{source_or_target}_package") == pkg.name
-  end
-
-  def is_from_remote?
-    Project.unscoped.is_remote_project?(source_project, true)
   end
 
   def store_from_xml(hash)
@@ -213,7 +213,7 @@ class BsRequestAction < ApplicationRecord
     end
   end
 
-  def set_acceptinfo(ai)
+  def fill_acceptinfo(ai)
     self.bs_request_action_accept_info = BsRequestActionAcceptInfo.create(ai)
   end
 
@@ -253,7 +253,10 @@ class BsRequestAction < ApplicationRecord
     ''
   end
 
-  def webui_infos(opts = {})
+  # Serve the sourcediff to the webui
+  def webui_sourcediff(opts = {})
+    opts[:superseded_bs_request_action] = find_action_with_same_target(opts[:diff_to_superseded]) if opts[:diff_to_superseded]
+
     begin
       opts[:view] = 'xml'
       opts[:withissues] = 1
@@ -262,12 +265,17 @@ class BsRequestAction < ApplicationRecord
     rescue DiffError, Project::UnknownObjectError, Package::UnknownObjectError => e
       return [{ error: e.message }]
     end
-    diff = sorted_filenames_from_sourcediff(sd)
-    if diff[0].empty?
-      nil
-    else
-      diff
-    end
+
+    sorted_filenames_from_sourcediff(sd)
+  end
+
+  def diff_not_cached(opts = {})
+    sourcediff_results = webui_sourcediff({ cacheonly: 1, diff_to_superseded: opts[:diff_to_superseded] })
+
+    return false if sourcediff_results.present?
+
+    errors = sourcediff_results.pluck(:error).compact
+    errors.any? { |e| e.include?('diff not yet in cache') }
   end
 
   def find_action_with_same_target(other_bs_request)
@@ -288,7 +296,7 @@ class BsRequestAction < ApplicationRecord
 
     tpkg = nil
     if target_package
-      tpkg = if is_maintenance_release?
+      tpkg = if maintenance_release?
                # use orignal/stripped name and also GA projects for maintenance packages.
                # But do not follow project links, if we have a branch target project, like in Evergreen case
                if tprj.find_attribute('OBS', 'BranchTarget')
@@ -311,14 +319,14 @@ class BsRequestAction < ApplicationRecord
       # if the user is not a maintainer if current devel package, the current maintainer gets added as reviewer of this request
       reviews.push(tpkg.develpackage) if action_type == :change_devel && tpkg.develpackage && !User.session!.can_modify?(tpkg.develpackage, 1)
 
-      unless is_maintenance_release?
+      unless maintenance_release?
         # Creating requests from packages where no maintainer right exists will enforce a maintainer review
         # to avoid that random people can submit versions without talking to the maintainers
         # projects may skip this by setting OBS:ApprovedRequestSource attributes
         if source_package
           spkg = Package.find_by_project_and_name(source_project, source_package)
-          if spkg && !User.session!.can_modify?(spkg) && (!spkg.project.find_attribute('OBS', 'ApprovedRequestSource') &&
-                !spkg.find_attribute('OBS', 'ApprovedRequestSource'))
+          if spkg && !User.session!.can_modify?(spkg) && !spkg.project.find_attribute('OBS', 'ApprovedRequestSource') &&
+             !spkg.find_attribute('OBS', 'ApprovedRequestSource')
             reviews.push(spkg)
           end
         else
@@ -332,7 +340,7 @@ class BsRequestAction < ApplicationRecord
     # package may exist in linked projects, we take the reviewers from there as default
     # avoid the project level maintainers for maintenance_release request, the need to be
     # defined in update project
-    reviews += find_reviewers(tpkg, disable_project: is_maintenance_release?) if tpkg
+    reviews += find_reviewers(tpkg, disable_project: maintenance_release?) if tpkg
 
     # project reviewers get added additionaly - might be dups
     reviews += find_reviewers(tprj) if tprj
@@ -408,7 +416,7 @@ class BsRequestAction < ApplicationRecord
     incident_suffix = ''
 
     # The maintenance ID is always the sub project name of the maintenance project
-    incident_suffix = '.' + source_project.gsub(/.*:/, '') if is_maintenance_release?
+    incident_suffix = ".#{source_project.gsub(/.*:/, '')}" if maintenance_release?
 
     found_patchinfo = false
     new_packages = []
@@ -425,7 +433,7 @@ class BsRequestAction < ApplicationRecord
       suffix          = ''
       tprj            = pkg.project
 
-      unless is_release?
+      unless release?
         while tprj == pkg.project
           data = Directory.hashed(project: tprj.name, package: ltpkg)
           data_linkinfo = data['linkinfo']
@@ -442,10 +450,10 @@ class BsRequestAction < ApplicationRecord
       tpkg = if target_package
                # manual specified
                target_package
-             elsif pkg.releasename && is_maintenance_release?
+             elsif pkg.releasename && maintenance_release?
                # incidents created since OBS 2.8 should have this information already.
                pkg.releasename
-             elsif tprj.try(:is_maintenance_incident?) && is_maintenance_release?
+             elsif tprj.try(:maintenance_incident?) && maintenance_release?
                # fallback, how can we get rid of it?
                data = Directory.hashed(project: tprj.name, package: ltpkg)
                data_linkinfo = data['linkinfo']
@@ -460,10 +468,10 @@ class BsRequestAction < ApplicationRecord
 
       # overwrite target if defined
       tprj = Project.get_by_name(target_project) if target_project
-      raise UnknownTargetProject, "Package #{pkg.project.name} / #{pkg.name} has no target" unless tprj || is_maintenance_release? || is_release?
+      raise UnknownTargetProject, "Package #{pkg.project.name} / #{pkg.name} has no target" unless tprj || maintenance_release? || release?
 
       # do not allow release requests without binaries
-      if is_maintenance_release? && pkg.is_patchinfo? && data && !opts[:ignore_build_state]
+      if maintenance_release? && pkg.patchinfo? && data && !opts[:ignore_build_state]
         # check for build state and binaries
         results = pkg.project.build_results
         raise BuildNotFinished, "The project'#{pkg.project.name}' has no building repositories" unless results
@@ -496,14 +504,14 @@ class BsRequestAction < ApplicationRecord
       end
 
       # re-route (for the kgraft case building against GM or former incident)
-      if is_maintenance_release? && tprj
+      if maintenance_release? && tprj
         tprj = tprj.update_instance_or_self
-        if tprj.is_maintenance_incident?
+        if tprj.maintenance_incident?
           release_target = nil
           pkg.project.repositories.includes(:release_targets).find_each do |repo|
             repo.release_targets.each do |rt|
               next if rt.trigger != 'maintenance'
-              next unless rt.target_repository.project.is_maintenance_release?
+              next unless rt.target_repository.project.maintenance_release?
               raise MultipleReleaseTargets if release_target && release_target != rt.target_repository.project
 
               release_target = rt.target_repository.project
@@ -519,7 +527,7 @@ class BsRequestAction < ApplicationRecord
       # check if the main package container exists in target.
       # take into account that an additional local link with spec file might got added
       if !missing_ok_link && !(data_linkinfo && tprj && tprj.exists_package?(ltpkg, follow_project_links: true, allow_remote_packages: false))
-        if is_maintenance_release? || is_release?
+        if maintenance_release? || release?
           pkg.project.repositories.includes(:release_targets).find_each do |repo|
             repo.release_targets.each do |rt|
               new_targets << rt.target_repository.project
@@ -528,21 +536,21 @@ class BsRequestAction < ApplicationRecord
           new_packages << pkg
           next
         end
-        raise UnknownTargetPackage if !is_maintenance_incident? && !is_submit?
+        raise UnknownTargetPackage if !maintenance_incident? && !submit?
       end
       # call dup to work on a copy of self
       new_action = dup
       new_action.source_package = pkg.name
-      if is_maintenance_incident?
+      if maintenance_incident?
         new_targets << tprj if tprj
         new_action.target_releaseproject = releaseproject.name if releaseproject
-      elsif !pkg.is_channel?
+      elsif !pkg.channel?
         new_targets << tprj
         new_action.target_project = tprj.name
         new_action.target_package = tpkg + incident_suffix
       end
-      if is_maintenance_release? || is_release?
-        if pkg.is_channel?
+      if maintenance_release? || release?
+        if pkg.channel?
 
           if new_action.source_rev.blank?
             # set revision
@@ -557,7 +565,7 @@ class BsRequestAction < ApplicationRecord
           new_action.destroy
           new_action = submit_action
         else # non-channel package
-          next unless has_matching_target?(pkg.project, tprj)
+          next unless matching_target?(pkg.project, tprj)
 
           unless pkg.project.can_be_released_to_project?(tprj)
             raise WrongLinkedPackageSource, 'According to the source link of package ' \
@@ -577,20 +585,20 @@ class BsRequestAction < ApplicationRecord
         newactions << new_action
       end
     end
-    raise MissingPatchinfo if is_maintenance_release? && !found_patchinfo && !opts[:ignore_build_state]
+    raise MissingPatchinfo if maintenance_release? && !found_patchinfo && !opts[:ignore_build_state]
 
     # new packages (eg patchinfos) go to all target projects by default in maintenance requests
     new_targets.uniq!
     new_packages.uniq!
     new_packages.each do |pkg|
-      release_targets = pkg.is_patchinfo? ? Patchinfo.new.fetch_release_targets(pkg) : nil
+      release_targets = pkg.patchinfo? ? Patchinfo.new.fetch_release_targets(pkg) : nil
       new_targets.each do |new_target_project|
         next if release_targets.present? && !release_targets.any? { |rt| rt['project'] == new_target_project.name }
 
         # skip if there is no active maintenance trigger for this package
-        next if is_maintenance_release? && !has_matching_target?(pkg.project, new_target_project)
+        next if maintenance_release? && !matching_target?(pkg.project, new_target_project)
 
-        if is_release?
+        if release?
           # unfiltered release actions got to all release targets in addition
           pkg.project.repositories.includes(:release_targets).find_each do |repo|
             repo.release_targets.each do |rt|
@@ -609,7 +617,7 @@ class BsRequestAction < ApplicationRecord
         else
           new_action = dup
           new_action.source_package = pkg.name
-          unless is_maintenance_incident?
+          unless maintenance_incident?
             new_action.target_project = new_target_project
             new_action.target_package = pkg.name + incident_suffix
           end
@@ -642,7 +650,7 @@ class BsRequestAction < ApplicationRecord
     tprj = check_action_permission_target!
 
     # Type specific checks
-    if action_type == :delete || action_type == :add_role || action_type == :set_bugowner
+    if %i[delete add_role set_bugowner].include?(action_type)
       # check existence of target
       raise UnknownProject, 'No target project specified' unless tprj
 
@@ -654,7 +662,7 @@ class BsRequestAction < ApplicationRecord
         raise UnknownProject, 'No target project specified'
       end
 
-      if is_maintenance_incident?
+      if maintenance_incident?
         raise IllegalRequest, 'Maintenance requests accept only projects as target' if target_package
         raise 'We should have expanded a target_project' unless target_project
 
@@ -680,8 +688,8 @@ class BsRequestAction < ApplicationRecord
     expand_target_project if action_type == :submit && ignore_delegate.blank? && target_project.present?
 
     # empty submission protection
-    if action_type.in?(%i[submit maintenance_incident]) && (target_package &&
-         Package.exists_by_project_and_name(target_project, target_package, follow_project_links: false))
+    if action_type.in?(%i[submit maintenance_incident]) && target_package &&
+       Package.exists_by_project_and_name(target_project, target_package, follow_project_links: false)
       raise MissingAction unless contains_change?
 
       return
@@ -793,11 +801,15 @@ class BsRequestAction < ApplicationRecord
     end
   end
 
-  def is_target_maintainer?(user)
+  def source_maintainer?(user)
+    user && user.can_modify?(source_package_object || source_project_object)
+  end
+
+  def target_maintainer?(user)
     user && user.can_modify?(target_package_object || target_project_object)
   end
 
-  def set_sourceupdate_default(user)
+  def cleanup_sourceupdate(user)
     return if sourceupdate || %i[submit maintenance_incident].exclude?(action_type)
 
     update(sourceupdate: 'cleanup') if target_project && user.branch_project_name(target_project) == source_project
@@ -811,12 +823,14 @@ class BsRequestAction < ApplicationRecord
     uniq_key
   end
 
+  def short_name
+    ''
+  end
+
   def commit_details
-    package = Package.find_by_project_and_name(source_project, source_package)
+    return nil if source_rev.nil? || source_package_object.nil?
 
-    return nil if package.nil? || source_rev.nil?
-
-    package.commit(source_rev) || package.commit
+    source_package_obj.commit(source_rev) || source_package_obj.commit
   end
 
   def toggle_seen_by(user)
@@ -850,6 +864,14 @@ class BsRequestAction < ApplicationRecord
     BsRequestActionTabVisibility.new(self)
   end
 
+  def involves_hidden_project?
+    Project.unscoped.find_by(name: source_project)&.disabled_for?('access', nil, nil)
+  end
+
+  def embargo_date
+    Project.unscoped.find_by(name: source_project)&.embargo_date
+  end
+
   private
 
   def cache_diffs
@@ -858,7 +880,7 @@ class BsRequestAction < ApplicationRecord
     # global_write_through is only disabled in test env. Otherwise, it's always enabled.
     return unless CONFIG['global_write_through']
 
-    set_sourceupdate_default(User.session!)
+    cleanup_sourceupdate(User.session!)
     BsRequestActionWebuiInfosJob.perform_later(self)
   end
 
@@ -903,7 +925,7 @@ class BsRequestAction < ApplicationRecord
     "The repository '#{prj}' / '#{repo}' / #{arch} did not finish the #{state} yet"
   end
 
-  def has_matching_target?(source_project, target_project)
+  def matching_target?(source_project, target_project)
     ReleaseTarget.exists?(repository: source_project.repositories,
                           target_repository: target_project.repositories,
                           trigger: 'maintenance')
@@ -931,7 +953,7 @@ class BsRequestAction < ApplicationRecord
 
     tprj = Project.get_by_name(target_project)
     if tprj.is_a?(Project)
-      if tprj.is_maintenance_release? && action_type == :submit &&
+      if tprj.maintenance_release? && action_type == :submit &&
          !tprj.find_attribute('OBS', 'AllowSubmitToMaintenanceRelease')
         raise SubmitRequestRejected, "The target project #{target_project} is a maintenance release project, " \
                                      'a submit self is not possible, please use the maintenance workflow instead.'
@@ -984,12 +1006,11 @@ class BsRequestAction < ApplicationRecord
   # find default reviewers of a project/package via role
   def find_reviewers(obj, disable_project: false)
     # obj can be a project or package object
-    reviewers = []
     reviewer_id = Role.hashed['reviewer'].id
 
     # check for reviewers in a package first
-    obj.relationships.users.where(role_id: reviewer_id).pluck(:user_id).each do |r|
-      reviewers << User.find(r)
+    reviewers = obj.relationships.users.where(role_id: reviewer_id).pluck(:user_id).map do |r|
+      User.find(r)
     end
     obj.relationships.groups.where(role_id: reviewer_id).pluck(:group_id).each do |r|
       reviewers << Group.find(r)
@@ -1005,7 +1026,9 @@ class BsRequestAction < ApplicationRecord
     node.source(attributes)
   end
 
-  def set_target_associations
+  def set_source_and_target_associations
+    self.source_package_object = Package.find_by_project_and_name(source_project, source_package)
+    self.source_project_object = Project.find_by_name(source_project)
     self.target_package_object = Package.find_by_project_and_name(target_project, target_package)
     self.target_project_object = Project.find_by_name(target_project)
   end
@@ -1034,6 +1057,8 @@ end
 #  updatelink            :boolean          default(FALSE)
 #  created_at            :datetime
 #  bs_request_id         :integer          indexed, indexed => [target_package_id], indexed => [target_project_id]
+#  source_package_id     :integer          indexed
+#  source_project_id     :integer          indexed
 #  target_package_id     :integer          indexed => [bs_request_id], indexed
 #  target_project_id     :integer          indexed => [bs_request_id], indexed
 #
@@ -1043,7 +1068,9 @@ end
 #  index_bs_request_actions_on_bs_request_id_and_target_package_id  (bs_request_id,target_package_id)
 #  index_bs_request_actions_on_bs_request_id_and_target_project_id  (bs_request_id,target_project_id)
 #  index_bs_request_actions_on_source_package                       (source_package)
+#  index_bs_request_actions_on_source_package_id                    (source_package_id)
 #  index_bs_request_actions_on_source_project                       (source_project)
+#  index_bs_request_actions_on_source_project_id                    (source_project_id)
 #  index_bs_request_actions_on_target_package                       (target_package)
 #  index_bs_request_actions_on_target_package_id                    (target_package_id)
 #  index_bs_request_actions_on_target_project                       (target_project)

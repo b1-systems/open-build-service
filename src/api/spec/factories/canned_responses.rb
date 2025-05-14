@@ -5,11 +5,11 @@ FactoryBot.define do
     user { association :confirmed_user }
 
     factory :cleared_canned_response do
-      decision_kind { 'cleared' }
+      decision_type { 'cleared' }
       user { association :moderator }
     end
-    factory :favor_canned_response do
-      decision_kind { 'favor' }
+    factory :favored_canned_response do
+      decision_type { 'favored' }
       user { association :moderator }
     end
   end

@@ -10,7 +10,8 @@ class User < ApplicationRecord
   NOBODY_LOGIN = '_nobody_'.freeze
   MAX_BIOGRAPHY_LENGTH_ALLOWED = 250
 
-  enum :color_theme, %w[system light dark]
+  attribute :color_theme, :integer
+  enum :color_theme, { 'system' => 0, 'light' => 1, 'dark' => 2 }
 
   # disable validations because there can be users which don't have a bcrypt
   # password yet. this is for backwards compatibility
@@ -62,11 +63,16 @@ class User < ApplicationRecord
 
   has_many :disabled_beta_features, dependent: :destroy
   has_many :reports, as: :reportable, dependent: :nullify
-  has_many :submitted_reports, class_name: 'Report'
+  has_many :submitted_reports, class_name: 'Report', foreign_key: 'reporter_id'
 
   has_many :moderated_comments, class_name: 'Comment', foreign_key: 'moderator_id'
   has_many :decisions, foreign_key: 'moderator_id'
   has_many :canned_responses, dependent: :destroy
+  has_many :user_blocks, class_name: 'BlockedUser', foreign_key: 'blocker_id', dependent: :destroy
+  has_many :blocked_users, through: :user_blocks, source: :blocked
+
+  has_many :assignments, foreign_key: 'assignee_id', dependent: :destroy
+  has_many :assigned_packages, through: :assignments, source: :package
 
   scope :confirmed, -> { where(state: 'confirmed') }
   scope :all_without_nobody, -> { where.not(login: NOBODY_LOGIN) }
@@ -76,6 +82,7 @@ class User < ApplicationRecord
   scope :staff, -> { joins(:roles).where('roles.title' => 'Staff') }
   scope :admins, -> { joins(:roles).where('roles.title' => 'Admin') }
   scope :moderators, -> { joins(:roles).where('roles.title' => 'Moderator') }
+  scope :starting_with, ->(prefix) { where(['lower(login) like lower(?)', "#{prefix}%"]) }
 
   scope :in_beta, -> { where(in_beta: true) }
   scope :in_rollout, -> { where(in_rollout: true) }
@@ -163,7 +170,12 @@ class User < ApplicationRecord
   end
 
   def self.autocomplete_login(prefix = '')
-    AutocompleteFinder::User.new(User.not_deleted.not_locked, prefix).call.pluck(:login)
+    User.not_deleted
+        .not_locked
+        .starting_with(prefix)
+        .order(Arel.sql('length(login)'), :login)
+        .limit(50)
+        .pluck(:login)
   end
 
   # the default state of a user based on the api configuration
@@ -175,64 +187,15 @@ class User < ApplicationRecord
     create!(attributes.merge(password: SecureRandom.base64(48)))
   end
 
-  def self.create_ldap_user(attributes = {})
-    user = create_user_with_fake_pw!(attributes.merge(state: default_user_state, adminnote: 'User created via LDAP'))
-
-    return user if user.errors.empty?
-
-    logger.info("Cannot create ldap userid: '#{login}' on OBS. Full log: #{user.errors.full_messages.to_sentence}")
-    nil
-  end
-
   # This static method tries to find a user with the given login and password
   # in the database. Returns the user or nil if they could not be found
   def self.find_with_credentials(login, password)
-    return find_with_credentials_via_ldap(login, password) if CONFIG['ldap_mode'] == :on
-
-    user = find_by_login(login)
-    user.try(:authenticate_via_password, password)
-  end
-
-  def self.find_with_credentials_via_ldap(login, password)
-    user = find_by_login(login)
-    ldap_info = nil
-
-    return user.authenticate_via_password(password) if user.try(:ignore_auth_services?)
-
-    if CONFIG['ldap_mode'] == :on
-      begin
-        require 'ldap'
-        logger.debug("Using LDAP to find #{login}")
-        ldap_info = UserLdapStrategy.find_with_ldap(login, password)
-      rescue LoadError
-        logger.warn "ldap_mode selected but 'ruby-ldap' module not installed."
-      rescue StandardError
-        logger.debug "#{login} not found in LDAP."
-      end
-    end
-
-    return unless ldap_info
-
-    # We've found an ldap authenticated user - find or create an OBS userDB entry.
-    if user
-      # Check for ldap updates
-      user.assign_attributes(email: ldap_info[0], realname: ldap_info[1])
-      user.save if user.changed?
-    else
-      logger.debug('No user found in database, creating')
-      logger.debug("Email: #{ldap_info[0]}")
-      logger.debug("Name : #{ldap_info[1]}")
-
-      user = create_ldap_user(login: login, email: ldap_info[0], realname: ldap_info[1])
-    end
-
-    user.mark_login!
-    user
+    find_by(login: login)&.authenticate_via_password(password)
   end
 
   # Currently logged in user or nobody user if there is no user logged in.
   # Use this to check permissions, but don't treat it as logged in user. Check
-  # is_nobody? on the returned object
+  # nobody? on the returned object
   def self.possibly_nobody
     current || nobody
   end
@@ -247,11 +210,11 @@ class User < ApplicationRecord
 
   # Currently logged in user or nil
   def self.session
-    current if current && !current.is_nobody?
+    current if current && !current.nobody?
   end
 
   def self.admin_session?
-    current && current.is_admin?
+    current && current.admin?
   end
 
   # set the user as current session user (should be real user)
@@ -259,10 +222,10 @@ class User < ApplicationRecord
     Thread.current[:user] = user
   end
 
-  def self.get_default_admin
+  def self.default_admin
     admin = CONFIG['default_admin'] || 'Admin'
     user = User.find_by!(login: admin)
-    raise NotFoundError, "Admin not found, user #{admin} has not admin permissions" unless user.is_admin?
+    raise NotFoundError, "Admin not found, user #{admin} has not admin permissions" unless user.admin?
 
     user
   end
@@ -303,16 +266,6 @@ class User < ApplicationRecord
   def validate_state
     # check that the state transition is valid
     errors.add(:state, 'must be a valid new state from the current state') unless state_transition_allowed?(state_was, state)
-  end
-
-  # This method returns true if the user is assigned the role with one of the
-  # role titles given as parameters. False otherwise.
-  def has_role?(*role_titles)
-    obj = all_roles.detect do |role|
-      role_titles.include?(role.title)
-    end
-
-    !obj.nil?
   end
 
   # This method checks whether the given value equals the password when
@@ -372,7 +325,7 @@ class User < ApplicationRecord
     render_axml
   end
 
-  def render_axml(watchlist = false, render_watchlist_only: false)
+  def render_axml(watchlist: false, render_watchlist_only: false)
     # CanRenderModel
     render_xml(watchlist: watchlist, render_watchlist_only: render_watchlist_only)
   end
@@ -393,37 +346,41 @@ class User < ApplicationRecord
   # permission checks #
   #####################
 
-  def is_admin?
+  def admin?
     return @is_admin unless @is_admin.nil?
 
     @is_admin = roles.exists?(title: 'Admin')
   end
 
-  def is_staff?
+  def staff?
     return @is_staff unless @is_staff.nil?
 
     @is_staff = roles.exists?(title: 'Staff')
   end
 
-  def is_nobody?
+  def nobody?
     login == NOBODY_LOGIN
   end
 
-  def is_moderator?
+  def moderator?
     roles.exists?(title: 'Moderator')
   end
 
-  def is_active?
-    return owner.is_active? if owner
+  def active?
+    return owner.active? if owner
 
     self.state == 'confirmed'
   end
 
-  def is_deleted?
+  def deleted?
     state == 'deleted'
   end
 
-  def is_in_group?(group)
+  def list_groups
+    lookup_strategy.list_groups(self)
+  end
+
+  def in_group?(group)
     case group
     when String
       group = Group.find_by_title(group)
@@ -432,16 +389,16 @@ class User < ApplicationRecord
     when Group, nil
       nil
     else
-      raise ArgumentError, "illegal parameter type to User#is_in_group?: #{group.class}"
+      raise ArgumentError, "illegal parameter type to User#in_group?: #{group.class}"
     end
 
-    group && lookup_strategy.is_in_group?(self, group)
+    group && lookup_strategy.in_group?(self, group)
   end
 
   # This method returns true if the user is granted the permission with one
   # of the given permission titles.
-  def has_global_permission?(perm_string)
-    logger.debug "has_global_permission? #{perm_string}"
+  def global_permission?(perm_string)
+    logger.debug "global_permission? #{perm_string}"
     roles.detect do |role|
       return true if role.static_permissions.find_by(title: perm_string)
     end
@@ -479,17 +436,12 @@ class User < ApplicationRecord
   def can_modify_package?(package, ignore_lock = nil)
     return false if package.nil? # happens with remote packages easily
     raise ArgumentError, "illegal parameter type to User#can_modify_package?: #{package.class.name}" unless package.is_a?(Package)
-    return false if !ignore_lock && package.is_locked?
-    return true if is_admin?
-    return true if has_global_permission?('change_package')
-    return true if has_local_permission?('change_package', package)
+    return false if !ignore_lock && package.locked?
+    return true if admin?
+    return true if global_permission?('change_package')
+    return true if local_permission?('change_package', package)
 
     false
-  end
-
-  # FIXME: This should be a policy
-  def can_modify_user?(user)
-    is_admin? || self == user
   end
 
   # FIXME: This should be a policy
@@ -499,13 +451,13 @@ class User < ApplicationRecord
     return true if project_name == home_project_name && Configuration.allow_user_to_create_home_project
     return true if /^#{home_project_name}:/ =~ project_name && Configuration.allow_user_to_create_home_project
 
-    return true if has_global_permission?('create_project')
+    return true if global_permission?('create_project')
 
     parent_project = Project.new(name: project_name).parent
     return false if parent_project.nil?
-    return true  if is_admin?
+    return true  if admin?
 
-    has_local_permission?('create_project', parent_project)
+    local_permission?('create_project', parent_project)
   end
 
   # FIXME: This should be a policy
@@ -515,7 +467,7 @@ class User < ApplicationRecord
 
   def attribute_modifier_rule_matches?(rule)
     return false if rule.user && rule.user != self
-    return false if rule.group && !is_in_group?(rule.group)
+    return false if rule.group && !in_group?(rule.group)
 
     true
   end
@@ -525,7 +477,7 @@ class User < ApplicationRecord
     object = object.attrib_namespace if object.is_a?(AttribType)
     raise ArgumentError, "illegal parameter type to User#can_change?: #{object.class.name}" unless object.is_a?(AttribNamespace)
 
-    return true if is_admin?
+    return true if admin?
 
     abies = object.attrib_namespace_modifiable_bies.includes(%i[user group])
     abies.any? { |rule| attribute_modifier_rule_matches?(rule) }
@@ -533,7 +485,7 @@ class User < ApplicationRecord
 
   def attribute_modification_rule_matches?(rule, object)
     return false unless attribute_modifier_rule_matches?(rule)
-    return false if rule.role && !has_local_role?(rule.role, object)
+    return false if rule.role && !local_role?(rule.role, object)
 
     true
   end
@@ -542,7 +494,7 @@ class User < ApplicationRecord
   def can_create_attribute_in?(object, atype)
     raise ArgumentError, "illegal parameter type to User#can_change?: #{object.class.name}" if !object.is_a?(Project) && !object.is_a?(Package)
 
-    return true if is_admin?
+    return true if admin?
 
     abies = atype.attrib_type_modifiable_bies.includes(%i[user group role])
     # no rules -> maintainer
@@ -563,12 +515,12 @@ class User < ApplicationRecord
 
   # FIXME: This should be a policy
   def can?(key, package)
-    is_admin? ||
-      has_global_permission?(key.to_s) ||
-      has_local_permission?(key.to_s, package)
+    admin? ||
+      global_permission?(key.to_s) ||
+      local_permission?(key.to_s, package)
   end
 
-  def has_local_role?(role, object)
+  def local_role?(role, object)
     if object.is_a?(Package) || object.is_a?(Project)
       logger.debug "running local role package check: user #{login}, package #{object.name}, role '#{role.title}'"
       rels = object.relationships.where(role_id: role.id, user_id: id)
@@ -580,7 +532,7 @@ class User < ApplicationRecord
       return true if lookup_strategy.local_role_check(role, object)
     end
 
-    return has_local_role?(role, object.project) if object.is_a?(Package)
+    return local_role?(role, object.project) if object.is_a?(Package)
 
     false
   end
@@ -590,7 +542,7 @@ class User < ApplicationRecord
   # if context is a project, check it, then if needed go down through all namespaces until hitting the root
   # return false if none of the checks succeed
   # rubocop:disable Metrics/PerceivedComplexity
-  def has_local_permission?(perm_string, object)
+  def local_permission?(perm_string, object)
     roles = Role.ids_with_permission(perm_string)
     return false unless roles
 
@@ -607,14 +559,14 @@ class User < ApplicationRecord
     when Project
       logger.debug "running local permission check: user #{login}, project #{object.name}, permission '#{perm_string}'"
 
-      # Users have permissions to manage their own home project
+      # Users have permissions to manage their own home project and it's subprojects
       # This is needed since users sometimes remove themselves from the maintainers of their own home project
-      return true if object.name == home_project_name
+      return true if object.name == home_project_name || object.name.starts_with?("#{home_project_name}:")
 
       # check permission for given project
       parent = object.parent
     when nil
-      return has_global_permission?(perm_string)
+      return global_permission?(perm_string)
     else
       return false
     end
@@ -629,7 +581,7 @@ class User < ApplicationRecord
     if parent
       # check permission of parent project
       logger.debug "permission not found, trying parent project '#{parent.name}'"
-      return has_local_permission?(perm_string, parent)
+      return local_permission?(perm_string, parent)
     end
 
     false
@@ -642,7 +594,7 @@ class User < ApplicationRecord
 
     # lock also all home projects to avoid unneccessary builds
     Project.where('name like ?', "#{home_project_name}%").find_each do |prj|
-      next if prj.is_locked?
+      next if prj.locked?
 
       prj.lock('User account got locked')
     end
@@ -665,6 +617,7 @@ class User < ApplicationRecord
     self.realname = ''
     self.state = 'deleted'
     comments.destroy_all
+    event_subscriptions.destroy_all
     save!
 
     # wipe also all home projects
@@ -675,26 +628,26 @@ class User < ApplicationRecord
 
   def destroy_home_projects(reason:)
     Project.where('name LIKE ?', "#{home_project_name}:%").or(Project.where(name: home_project_name)).find_each do |project|
-      project.commit_opts = { comment: "#{reason}" }
+      project.commit_opts = { comment: reason.to_s }
       project.destroy
     end
   end
 
   def involved_projects
-    Project.for_user(id).or(Project.for_group(group_ids))
+    Project.unscoped.for_user(id).or(Project.unscoped.for_group(group_ids))
   end
 
   # lists packages maintained by this user and are not in maintained projects
   def involved_packages
-    Package.for_user(id).or(Package.for_group(group_ids)).where.not(project: involved_projects)
+    Package.unscoped.for_user(id).or(Package.unscoped.for_group(group_ids)).where.not(project: involved_projects)
   end
 
   # lists reviews involving this user
   def involved_reviews(search = nil)
-    result = BsRequest.by_user_reviews(id).or(
-      BsRequest.by_project_reviews(involved_projects).or(
-        BsRequest.by_package_reviews(involved_packages).or(
-          BsRequest.by_group_reviews(groups)
+    result = BsRequest.where(reviews: { user: id }).or(
+      BsRequest.where(reviews: { project: involved_projects }).or(
+        BsRequest.where(reviews: { package: involved_packages }).or(
+          BsRequest.where(reviews: { group: groups })
         )
       )
     ).with_actions_and_reviews.where(state: :review, reviews: { state: :new }).where.not(creator: login)
@@ -703,33 +656,31 @@ class User < ApplicationRecord
 
   # list requests involving this user
   def declined_requests(search = nil)
-    result = requests_created.in_states(:declined).with_actions
+    result = requests_created.where(state: :declined).with_actions
     search.present? ? result.do_search(search) : result
   end
 
   # list incoming requests involving this user
-  def incoming_requests(search = nil, all_states: false)
-    states = all_states ? BsRequest::VALID_REQUEST_STATES : [:new]
-
-    result = BsRequest.where(id: BsRequestAction.bs_request_ids_of_involved_projects(involved_projects)).or(
-      BsRequest.where(id: BsRequestAction.bs_request_ids_of_involved_packages(involved_packages))
-    ).with_actions.in_states(states)
+  def incoming_requests(search = nil, states: [:new])
+    result = BsRequest.where(state: states).and(
+      BsRequest.where(id: BsRequestAction.bs_request_ids_of_involved_projects(involved_projects.pluck(:id))).or(
+        BsRequest.where(id: BsRequestAction.bs_request_ids_of_involved_packages(involved_packages.pluck(:id)))
+      )
+    ).with_actions
 
     search.present? ? result.do_search(search) : result
   end
 
   # list outgoing requests involving this user
-  def outgoing_requests(search = nil, all_states: false)
-    states = all_states ? BsRequest::VALID_REQUEST_STATES : %i[new review]
-
-    result = requests_created.in_states(states).with_actions
+  def outgoing_requests(search = nil, states: %i[new review])
+    result = requests_created.where(state: states).with_actions
     search.present? ? result.do_search(search) : result
   end
 
   # list of all requests
   def requests(search = nil)
-    project_ids = involved_projects
-    package_ids = involved_packages
+    project_ids = involved_projects.pluck(:id)
+    package_ids = involved_packages.pluck(:id)
 
     actions = BsRequestAction.bs_request_ids_of_involved_projects(project_ids).or(
       BsRequestAction.bs_request_ids_of_involved_packages(package_ids)
@@ -750,6 +701,20 @@ class User < ApplicationRecord
     ).with_actions
 
     search.present? ? result.do_search(search) : result
+  end
+
+  # Returns an ActiveRecord::Relation with all BsRequest that the user is somehow involved in
+  def bs_requests
+    BsRequest.left_outer_joins(:bs_request_actions, :reviews).where(creator: login)
+             .or(BsRequest.left_outer_joins(:bs_request_actions, :reviews).where(reviews: { user_id: id }))
+             .or(BsRequest.left_outer_joins(:bs_request_actions, :reviews).where(reviews: { group_id: groups.pluck(:id) }))
+             .or(BsRequest.left_outer_joins(:bs_request_actions, :reviews).where(reviews: { project_id: involved_projects.pluck(:id) }))
+             .or(BsRequest.left_outer_joins(:bs_request_actions, :reviews).where(reviews: { package_id: involved_packages.pluck(:id) }))
+             .or(BsRequest.left_outer_joins(:bs_request_actions, :reviews).where(bs_request_actions: { target_project_id: involved_projects.pluck(:id) }))
+             .or(BsRequest.left_outer_joins(:bs_request_actions, :reviews).where(bs_request_actions: { target_package_id: involved_packages.pluck(:id) }))
+             .or(BsRequest.left_outer_joins(:bs_request_actions, :reviews).where(bs_request_actions: { source_project_id: involved_projects.pluck(:id) }))
+             .or(BsRequest.left_outer_joins(:bs_request_actions, :reviews).where(bs_request_actions: { source_package_id: involved_packages.pluck(:id) }))
+             .distinct
   end
 
   # TODO: This should be in a query object
@@ -786,8 +751,8 @@ class User < ApplicationRecord
     end
   end
 
-  def unread_notifications
-    NotificationsFinder.new(notifications.for_web).unread.size
+  def unread_notifications_count
+    notifications.for_web.unread.size
   end
 
   def update_globalroles(global_roles)
@@ -825,7 +790,7 @@ class User < ApplicationRecord
   def proxy_realname(env)
     return unless env['HTTP_X_FIRSTNAME'].present? && env['HTTP_X_LASTNAME'].present?
 
-    env['HTTP_X_FIRSTNAME'].force_encoding('UTF-8') + ' ' + env['HTTP_X_LASTNAME'].force_encoding('UTF-8')
+    "#{env['HTTP_X_FIRSTNAME'].force_encoding('UTF-8')} #{env['HTTP_X_LASTNAME'].force_encoding('UTF-8')}"
   end
 
   def update_login_values(env)
@@ -908,11 +873,11 @@ class User < ApplicationRecord
   # FIXME: This should be a policy
   def can_modify_project_internal(project, ignore_lock)
     # The ordering is important because of the lock status check
-    return false if !ignore_lock && project.is_locked?
-    return true if is_admin?
+    return false if !ignore_lock && project.locked?
+    return true if admin?
 
-    return true if has_global_permission?('change_project')
-    return true if has_local_permission?('change_project', project)
+    return true if global_permission?('change_project')
+    return true if local_permission?('change_project', project)
 
     false
   end
@@ -929,12 +894,8 @@ class User < ApplicationRecord
     end
   end
 
-  cattr_accessor :lookup_strategy do
-    @@lstrategy = if Configuration.ldapgroup_enabled?
-                    UserLdapStrategy.new
-                  else
-                    UserBasicStrategy.new
-                  end
+  def lookup_strategy
+    UserBasicStrategy.new
   end
 end
 
@@ -945,7 +906,7 @@ end
 #  id                            :integer          not null, primary key
 #  adminnote                     :text(65535)
 #  biography                     :string(255)      default("")
-#  blocked_from_commenting       :boolean          default(FALSE), not null, indexed
+#  censored                      :boolean          default(FALSE), not null, indexed
 #  color_theme                   :integer          default("system"), not null
 #  deprecated_password           :string(255)      indexed
 #  deprecated_password_hash_type :string(255)
@@ -967,11 +928,11 @@ end
 #
 # Indexes
 #
-#  index_users_on_blocked_from_commenting  (blocked_from_commenting)
-#  index_users_on_in_beta                  (in_beta)
-#  index_users_on_in_rollout               (in_rollout)
-#  index_users_on_rss_secret               (rss_secret) UNIQUE
-#  index_users_on_state                    (state)
-#  users_login_index                       (login) UNIQUE
-#  users_password_index                    (deprecated_password)
+#  index_users_on_censored    (censored)
+#  index_users_on_in_beta     (in_beta)
+#  index_users_on_in_rollout  (in_rollout)
+#  index_users_on_rss_secret  (rss_secret) UNIQUE
+#  index_users_on_state       (state)
+#  users_login_index          (login) UNIQUE
+#  users_password_index       (deprecated_password)
 #

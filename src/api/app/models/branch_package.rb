@@ -37,9 +37,7 @@ class BranchPackage
     @update_path_elements = true
   end
 
-  def logger
-    Rails.logger
-  end
+  delegate :logger, to: :Rails
 
   def branch
     #
@@ -106,7 +104,7 @@ class BranchPackage
   def copy_package_message(package_hash)
     copy_from_devel = package_hash[:copy_from_devel]
 
-    if copy_from_devel.project.is_maintenance_incident?
+    if copy_from_devel.project.maintenance_incident?
       "fetch updates from open incident project #{copy_from_devel.project.name}"
     else
       "fetch updates from devel package #{copy_from_devel.project.name}/#{copy_from_devel.name}"
@@ -141,9 +139,12 @@ class BranchPackage
   # would be just the cosmetic parts like title and description. Other elemnts should
   # not be used anyway for scmsync packages.
   def create_fork(project)
-    package = project.packages.find_or_initialize_by(name: params[:package])
-    package.scmsync = @scmsync
-    package.store
+    package = nil
+    unless params[:package] == '_project'
+      package = project.packages.find_or_initialize_by(name: params[:package])
+      package.scmsync = @scmsync
+      package.store
+    end
 
     # add repositories
     opts = {}
@@ -152,9 +153,17 @@ class BranchPackage
     source_project = Project.get_by_name(params[:project])
     project.branch_to_repositories_from(source_project, package, opts)
     project.sync_repository_pathes
-
+    project.scmsync = @scmsync if params[:package] == '_project'
     project.store
-    { targetproject: package.project.name, targetpackage: package.name, sourceproject: params[:project], sourcepackage: params[:package] }
+    if params[:package] == '_project'
+      return { targetproject: project.name,
+               sourceproject: params[:project] }
+    end
+
+    { targetproject: project.name,
+      targetpackage: package.name,
+      sourceproject: params[:project],
+      sourcepackage: params[:package] }
   end
 
   def create_branch_packages(tprj)
@@ -165,6 +174,10 @@ class BranchPackage
       raise CanNotBranchPackage, "package is developed at #{p[:package].scmsync}. Fork it instead" if p[:package].try(:scmsync).present?
 
       pac = p[:package]
+      if pac.instance_of?(Package)
+        a = pac.find_attribute('OBS', 'RejectBranch')
+        raise BranchRejected, "Branching is not allowed because: #{a.values.first.value}" if a && a.values.first
+      end
 
       # find origin package to be branched
       pack_name = branch_target_package(p)
@@ -182,7 +195,7 @@ class BranchPackage
         else
           tpkg = tprj.packages.new(name: pack_name)
         end
-        tpkg.bcntsynctag << ('.' + p[:link_target_project].name.tr(':', '_')) if tpkg.bcntsynctag && @extend_names
+        tpkg.bcntsynctag << ".#{p[:link_target_project].name.tr(':', '_')}" if tpkg.bcntsynctag && @extend_names
         tpkg.releasename = p[:release_name]
       end
       tpkg.store
@@ -196,7 +209,7 @@ class BranchPackage
         linked_package = p[:link_target_package]
         # user enforce a rename of base package
         linked_package = params[:target_package] if params[:target_package] && params[:package] == ret['package']
-        linked_package += '.' + p[:link_target_project].name.tr(':', '_') if @extend_names
+        linked_package += ".#{p[:link_target_project].name.tr(':', '_')}" if @extend_names
         ret['package'] = linked_package
         Backend::Api::Sources::Package.write_link(tpkg.project.name, tpkg.name, User.session!.login, ret.to_xml)
       else
@@ -211,7 +224,7 @@ class BranchPackage
         opts[:noservice] = '1' if params[:noservice].present?
         opts[:orev] = p[:rev] if p[:rev].present?
         # New incident updates need the vrev extension
-        if tpkg.project.is_maintenance_incident? && p[:package].is_a?(Package) &&
+        if tpkg.project.maintenance_incident? && p[:package].is_a?(Package) &&
            p[:package].project != p[:link_target_project]
           opts[:extendvrev] = '1'
         end
@@ -243,7 +256,7 @@ class BranchPackage
         tprj.branch_to_repositories_from(p[:link_target_project], tpkg, opts)
       end
 
-      tpkg.add_channels if tprj.is_maintenance_incident? && !tprj.parent.find_attribute('OBS', 'SkipChannelBranch')
+      tpkg.add_channels if tprj.maintenance_incident? && !tprj.parent.find_attribute('OBS', 'SkipChannelBranch')
     end
     tprj.sync_repository_pathes if @update_path_elements
 
@@ -263,13 +276,13 @@ class BranchPackage
 
       title = "Branch project for package #{params[:package]}"
       description = "This project was created for package #{params[:package]} via attribute #{@attribute}"
-      base_project_url = Project.find_by_name(params[:project]).try(:url)
+      url = params[:target_project_url] || Project.find_by_name(params[:project]).try(:url)
       if params[:request]
         title = "Branch project based on request #{params[:request]}"
         description = "This project was created as a clone of request #{params[:request]}"
       end
       @add_repositories = true # new projects shall get repositories
-      tprj = Project.new(name: @target_project, title: title, description: description, url: base_project_url)
+      tprj = Project.new(name: @target_project, title: title, description: description, url: url)
       tprj.relationships.new(user: User.session!, role: Role.find_by_title!('maintainer'))
       tprj.flags.new(flag: 'build', status: 'disable') if @extend_names
       tprj.flags.new(flag: 'access', status: 'disable') if @noaccess
@@ -296,6 +309,13 @@ class BranchPackage
     end
     if @extend_names
       p[:release_name] = p[:package].is_a?(String) ? p[:package] : p[:package].name
+    end
+    if @extend_names
+      p[:release_name] = if p[:package].is_a?(String)
+                           p[:package]
+                         else
+                           p[:package].releasename || p[:package].name
+                         end
     end
 
     # validate and resolve devel package or devel project definitions
@@ -350,7 +370,7 @@ class BranchPackage
     return unless p[:package].is_a?(Package) # only for local packages
 
     pkg = p[:package]
-    if pkg.is_link?
+    if pkg.link?
       # is the package itself a local link ?
       link = Backend::Api::Sources::Package.link_info(p[:package].project.name, p[:package].name)
       ret = Xmlhash.parse(link)
@@ -364,7 +384,7 @@ class BranchPackage
       ap = innerp.first if innerp.length == 1
 
       target_package = ap.name
-      target_package += '.' + p[:target_package].gsub(/^[^.]*\./, '') if @extend_names
+      target_package += ".#{p[:target_package].gsub(/^[^.]*\./, '')}" if @extend_names
       release_name = ap.name if @extend_names
 
       # avoid double entries and therefore endless loops
@@ -413,19 +433,24 @@ class BranchPackage
     elsif params[:project] && params[:package]
       pkg = nil
       prj = Project.get_by_name(params[:project])
+      tpkg_name = params[:target_package]
       if params[:missingok]
-        raise NotMissingError, "Branch call with missingok parameter but branched source (#{params[:project]}/#{params[:package]}) exists." if Package.exists_by_project_and_name(params[:project], params[:package], allow_remote_packages: true)
+        raise NotMissingError, "Branch call with missingok parameter but branched source (#{params[:project]}/#{params[:package]}) exists." if Package.exists_by_project_and_name(params[:project], params[:package],
+                                                                                                                                                                                  allow_remote_packages: true)
       else
         pkg = Package.get_by_project_and_name(params[:project], params[:package], check_update_project: params[:ignoredevel].blank?)
         if prj.is_a?(Project) && prj.find_attribute('OBS', 'BranchTarget')
           @copy_from_devel = true
         elsif pkg
           prj = pkg.project
+          tpkg_name ||= pkg.releasename
         end
       end
-      tpkg_name = params[:target_package]
       tpkg_name ||= params[:package]
-      tpkg_name += ".#{prj.name}" if @extend_names
+      if @extend_names
+        tprj_name = prj.try(:name) || params[:project]
+        tpkg_name += ".#{tprj_name}"
+      end
       if pkg
         # local package
         @packages.push(base_project: prj, link_target_project: prj, package: pkg, rev: params[:rev], target_package: tpkg_name)
@@ -442,7 +467,7 @@ class BranchPackage
       # find packages via attributes
       at = AttribType.find_by_name!(@attribute)
       if params[:value]
-        Package.find_by_attribute_type_and_value(at, params[:value], params[:package]) do |p|
+        PackagesFinder.new.find_by_attribute_type_and_value(at, params[:value], params[:package]) do |p|
           logger.info "Found package instance #{p.project.name}/#{p.name} for attribute #{at.name} with value #{params[:value]}"
           @packages.push(base_project: p.project, link_target_project: p.project, package: p, target_package: "#{p.name}.#{p.project.name}")
         end
@@ -450,13 +475,13 @@ class BranchPackage
         # (who creates the attribute) to create the package instance ?
       else
         # Find all direct instances of a package
-        Package.find_by_attribute_type(at, params[:package]).each do |p|
+        PackagesFinder.new.find_by_attribute_type(at, params[:package]).each do |p|
           logger.info "Found package instance #{p.project.name}/#{p.name} for attribute #{at.name} and given package name #{params[:package]}"
           @packages.push(base_project: p.project, link_target_project: p.project, package: p, target_package: "#{p.name}.#{p.project.name}")
         end
         # Find all indirect instance via project links
         ltprj = nil
-        Project.find_by_attribute_type(at).each do |lprj|
+        Project.joins(:attribs).where(attribs: { attrib_type_id: at.id }).find_each do |lprj|
           # FIXME: this will not find packages on linked remote projects
           ltprj = lprj
           pkg2 = lprj.find_package(params[:package])

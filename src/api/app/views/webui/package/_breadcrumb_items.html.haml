@@ -7,10 +7,17 @@
 - else
   %li.breadcrumb-item.text-word-break-all
     %i.fa.fa-archive
-    = link_to(@package, package_show_path(@project, @package))
+    = precede link_to(@package, package_show_path(@project, @package)) do
+      - if @multibuild_flavor.present?
+        %span.active :#{@multibuild_flavor}
+      - else
+        = nil
   - if current_page?(package_view_revisions_path(@project, @package))
     %li.breadcrumb-item.active{ 'aria-current' => 'page' }
       Revisions
+  - if current_page?(packages_requests_path(@project, @package))
+    %li.breadcrumb-item.active{ 'aria-current' => 'page' }
+      Requests
   - if current_page?(package_requests_path(@project, @package))
     %li.breadcrumb-item.active{ 'aria-current' => 'page' }
       Requests
@@ -25,6 +32,3 @@
       = link_to 'Repository State', project_package_repository_binaries_path(@project, @package_name, @repository)
     %li.breadcrumb-item.active{ 'aria-current' => 'page' }
       Statistics
-  - if current_page?(package_view_file_path(@project, @package))
-    %li.breadcrumb-item.active.text-word-break-all{ 'aria-current' => 'page' }
-      = truncate(@filename, length: 50)

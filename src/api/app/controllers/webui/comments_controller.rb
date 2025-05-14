@@ -1,4 +1,6 @@
 class Webui::CommentsController < Webui::WebuiController
+  include BuildNewComment
+
   before_action :require_login
   before_action :set_commented, only: :create
   before_action :set_comment, only: %i[moderate history]
@@ -6,9 +8,7 @@ class Webui::CommentsController < Webui::WebuiController
   def create
     return commented_unavailable if @commented.nil?
 
-    @comment = @commented.comments.new(permitted_params)
-    authorize @comment, :create?
-    User.session!.comments << @comment
+    build_new_comment(@commented, permitted_params)
     @commentable = @comment.commentable
 
     status = if @comment.save
@@ -25,9 +25,8 @@ class Webui::CommentsController < Webui::WebuiController
              status: status)
     else
       render(partial: 'webui/comment/comment_list',
-             locals: { commentable: @commentable, diff_ref: @comment.root.diff_ref },
-             status: status,
-             root_comment: @comment.root)
+             locals: { commentable: @commentable },
+             status: status)
     end
   end
 
@@ -52,7 +51,7 @@ class Webui::CommentsController < Webui::WebuiController
                  status: status)
         else
           render(partial: 'webui/comment/comment_list',
-                 locals: { commentable: @comment.commentable, diff_ref: @comment.root.diff_ref },
+                 locals: { commentable: @comment.commentable },
                  status: status)
         end
       end
@@ -77,9 +76,10 @@ class Webui::CommentsController < Webui::WebuiController
              end
 
     if Flipper.enabled?(:request_show_redesign, User.session) && %w[BsRequest BsRequestAction].include?(@comment.commentable_type)
-      if @comment.commentable_type == 'BsRequestAction' && Comment.where(commentable: @comment.commentable, diff_ref: @comment.root.diff_ref).count.zero?
+      if @comment.commentable_type == 'BsRequestAction' &&
+         Comment.where(commentable: @comment.commentable, diff_file_index: @comment.root.diff_file_index, diff_line_number: @comment.root.diff_line_number).count.zero?
         return render(partial: 'webui/request/add_inline_comment',
-                      locals: { commentable: @comment.root.commentable, diff_ref: @comment.root.diff_ref },
+                      locals: { commentable: @comment.root.commentable, diff_file_index: @comment.root.diff_file_index, diff_line_number: @comment.root.diff_line_number },
                       status: status)
       end
       # if we're a root comment with no replies there is no need to re-render anything
@@ -92,11 +92,9 @@ class Webui::CommentsController < Webui::WebuiController
       return head(:ok) if !@comment.root? && @comment.ancestors.all?(&:destroyed?)
 
       # if we're a reply or a comment with replies we should re-render the updated thread
-      render(partial: 'webui/comment/beta/comments_thread',
-             locals: { comment: @comment.root, commentable: @commentable, level: 1, diff: diff },
-             status: status)
+      render(partial: 'webui/comment/beta/comments_thread', locals: { comment: @comment.root, commentable: @commentable, level: 1, diff: diff }, status: status)
     else
-      render(partial: 'webui/comment/comment_list', locals: { commentable: @commentable, diff_ref: @comment.root.diff_ref }, status: status)
+      render(partial: 'webui/comment/comment_list', locals: { commentable: @commentable }, status: status)
     end
   end
   # rubocop: enable Metrics/CyclomaticComplexity
@@ -128,9 +126,8 @@ class Webui::CommentsController < Webui::WebuiController
              status: status)
     else
       render(partial: 'webui/comment/comment_list',
-             locals: { commentable: @comment.commentable, diff_ref: @comment.root.diff_ref },
-             status: status,
-             root_comment: @comment.root)
+             locals: { commentable: @comment.commentable },
+             status: status)
     end
   end
 
@@ -146,7 +143,7 @@ class Webui::CommentsController < Webui::WebuiController
   private
 
   def permitted_params
-    params.require(:comment).permit(:body, :parent_id, :diff_ref)
+    params.require(:comment).permit(:body, :parent_id, :diff_file_index, :diff_line_number, :source_rev, :target_rev)
   end
 
   # FIXME: Use this function for the rest of the actions
@@ -158,7 +155,7 @@ class Webui::CommentsController < Webui::WebuiController
   end
 
   def set_commented
-    @commentable_type = [Project, Package, BsRequest, BsRequestActionSubmit].find { |klass| klass.name == params[:commentable_type] }
+    @commentable_type = [Project, Package, BsRequest, BsRequestActionSubmit, Report].find { |klass| klass.name == params[:commentable_type] }
     @commented = @commentable_type&.find_by(id: params[:commentable_id])
     return if @commentable_type.present?
 
@@ -172,13 +169,11 @@ class Webui::CommentsController < Webui::WebuiController
   end
 
   def diff
-    return unless @comment.root.commentable_type == 'BsRequestAction' && @comment.root.diff_ref
-    return unless (ref = @comment.root.diff_ref&.match(/diff_([0-9]+)/))
+    return unless @comment.root.commentable_type == 'BsRequestAction'
+    return unless @comment.root.diff_file_index
 
-    diffs = @comment.root.commentable.bs_request.webui_actions(action_id: @comment.root.commentable_id, diffs: true, cacheonly: 1).first
-    file_index = ref.captures.first
-    sourcediff = diffs[:sourcediff].first
-    filename = sourcediff.dig('filenames', file_index.to_i)
+    sourcediff = @comment.root.commentable.webui_sourcediff(rev: @comment.root.source_rev, orev: @comment.root.target_rev).first
+    filename = sourcediff.dig('filenames', @comment.root.diff_file_index)
     sourcediff.dig('files', filename)
   end
 end

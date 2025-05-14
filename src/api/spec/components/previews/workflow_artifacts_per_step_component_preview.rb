@@ -2,13 +2,13 @@ class WorkflowArtifactsPerStepComponentPreview < ViewComponent::Preview
   # Preview at http://HOST:PORT/rails/view_components/workflow_artifacts_per_step_component/with_branch_package_step
   def with_branch_package_step
     step = Workflow::Step::BranchPackageStep.new(branch_or_link_package_parameters)
-    render_artifacts_per_step(step, branch_or_link_package_artifacts)
+    render_artifacts_per_step(step, branch_or_link_package_artifacts(step))
   end
 
   # Preview at http://HOST:PORT/rails/view_components/workflow_artifacts_per_step_component/with_link_package_step
   def with_link_package_step
     step = Workflow::Step::LinkPackageStep.new(branch_or_link_package_parameters)
-    render_artifacts_per_step(step, branch_or_link_package_artifacts)
+    render_artifacts_per_step(step, branch_or_link_package_artifacts(step))
   end
 
   # Preview at http://HOST:PORT/rails/view_components/workflow_artifacts_per_step_component/with_rebuild_package_step
@@ -44,7 +44,7 @@ class WorkflowArtifactsPerStepComponentPreview < ViewComponent::Preview
                                                            }
                                                          ]
                                                        },
-                                                       scm_webhook: scm_webhook,
+                                                       workflow_run: workflow_run,
                                                        token: token
                                                      })
 
@@ -57,20 +57,6 @@ class WorkflowArtifactsPerStepComponentPreview < ViewComponent::Preview
   end
 
   private
-
-  def extractor_payload
-    {
-      scm: 'github',
-      action: 'reopened',
-      event: 'pull_request',
-      pr_number: 4,
-      target_repository_full_name: 'openSUSE/open-build-service'
-    }
-  end
-
-  def scm_webhook
-    SCMWebhook.new(payload: extractor_payload)
-  end
 
   def token
     Token.first
@@ -86,7 +72,7 @@ class WorkflowArtifactsPerStepComponentPreview < ViewComponent::Preview
         project: 'OBS:Server:Unstable',
         package: 'obs-server'
       },
-      scm_webhook: scm_webhook,
+      workflow_run: workflow_run,
       token: token
     }
   end
@@ -98,12 +84,12 @@ class WorkflowArtifactsPerStepComponentPreview < ViewComponent::Preview
         source_package: 'obs-server',
         target_project: 'OBS:Server:Unstable:CI'
       },
-      scm_webhook: scm_webhook,
+      workflow_run: workflow_run,
       token: token
     }
   end
 
-  def branch_or_link_package_artifacts
+  def branch_or_link_package_artifacts(step)
     {
       source_project: step.step_instructions[:source_project],
       source_package: step.step_instructions[:source_package],

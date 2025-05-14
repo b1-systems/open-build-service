@@ -2,6 +2,10 @@
 #
 # See http://rubydoc.info/gems/rspec-core/RSpec/Core/Configuration
 
+# for generating test coverage
+require 'simplecov'
+SimpleCov.start
+
 ENV['RAILS_ENV'] ||= 'test'
 require File.expand_path('../config/environment', __dir__)
 # Prevent database truncation if the environment is production
@@ -83,9 +87,6 @@ end
 # We never want the OBS backend to autostart itself...
 ENV['BACKEND_STARTED'] = '1'
 
-# for generating test coverage
-require 'simplecov'
-
 ### Our own spec extensions
 # support logging
 require 'support/logging'
@@ -142,8 +143,8 @@ require 'support/haml'
 # and has to be opted in when required
 require 'paper_trail/frameworks/rspec'
 
-Dir['./spec/shared/contexts/*.rb'].sort.each { |file| require file }
-Dir['./spec/shared/examples/*.rb'].sort.each { |file| require file }
+Dir['./spec/shared/contexts/*.rb'].each { |file| require file }
+Dir['./spec/shared/examples/*.rb'].each { |file| require file }
 
 # Generate 30 tests for every property test
 ENV['RANTLY_COUNT'] = '30'

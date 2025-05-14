@@ -15,7 +15,7 @@ class BackendTests < ActionDispatch::IntegrationTest
                           productlist binary_released check required_checks status_report
                           staged_requests remove_staged_requests status_ok staging_project
                           staging_projects create_staging_workflow update_staging_workflow accept_staging_projects
-                          excluded_requests create_excluded_requests delete_excluded_requests create_staging_projects backlog tokenlist]
+                          excluded_requests create_excluded_requests delete_excluded_requests create_staging_projects backlog token tokenlist]
 
     Dir.entries(dir).each do |f|
       next unless /.*.xml\z/.match?(f)
@@ -46,7 +46,8 @@ class BackendTests < ActionDispatch::IntegrationTest
         schema = 'person'
       end
 
-      r = system("cd #{ENV.fetch('OBS_BACKEND_TEMP', nil)}/config; exec perl #{perlopts} -mXML::Structured -mBSXML -mBSUtil -e \"use XML::Structured ':bytes'; BSUtil::readxml('#{dir}#{f}', \\$BSXML::#{schema}, 0);\" 2>&1")
+      r = system("cd #{ENV.fetch('OBS_BACKEND_TEMP', nil)}/config; " \
+                 "exec perl #{perlopts} -mXML::Structured -mBSXML -mBSUtil -e \"use XML::Structured ':bytes'; BSUtil::readxml('#{dir}#{f}', \\$BSXML::#{schema}, 0);\" 2>&1")
       assert_equal true, r
     end
   end

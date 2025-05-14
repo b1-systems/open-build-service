@@ -3,6 +3,7 @@ package BSRepServer;
 use strict;
 
 use BSConfiguration;
+use BSOBS;
 use BSRPC ':https';
 use BSUtil;
 use BSVerify;
@@ -12,7 +13,7 @@ use BSSolv;
 
 my $reporoot = "$BSConfig::bsdir/build";
 
-my @binsufs = qw{rpm deb pkg.tar.gz pkg.tar.xz pkg.tar.zst};
+my @binsufs = @BSOBS::binsufs;
 my $binsufsre = join('|', map {"\Q$_\E"} @binsufs);
 
 sub getconfig {
@@ -131,7 +132,7 @@ sub read_bininfo {
   $bininfo = {};
   for my $file (ls($dir)) {
     $bininfo->{'.nosourceaccess'} = {} if $file eq '.nosourceaccess';
-    $bininfo->{'.nouseforbuild'} = {} if $file eq '.channelinfo' || $file eq 'updateinfo.xml';
+    $bininfo->{'.nouseforbuild'} = {} if $file eq '.channelinfo' || $file eq 'updateinfo.xml' || $file eq '.updateinfodata';
     if ($file =~ /\.(?:$binsufsre)$/) {
       my @s = stat("$dir/$file");
       my $r = {};

@@ -2,7 +2,7 @@ post:
   summary: Copy packages.
   description: |
     Copy packages. 
-    Additionally you can copy the binaries and/or the commit history.
+    Additionally you can copy the binaries.
     The copy can be done synchronously or asynchronously.
     You can leave a comment in the package revision.
   security:
@@ -61,14 +61,6 @@ post:
           - 0
       description: Set to '1' to do the copying synchronously. By default the copying is done asynchronously.
     - in: query
-      name: withhistory
-      schema:
-        type: string
-        enum:
-          - 1
-          - 0
-      description: Set to '1' to copy the package commit history.
-    - in: query
       name: noservice
       schema:
         type: string
@@ -78,6 +70,8 @@ post:
       description: Set to '1' to avoid running the services after the copy.
     - in: query
       name: comment
+      schema:
+        type: string
       description: Comment for the new revision.
   responses:
     '200':

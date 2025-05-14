@@ -171,17 +171,17 @@ RSpec.describe Package, :vcr do
     end
   end
 
-  describe '#has_icon?' do
+  describe '#icon?' do
     it 'returns true if the icon exist' do
       if CONFIG['global_write_through']
         Backend::Connection.put("/source/#{CGI.escape(package_with_file.project.name)}/#{CGI.escape(package_with_file.name)}/_icon",
                                 Faker::Lorem.paragraph)
       end
-      expect(package_with_file.has_icon?).to be(true)
+      expect(package_with_file.icon?).to be(true)
     end
 
     it 'returns false if the icon does not exist' do
-      expect(package.has_icon?).to be(false)
+      expect(package.icon?).to be(false)
     end
   end
 
@@ -284,7 +284,7 @@ RSpec.describe Package, :vcr do
 
       it "starts with '_product:'" do
         property_of do
-          string = '_product:' + sized(1) { string(/[a-zA-Z0-9]/) } + sized(range(0, 190)) { string(/[-+\w.]/) }
+          string = "_product:#{sized(1) { string(/[a-zA-Z0-9]/) }}#{sized(range(0, 190)) { string(/[-+\w.]/) }}"
           guard(string != '0')
           string
         end.check(3) do |string|
@@ -294,7 +294,7 @@ RSpec.describe Package, :vcr do
 
       it "starts with '_patchinfo:'" do
         property_of do
-          string = '_patchinfo:' + sized(1) { string(/[a-zA-Z0-9]/) } + sized(range(0, 188)) { string(/[-+\w.]/) }
+          string = "_patchinfo:#{sized(1) { string(/[a-zA-Z0-9]/) }}#{sized(range(0, 188)) { string(/[-+\w.]/) }}"
           guard(string != '0')
           string
         end.check(3) do |string|
@@ -393,58 +393,11 @@ RSpec.describe Package, :vcr do
     end
   end
 
-  describe '#backend_build_command' do
-    let(:params) { ActionController::Parameters.new(arch: 'x86') }
-    let(:backend_url) { "#{CONFIG['source_url']}/build/#{package.project.name}?arch=x86&cmd=rebuild" }
-
-    subject { package.backend_build_command(:rebuild, package.project.name, params) }
-
-    context 'backend response is successful' do
-      before { stub_request(:post, backend_url) }
-
-      it { is_expected.to be_truthy }
-
-      it 'has no errors' do
-        subject
-        expect(package.errors.details).to eq({})
-      end
-    end
-
-    context 'backend response fails' do
-      before { stub_request(:post, backend_url).and_raise(Backend::Error) }
-
-      it { is_expected.to be_falsey }
-
-      it 'has errors' do
-        subject
-        expect(package.errors.details).to eq(base: [{ error: 'Exception from WebMock' }])
-      end
-    end
-
-    context 'user has no access rights for the project' do
-      let(:other_project) { create(:project, name: 'other_project') }
-
-      before do
-        # check_write_access! depends on the Rails env. We have to workaround this here.
-        allow(Rails.env).to receive(:test?).and_return false
-      end
-
-      subject { package.backend_build_command(:rebuild, other_project.name, params) }
-
-      it { is_expected.to be_falsey }
-
-      it 'has errors' do
-        subject
-        expect(package.errors.details).to eq(base: [{ error: "No permission to modify project '#{other_project}' for user '#{user}'" }])
-      end
-    end
-  end
-
   describe '.jobhistory' do
+    subject { package.jobhistory(repository_name: 'openSUSE_Tumbleweed', arch_name: 'x86_64') }
+
     let(:backend_url) { "#{CONFIG['source_url']}/build/#{home_project}/openSUSE_Tumbleweed/x86_64/_jobhistory?limit=100&package=#{package}" }
     let(:backend_response) { file_fixture('jobhistory.xml') }
-
-    subject { package.jobhistory(repository_name: 'openSUSE_Tumbleweed', arch_name: 'x86_64') }
 
     context 'when response is successful' do
       let(:local_job_history) do
@@ -590,10 +543,10 @@ RSpec.describe Package, :vcr do
   end
 
   describe '#sources_changed' do
+    subject { package.sources_changed }
+
     let!(:project) { create(:project, name: 'apache') }
     let!(:package) { create(:package_with_file, name: 'mod_ssl', project: project) }
-
-    subject { package.sources_changed }
 
     it 'creates a BackendPackge for the Package' do
       expect { subject }.to change(BackendPackage, :count).by(1)
@@ -606,12 +559,12 @@ RSpec.describe Package, :vcr do
     let(:package) { create(:package_with_changes_file, project: project, name: 'package_with_changes_file') }
 
     context 'with a diff to the target package changes file' do
+      subject { package.commit_message_from_changes_file(target_project, target_package) }
+
       let(:target_project)  { create(:project, name: 'Apache') }
       let!(:target_package) do
         create(:package_with_changes_file, project: target_project, name: 'package_with_changes_file', changes_file_content: changes_file)
       end
-
-      subject { package.commit_message_from_changes_file(target_project, target_package) }
 
       it { expect(subject).to include('- Testing the submit diff') }
       it { expect(subject).not_to include('- Temporary hack') }
@@ -735,9 +688,9 @@ RSpec.describe Package, :vcr do
     end
 
     context 'a product sub package (_product:*)' do
-      let(:project) { create(:project) }
-
       subject { create(:package, name: '_product:foo', project: project) }
+
+      let(:project) { create(:project) }
 
       context 'that was generated by a _product file' do
         let!(:product_package) { create(:package, name: '_product', project: project) }
@@ -795,13 +748,13 @@ RSpec.describe Package, :vcr do
   end
 
   describe '#resolve_devel_package' do
+    subject { stable_apache.resolve_devel_package }
+
     let!(:stable_project) { create(:project, name: 'stable_project') }
     let!(:stable_apache) { create(:package, name: 'apache', project: stable_project) }
 
     let!(:unstable_project) { create(:project, name: 'unstable_project') }
     let!(:unstable_apache) { create(:package, name: 'apache', project: unstable_project) }
-
-    subject { stable_apache.resolve_devel_package }
 
     context 'with develproject' do
       before do
@@ -827,5 +780,48 @@ RSpec.describe Package, :vcr do
 
       it { expect { subject }.to raise_error(Package::CycleError) }
     end
+  end
+
+  describe '#report_bug_url' do
+    before do
+      # Locally the configuration returns https://unconfigured.openbuildservice.org
+      # as host so we use a better host
+      allow(Configuration).to receive(:obs_url).and_return('https://localhost:3000')
+      package.valid?
+    end
+
+    context 'url is external' do
+      let(:package) { build(:package, report_bug_url: 'https://example.com') }
+
+      it { expect(package.errors).to be_empty }
+    end
+
+    context 'url is relative' do
+      let(:package) { build(:package, report_bug_url: '/about') }
+
+      it { expect(package.errors[:report_bug_url]).to eql(['Local urls are not allowed']) }
+    end
+
+    context 'url has no protocol' do
+      let(:package) { build(:package, report_bug_url: 'example.com') }
+
+      it { expect(package.errors).to be_empty }
+    end
+
+    context 'local url has no protocol' do
+      let(:package) { build(:package, report_bug_url: 'localhost:3000/about') }
+
+      it { expect(package.errors[:report_bug_url]).to eql(['Local urls are not allowed']) }
+    end
+  end
+
+  describe '#bs_requests' do
+    let(:package) { create(:package) }
+    let!(:incoming_request) { create(:bs_request_with_submit_action, target_package: package) }
+    let!(:outgoing_request) { create(:bs_request_with_submit_action, source_package: package) }
+    let!(:request_with_review) { create(:delete_bs_request, target_project: create(:project), review_by_package: package) }
+    let!(:unrelated_request) { create(:bs_request_with_submit_action, target_package: create(:package)) }
+
+    it { expect(package.bs_requests).to contain_exactly(incoming_request, outgoing_request, request_with_review) }
   end
 end

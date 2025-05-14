@@ -47,7 +47,7 @@ RSpec.describe 'Requests_Submissions', :js, :vcr do
                                                target_project: target_project, target_package: target_package,
                                                creator: submitter)
       end
-      let!(:bs_request_to_supersede_2) do
+      let!(:bs_request_to_supersede2) do
         create(:bs_request_with_submit_action, source_project: source_project, source_package: source_package,
                                                target_project: target_project, target_package: target_package,
                                                creator: submitter)
@@ -63,7 +63,7 @@ RSpec.describe 'Requests_Submissions', :js, :vcr do
 
         expect(page).to have_text('Supersede requests:')
         expect(page).to have_all_of_selectors("#supersede_request_numbers#{bs_request_to_supersede.number}",
-                                              "#supersede_request_numbers#{bs_request_to_supersede_2.number}", visible: false)
+                                              "#supersede_request_numbers#{bs_request_to_supersede2.number}", visible: false)
         toggle_checkbox("supersede_request_numbers#{bs_request_to_supersede.number}")
         click_button('Submit')
         expect(page).to have_text("Submit package #{source_project} / #{source_package} " \
@@ -71,6 +71,34 @@ RSpec.describe 'Requests_Submissions', :js, :vcr do
         expect(page).to have_css('#description-text', text: bs_request_description)
         expect(page).to have_text('In state new')
         expect(page).to have_text("Supersedes #{bs_request_to_supersede.number}")
+      end
+    end
+
+    describe 'submitting a package with a binary diff' do
+      let(:source_package_with_binary) { create(:package_with_file, name: 'Toronto', project: source_project) }
+      let(:target_package_with_binary) { create(:package_with_file, name: 'Toronto', project: target_project) }
+      let(:bs_request) do
+        create(:bs_request_with_submit_action,
+               creator: submitter,
+               target_project: target_project,
+               target_package: target_package_with_binary,
+               source_project: source_project,
+               source_package: source_package_with_binary)
+      end
+
+      before do
+        login submitter
+
+        source_package_with_binary.save_file(filename: 'new_file.tar.gz', file: file_fixture('bigfile_archive.tar.gz').read)
+        login receiver
+        target_package_with_binary.save_file(filename: 'new_file.tar.gz', file: file_fixture('bigfile_archive_2.tar.gz').read)
+        login submitter
+      end
+
+      it 'displays a diff' do
+        visit request_show_path(bs_request)
+        wait_for_ajax
+        expect(page).to have_text('new_file.tar.gz/bigfile.txt')
       end
     end
 
@@ -106,15 +134,17 @@ RSpec.describe 'Requests_Submissions', :js, :vcr do
     describe 'when under the beta program', :beta do
       describe 'submit several packages at once against a factory staging project' do
         let!(:factory) { create(:project, name: 'openSUSE:Factory') }
-        let!(:staging_workflow) { create(:staging_workflow, project: factory) }
+        let!(:staging_workflow) { create(:staging_workflow, project: factory, commit_user: factory.commit_user) }
         # Create another action to submit new files from different packages to package_b
         let!(:another_bs_request_action) do
-          create(:bs_request_action_submit,
-                 bs_request: bs_request,
-                 source_project: source_project,
-                 source_package: source_package,
-                 target_project: factory,
-                 target_package: target_package_b)
+          receiver.run_as do
+            create(:bs_request_action_submit,
+                   bs_request: bs_request,
+                   source_project: source_project,
+                   source_package: source_package,
+                   target_project: factory,
+                   target_package: target_package_b)
+          end
         end
         let(:bs_request) do
           create(:bs_request_with_submit_action,
@@ -139,7 +169,8 @@ RSpec.describe 'Requests_Submissions', :js, :vcr do
           login receiver
           visit request_show_path(bs_request.number)
 
-          expect(page).to have_text(bs_request.bs_request_actions.first[:name])
+          action = bs_request.bs_request_actions.first
+          expect(page).to have_text("#{action.target_project} / #{action.target_package}")
           expect(page).to have_text('Next')
           expect(page).to have_text("(of #{bs_request.bs_request_actions.count})")
           expect(page).to have_css('.bg-staging')
@@ -155,7 +186,7 @@ RSpec.describe 'Requests_Submissions', :js, :vcr do
                  source_project: source_project,
                  source_package: source_package)
         end
-        let!(:comment) { create(:comment, commentable: bs_request.bs_request_actions.first, diff_ref: 'diff_0_n1') }
+        let!(:comment) { create(:comment, commentable: bs_request.bs_request_actions.first, diff_file_index: 0, diff_line_number: 1) }
 
         it 'displays the comment in the timeline' do
           login submitter
@@ -173,7 +204,7 @@ RSpec.describe 'Requests_Submissions', :js, :vcr do
                  source_project: source_project,
                  source_package: source_package)
         end
-        let!(:comment) { create(:comment, commentable: bs_request, diff_ref: '') }
+        let!(:comment) { create(:comment, commentable: bs_request) }
 
         it 'displays the comment in the timeline' do
           login submitter

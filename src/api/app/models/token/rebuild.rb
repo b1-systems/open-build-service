@@ -2,7 +2,7 @@ class Token::Rebuild < Token
   def call(options)
     set_triggered_at
     package_name = options[:package].to_param
-    package_name += ':' + options[:multibuild_flavor] if options[:multibuild_flavor]
+    package_name += ":#{options[:multibuild_flavor]}" if options[:multibuild_flavor]
     if package_name.present?
       Backend::Api::Sources::Package.rebuild(options[:project].to_param,
                                              package_name,
@@ -24,17 +24,19 @@ end
 #
 #  id                          :integer          not null, primary key
 #  description                 :string(64)       default("")
+#  enabled                     :boolean          default(TRUE), not null, indexed
 #  scm_token                   :string(255)      indexed
 #  string                      :string(255)      indexed
 #  triggered_at                :datetime
 #  type                        :string(255)
 #  workflow_configuration_path :string(255)      default(".obs/workflows.yml")
-#  workflow_configuration_url  :string(255)
+#  workflow_configuration_url  :string(8192)
 #  executor_id                 :integer          not null, indexed
 #  package_id                  :integer          indexed
 #
 # Indexes
 #
+#  index_tokens_on_enabled    (enabled)
 #  index_tokens_on_scm_token  (scm_token)
 #  index_tokens_on_string     (string) UNIQUE
 #  package_id                 (package_id)

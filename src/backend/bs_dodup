@@ -16,6 +16,7 @@ use Fcntl qw(:DEFAULT :flock);
 use XML::Structured ':bytes';
 use Getopt::Long ();
 use JSON::XS;
+use MIME::Base64 ();
 
 use BSConfiguration;
 use BSRPC ':https';
@@ -24,6 +25,8 @@ use BSXML;
 use BSUtil;
 use BSContar;
 use BSBearer;
+use BSASN1;
+use BSX509;
 use File::Temp ();
 
 use Build::Repo;
@@ -133,8 +136,8 @@ sub chkverify {
   die("checksum mismatch for $file: $chk != $res\n") unless lc($chk) eq lc($res);
 }
 
-sub gpgverify {
-  my ($data, $sig, $pubkey) = @_;
+sub expandpubkeys {
+  my ($pubkey) = @_;
   if ($pubkeydir) {
     # expand pubkeys coming from pubkeydir
     my $extradata = '';
@@ -149,6 +152,12 @@ sub gpgverify {
     }
     $pubkey = "$extradata$pubkey";
   }
+  return $pubkey;
+}
+
+sub gpgverify {
+  my ($data, $sig, $pubkey) = @_;
+  $pubkey = expandpubkeys($pubkey) if $pubkeydir;
   my $tempdir = File::Temp->newdir();
   writestr("$tempdir/pubkey", undef, $pubkey);
   system('gpg2', '-q', '--homedir', $tempdir, '--import', "$tempdir/pubkey") && die("gpg2 key import failed: $?\n");
@@ -377,6 +386,58 @@ sub dod_arch {
   return ($newcookie, $url);
 }
 
+sub rsa_verify {
+  my ($keydata, $hash, $digest, $signature) = @_;
+  my $prefix;
+  $prefix = "3021300906052b0e03021a05000414" if $hash eq 'sha1';
+  $prefix = "3031300d060960864801650304020105000420" if $hash eq 'sha256';
+  $prefix = "3051300d060960864801650304020305000440" if $hash eq 'sha512';
+  return 0 unless $prefix;
+  require Math::BigInt;
+  die("weird number of mpis in rsa pubkey\n") unless @{$keydata->{'mpis'} || []} == 2;
+  my $n = Math::BigInt->from_bytes($keydata->{'mpis'}->[0]->{'data'});
+  my $e = Math::BigInt->from_bytes($keydata->{'mpis'}->[1]->{'data'});
+  my $s = Math::BigInt->from_bytes($signature);
+  return 0 if $s >= $n;
+  my $c = $s->bmodpow($e, $n)->as_bytes();
+  $c = unpack('H*', $c);
+  return 0 unless substr($c, 0, 8) eq '01ffffff';
+  $c =~ s/^01(?:ff)+//;
+  return $c eq "00$prefix$digest" ? 1 : 0
+}
+
+sub dod_apk_sigverify {
+  my ($file, $pubkey) = @_;
+  $pubkey = expandpubkeys($pubkey) if $pubkeydir;
+  my $ok = 0;
+  my @sigs = Build::Apk::getsignatures($file);
+  die("apk file is not signed\n") unless @sigs;
+  my @pub;
+  push @pub, "$1\n" while $pubkey =~ s/(-----BEGIN PUBLIC KEY-----\n.*?\n-----END PUBLIC KEY-----)//s;
+  for my $pub (@pub) {
+    for my $sig (@sigs) {
+      my $keydata = BSX509::pubkey2keydata(BSASN1::pem2der($pub, 'PUBLIC KEY'));
+      next unless $keydata->{'algo'} eq $sig->{'algo'};
+      my $digest = Build::Apk::calcapkchksum($file, $sig->{'hash'});
+      return if $sig->{'algo'} eq 'rsa' && rsa_verify($keydata, $sig->{'hash'}, $digest, $sig->{'signature'});
+    }
+  }
+  die("signature verification failed\n");
+}
+
+sub dod_apk {
+  my ($doddata, $cookie, $file) = @_;
+  my $url = $doddata->{'url'};
+  my $sslfingerprint = getsslfingerprint($doddata);
+  $url .= '/' unless $url =~ /\/$/;
+  my $r = fetch("${url}APKINDEX.tar.gz", $sslfingerprint, $timeout_large, $file, 1);
+  die unless $r->{'md5'};
+  dod_apk_sigverify($file, $doddata->{'pubkey'}) if $doddata->{'pubkey'};
+  my $newcookie = Digest::MD5::md5_hex("$url\n$r->{'md5'}");
+  return undef if ($cookie || '') eq $newcookie;
+  return ($newcookie, $url);
+}
+
 sub dod_mdk {
   my ($doddata, $cookie, $file) = @_;
   my $url = $doddata->{'url'};
@@ -409,29 +470,26 @@ sub getdodresources {
 my %registry_authenticators;
 my $registry_timeout = 60;
 
+sub registry_arch2goarch {
+  my ($arch) = @_;
+  return ('amd64') if $arch eq 'x86_64';
+  return ('386') if $arch =~ /^i[3456]86$/;
+  return ('arm64', 'v8') if $arch eq 'aarch64';
+  return ('arm', "v$1") if $arch =~ /^armv(\d+)/;
+  return $arch;
+}
+
 sub registry_select_manifest {
   my ($manifests, $arch) = @_;
-  my $goarch;
-  my $govariant;
-  if ($arch =~ /^i[3456]86$/) {
-    $goarch = '386';
-  } elsif ($arch eq 'x86_64') {
-    $goarch = 'amd64';
-  } elsif ($arch eq 'aarch64') {
-    $goarch = 'arm64';
-    $govariant= 'v8';
-  } elsif ($arch =~ /^arm(v\d+)/) {
-    $goarch = 'arm';
-    $govariant= $1;
-  } else {
-    $goarch = $arch;
-  }
+  my ($goarch, $govariant) = registry_arch2goarch($arch);
+  my $goos = 'linux';
   for my $m (@{$manifests || []}) {
     next unless $m->{'digest'};
     my $platform = $m->{'platform'};
     if ($platform) {
       next if $goarch && $platform->{'architecture'} && $platform->{'architecture'} ne $goarch;
       next if $govariant && $platform->{'variant'} && $platform->{'variant'} ne $govariant;
+      next if $goos && $platform->{'os'} && $platform->{'os'} ne $goos;
     }
     return $m;
   }
@@ -555,13 +613,27 @@ sub dod_registry {
   for my $resource (@dodresources) {
     next unless $resource =~ /^container:(.*):([^\/:]+)$/s;
     my ($repo, $tag) = ($1, $2);
-    $repo = "library/$repo" if $url =~ /docker\.io$/ && $repo !~ /\//;
-    $repo = $2 if $repo =~ /^([^\/]+)\/(.+)$/s && $1 eq $urldomain;
+    my $refname = "$repo:$tag";
+    if ($repo !~ /\//) {
+      $repo = "library/$repo" if $url =~ /docker\.io$/;
+    } else {
+      $repo = $2 if $repo =~ /^([^\/]+)\/(.+)$/s && $1 eq $urldomain;
+      $refname = "$repo:$tag";
+    }
     my $oldentry;
     $oldentry = $oldcache->{$resource} if $olddodresources{$resource};
     my ($olddigest, $oldfatdigest);
-    ($olddigest, $oldfatdigest) = ($oldentry->{'version'}, $oldentry->{'fatdigest'}) if $oldentry;
+    ($olddigest, $oldfatdigest) = ($oldentry->{'digest'}, $oldentry->{'fatdigest'}) if $oldentry;
     $oldfatdigest = $oldfatmissing->{$resource} if !$oldentry;
+    eval {
+      registry_valid_digest("olddigest of $resource", $olddigest) if $olddigest;
+      registry_valid_digest("oldfatdigest of $resource", $oldfatdigest) if $oldfatdigest;
+    };
+    if ($@) {
+      warn($@);
+      undef $olddigest;
+      undef $oldfatdigest;
+    }
     my ($blobs, $digest, $fatdigest);
     eval { ($blobs, $digest, $fatdigest) = registry_fetch_manifest($url, $arch, $repo, $tag, $olddigest, $oldfatdigest) };
     if ($@) {
@@ -605,6 +677,14 @@ sub dod_registry {
       'digest' => $digest,
     };
     $pkg->{'fatdigest'} = $fatdigest if $fatdigest;
+    my $annotation = {
+      'binaryid' => $blobs->[0],
+      'registry_refname' => ($urldomain =~ /docker\.io/ ? 'docker.io/' : "$urldomain/") . $refname,
+      'registry_digest' => $digest,
+    };
+    $annotation->{'binaryid'} =~ s/^sha256://;	# like with Containertar.pm
+    $annotation->{'registry_fatdigest'} = $fatdigest if $fatdigest;
+    $pkg->{'annotation'} = BSUtil::toxml($annotation, $BSXML::binannotation);
     $cache->{$resource} = $pkg;
   }
   $cache->{'/dodresources'} = \@newdodresources;
@@ -622,6 +702,7 @@ my %handler = (
   'susetags'  => \&dod_susetags,
   'rpmmd'     => \&dod_rpmmd,
   'mdk'       => \&dod_mdk,
+  'apk'       => \&dod_apk,
   'registry'  => \&dod_registry,
 );
 
@@ -634,6 +715,8 @@ sub cmppkg {
   $oevr .= "-$op->{'release'}" if defined $op->{'release'};
   if ($p->{'path'} =~ /\.deb$/) {
     return Build::Deb::verscmp($oevr, $evr);
+  } elsif ($p->{'path'} =~ /\.apk$/ && defined(&Build::Apk::verscmp)) {
+    return Build::Apk::verscmp($oevr, $evr);
   } else {
     return Build::Rpm::verscmp($oevr, $evr);
   }
@@ -648,6 +731,17 @@ sub addpkg {
     return if grep {$p->{'name'} =~ /^$_/s } @$BSConfig::dodupblacklist;
   }
   $p->{'path'} = delete $p->{'location'};
+  if (!$p->{'hdrid'} && $p->{'apkchksum'}) {
+    # convert to hdrid
+    my $chk = delete $p->{'apkchksum'};
+    if (length($chk) == 30 && $chk =~ /^Q1/) {
+      $chk = unpack('H*', MIME::Base64::decode_base64(substr($chk, 2, 28)));
+    } elsif ($chk !~ /^[a-fA-F0-9]*$/) {
+      $chk = '';
+    }
+    $p->{'hdrid'} = "sha1:$chk" if length($chk) == 40;
+    $p->{'hdrid'} = "sha256:$chk" if length($chk) == 64;
+  }
   my $name = $p->{'name'};
   my $arch = $p->{'arch'};
   my $key = "$name.$arch";

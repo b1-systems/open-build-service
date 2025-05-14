@@ -38,7 +38,7 @@ class Staging::StagedRequests
       )
 
       add_review_for_unstaged_request(request, staging_project) if request.state.in?(%i[new review])
-      send_to_backlog_declined_request(request, staging_project) if request.state == :declined
+      add_review_for_unstaged_declined_request(request, staging_project) if request.state == :declined
       staging_project.staged_requests.delete(request)
     end
 
@@ -121,6 +121,11 @@ class Staging::StagedRequests
     request.change_review_state('accepted', by_project: staging_project.name, comment: "Unstaged from project \"#{staging_project}\"")
   end
 
+  def add_review_for_unstaged_declined_request(request, staging_project)
+    request.addreview(by_group: staging_workflow.managers_group.title, comment: "Being evaluated by group \"#{staging_workflow.managers_group}\"", relaxed_state_check: 1)
+    request.change_review_state('declined', by_project: staging_project.name, comment: "Unstaged from project \"#{staging_project}\"")
+  end
+
   def remove_packages(staging_project_packages)
     staging_project_packages.collect do |package|
       (package.find_project_local_linking_packages | [package]).collect { |pkg| pkg unless pkg.destroy }
@@ -178,7 +183,7 @@ class Staging::StagedRequests
 
   def stage_request(request)
     bs_request_action = request.bs_request_actions.first
-    if bs_request_action.is_submit?
+    if bs_request_action.submit?
       if Package.find_by(project: staging_project, name: bs_request_action.target_package)
         errors << "Can't stage request '#{request.number}': package '#{bs_request_action.target_package}' already exists in '#{staging_project}'."
         return
@@ -197,13 +202,5 @@ class Staging::StagedRequests
     )
     staging_project.staged_requests << request
     add_review_for_staged_request(request)
-  end
-
-  def send_to_backlog_declined_request(request, staging_project)
-    request.with_lock do
-      request.change_state(newstate: 'new', force: true, user: User.session!.login, comment: 'Reopened via staging workflow.')
-      add_review_for_unstaged_request(request, staging_project)
-      request.change_state(newstate: 'declined', force: true, user: User.session!.login, comment: 'Declined via staging workflow.')
-    end
   end
 end

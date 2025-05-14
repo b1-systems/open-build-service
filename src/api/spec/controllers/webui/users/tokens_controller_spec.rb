@@ -39,28 +39,28 @@ RSpec.describe Webui::Users::TokensController do
   end
 
   describe 'POST #create' do
+    subject { post :create, xhr: true, params: form_parameters }
+
     let(:project) { create(:project) }
     let(:package) { create(:package, project: project) }
-
-    subject { post :create, xhr: true, params: form_parameters }
 
     context 'type is runservice' do
       let(:form_parameters) { { token: { type: 'runservice' } } }
 
-      include_examples 'check for flashing a success'
+      it_behaves_like 'check for flashing a success'
     end
 
     context 'type is runservice, with name' do
       let(:form_parameters) { { token: { type: 'runservice', description: 'My first token' } } }
 
-      include_examples 'check for flashing a success'
-      it { is_expected.to redirect_to(token_path(Token.last)) }
+      it_behaves_like 'check for flashing a success'
+      it { is_expected.to redirect_to(token_path(assigns[:token])) }
     end
 
     context 'type is release, with project parameter, without package parameter' do
       let(:form_parameters) { { token: { type: 'release' }, project_name: project.name } }
 
-      include_examples 'check for flashing an error'
+      it_behaves_like 'check for flashing an error'
 
       it { expect { subject }.not_to change(Token, :count) }
     end
@@ -68,7 +68,7 @@ RSpec.describe Webui::Users::TokensController do
     context 'type is rebuild, with project and package parameter' do
       let(:form_parameters) { { token: { type: 'rebuild' }, project_name: project.name, package_name: package.name } }
 
-      include_examples 'check for flashing a success'
+      it_behaves_like 'check for flashing a success'
 
       it { expect { subject }.to change(Token, :count).from(0).to(1) }
       it { is_expected.to redirect_to(token_path(Token.last)) }
@@ -77,7 +77,7 @@ RSpec.describe Webui::Users::TokensController do
     context 'type is rebuild but project does not exist' do
       let(:form_parameters) { { token: { type: 'rebuild' }, description: 'token description', project_name: 'non-existing project' } }
 
-      include_examples 'check for flashing an error'
+      it_behaves_like 'check for flashing an error'
 
       it { expect { subject }.not_to change(Token, :count) }
       it { is_expected.to render_template(:new) }
@@ -87,7 +87,7 @@ RSpec.describe Webui::Users::TokensController do
       context 'with SCM' do
         let(:form_parameters) { { token: { type: 'workflow', scm_token: 'test_SCM_token_string' } } }
 
-        include_examples 'check for flashing a success'
+        it_behaves_like 'check for flashing a success'
 
         it { expect { subject }.to change(Token, :count).from(0).to(1) }
         it { is_expected.to redirect_to(token_path(Token.last)) }
@@ -96,7 +96,7 @@ RSpec.describe Webui::Users::TokensController do
       context 'without SCM' do
         let(:form_parameters) { { token: { type: 'workflow' } } }
 
-        include_examples 'check for flashing an error'
+        it_behaves_like 'check for flashing an error'
 
         it { expect { subject }.not_to change(Token, :count) }
       end
@@ -108,22 +108,23 @@ RSpec.describe Webui::Users::TokensController do
 
     context 'updates a workflow token belonging to the logged-in user' do
       let(:token) { create(:workflow_token, executor: user, scm_token: 'something') }
-      let(:update_parameters) { { id: token.id, token: { description: 'My first token', scm_token: 'something_else' } } }
+      let(:update_parameters) { { id: token.id, token: { description: 'My first token', enabled: false, scm_token: 'something_else' } } }
 
-      include_examples 'check for flashing a success'
+      it_behaves_like 'check for flashing a success'
 
       it { is_expected.to redirect_to(tokens_path) }
       it { expect { subject }.to change { token.reload.scm_token }.from('something').to('something_else') }
       it { expect { subject }.to change { token.reload.description }.from('').to('My first token') }
+      it { expect { subject }.to change { token.reload.enabled }.from(true).to(false) }
     end
 
     context 'updates the token string of a token belonging to the logged-in user' do
+      subject { put :update, params: update_parameters, xhr: true }
+
       let(:token) { create(:service_token, executor: user) }
       let(:update_parameters) { { id: token.id } }
 
-      subject { put :update, params: update_parameters, xhr: true }
-
-      include_examples 'check for flashing a success'
+      it_behaves_like 'check for flashing a success'
 
       it { expect { subject }.to(change { token.reload.string }) }
       it { expect { subject }.not_to(change { token.reload.scm_token }) }
@@ -132,7 +133,7 @@ RSpec.describe Webui::Users::TokensController do
     context 'redirects to index when passing a non-existent token' do
       let(:update_parameters) { { id: -1 } }
 
-      include_examples 'check for flashing an error'
+      it_behaves_like 'check for flashing an error'
 
       it { is_expected.to redirect_to(tokens_path) }
     end
@@ -141,21 +142,21 @@ RSpec.describe Webui::Users::TokensController do
       let(:token) { create(:service_token, executor: other_user) }
       let(:update_parameters) { { id: token.id, token: { scm_token: 'something' } } }
 
-      include_examples 'check for flashing an error'
+      it_behaves_like 'check for flashing an error'
 
-      it { is_expected.to redirect_to(root_path) }
+      it { is_expected.to redirect_to(tokens_path) }
       it { expect { subject }.not_to change(token, :scm_token) }
     end
   end
 
   describe 'DELETE #destroy' do
+    subject { delete :destroy, params: delete_parameters }
+
     let!(:token) { create(:service_token, executor: user) }
     let(:delete_parameters) { { id: token.id } }
 
-    subject { delete :destroy, params: delete_parameters }
-
     context 'existent token' do
-      include_examples 'check for flashing a success'
+      it_behaves_like 'check for flashing a success'
 
       it { is_expected.to redirect_to(tokens_path) }
       it { expect { subject }.to change(Token, :count).from(1).to(0) }
@@ -164,7 +165,7 @@ RSpec.describe Webui::Users::TokensController do
     context 'non-existent token' do
       let(:delete_parameters) { { id: token.id + 1 } }
 
-      include_examples 'check for flashing an error'
+      it_behaves_like 'check for flashing an error'
 
       it { is_expected.to redirect_to(tokens_path) }
       it { expect { subject }.not_to change(Token, :count) }
@@ -173,9 +174,9 @@ RSpec.describe Webui::Users::TokensController do
     context 'token of other user' do
       let(:token) { create(:service_token, executor: other_user) }
 
-      include_examples 'check for flashing an error'
+      it_behaves_like 'check for flashing an error'
 
-      it { is_expected.to redirect_to(root_path) }
+      it { is_expected.to redirect_to(tokens_path) }
       it { expect { subject }.not_to change(Token, :count) }
     end
   end

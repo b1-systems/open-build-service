@@ -1,11 +1,11 @@
 - content_for :actions do
-  - if bugowners_mail.present? && Configuration.bugzilla_url.present?
-    = render partial: 'webui/package/show_actions/bugzilla_owner', locals: { bugowners_mail: bugowners_mail,
-                                                                                            package_name: package.name, project_name: project.name }
+  %li.nav-item.action-report-bug
+    = render partial: 'webui/package/show_actions/bugzilla_owner', locals: { url: package.report_bug_or_bugzilla_url }
   - if User.session
-    - if current_rev && is_working
+    - if current_rev && is_working && is_branchable
       = render partial: 'webui/package/show_actions/branch_package', locals: { package: package, project: project,
                                                                                              revision: revision }
+    - if current_rev && is_working
       = render partial: 'webui/package/show_actions/submit_package', locals: { package: package, project: project,
                                                                                              revision: revision }
     - if User.possibly_nobody.can_modify?(package)
@@ -27,4 +27,5 @@
     - if package.develpackage
       = render partial: 'webui/package/show_actions/request_devel_project_change', locals: { package: package, project: project }
 
+  = render partial: 'webui/shared/lock_unlock_comment', locals: { commentable: package }
   = render partial: 'webui/package/show_actions/report_package', locals: { package: package }

@@ -68,11 +68,10 @@ class Authenticator
 
   def require_admin
     Rails.logger.debug { "Checking for Admin role for user #{@http_user.login}" }
-    unless @http_user.is_admin?
-      Rails.logger.debug 'not granted!'
-      raise AdminUserRequiredError, 'Requires admin privileges'
-    end
-    true
+    return if @http_user.admin?
+
+    Rails.logger.debug 'not granted!'
+    raise AdminUserRequiredError, 'Requires admin privileges'
   end
 
   def authorization_infos
@@ -211,7 +210,7 @@ class Authenticator
     if @http_user.state == 'confirmed'
       Rails.logger.debug { "USER found: #{@http_user.login}" }
       @user_permissions = Suse::Permission.new(@http_user)
-      return true
+      return
     end
 
     raise InactiveUserError, 'User is registered but not in confirmed state. Your account ' \

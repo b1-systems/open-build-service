@@ -4,7 +4,7 @@ RSpec.describe 'Canned responses', :js do
   let(:user) { create(:confirmed_user, login: 'burdenski') }
 
   before do
-    Flipper.enable(:content_moderation)
+    Flipper.enable(:canned_responses)
   end
 
   context 'can be created' do
@@ -54,16 +54,17 @@ RSpec.describe 'Canned responses', :js do
     let(:moderator) { create(:moderator) }
 
     before do
+      Flipper.enable(:content_moderation)
       login moderator
       visit canned_responses_path
       fill_in(name: 'canned_response[title]', with: 'wow')
       fill_in(name: 'canned_response[content]', with: 'a decision-related canned response')
-      find(:id, 'canned_response_decision_kind').select('favor')
+      find_by_id('canned_response_decision_type').select('Favored')
       click_button('Create')
       find('.accordion-button').click
     end
 
-    it { expect(page).to have_text('Favor') }
+    it { expect(page).to have_text('Favored') }
     it { expect(page).to have_text('a decision-related canned response') }
   end
 end

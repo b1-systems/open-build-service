@@ -1,17 +1,18 @@
 # frozen_string_literal: true
 
 class DiffListComponent < ApplicationComponent
-  attr_reader :diff_list, :view_id, :commentable, :commented_lines, :source_package, :target_package, :source_rev
+  attr_reader :diff_list, :view_id, :commentable, :commented_lines, :source_package, :target_package, :source_rev, :target_rev
 
-  def initialize(diff_list:, view_id: nil, commentable: nil, source_package: nil, target_package: nil, source_rev: nil)
+  def initialize(diff_list:, view_id: nil, commentable: nil, commented_lines: {}, source_package: nil, target_package: nil, source_rev: nil, target_rev: nil)
     super
     @diff_list = diff_list
     @view_id = view_id
     @commentable = commentable
-    @commented_lines = commentable ? commentable.comments.where.not(diff_ref: nil).select(:diff_ref).distinct.pluck(:diff_ref) : []
+    @commented_lines = commented_lines
     @source_package = source_package
     @target_package = target_package
     @source_rev = source_rev
+    @target_rev = target_rev
   end
 
   # We expand the diff if the changeset:
@@ -25,20 +26,20 @@ class DiffListComponent < ApplicationComponent
       filename.exclude?('/') &&
       (filename == '_patchinfo' || filename.ends_with?('.spec', '.changes'))
 
-    commented_lines.any? { |cl| cl.split('_')[1].to_i == file_index }
+    commented_lines.key?(file_index)
   end
 
   def source_file(filename)
     return nil unless @source_package
     return nil unless @source_package.file_exists?(filename, { rev: @source_rev, expand: 1 }.compact)
 
-    package_view_file_path(@source_package.project, @source_package, filename, rev: @source_rev, expand: 1)
+    project_package_file_path(@source_package.project, @source_package, filename, rev: @source_rev, expand: 1)
   end
 
   def target_file(filename)
     return nil unless @target_package
-    return nil unless @target_package.file_exists?(filename, expand: 1)
+    return nil unless @target_package.file_exists?(filename, { rev: @target_rev, expand: 1 }.compact)
 
-    package_view_file_path(@target_package.project, @target_package, filename, expand: 1)
+    project_package_file_path(@target_package.project, @target_package, filename, rev: @target_rev, expand: 1)
   end
 end

@@ -5,7 +5,7 @@ RSpec.describe Webui::Packages::BinariesController, :vcr do
   let(:home_tom) { tom.home_project }
   let(:toms_package) { create(:package, name: 'my_package', project: home_tom) }
   let(:repo_for_home_tom) do
-    repo = create(:repository, project: home_tom, architectures: ['i586'], name: 'source_repo')
+    repo = create(:repository, project: home_tom, architectures: ['x86_64'], name: 'source_repo')
     home_tom.store(login: tom)
     repo
   end
@@ -30,9 +30,9 @@ RSpec.describe Webui::Packages::BinariesController, :vcr do
         allow(Backend::Api::BuildResults::Status).to receive(:result_swiss_knife).and_raise(Backend::NotFoundError)
       end
 
-      let(:get_binaries) { get :index, params: { package_name: toms_package, project_name: home_tom, repository_name: repo_for_home_tom } }
+      let(:set_binaries) { get :index, params: { package_name: toms_package, project_name: home_tom, repository_name: repo_for_home_tom } }
 
-      it { expect { get_binaries }.to raise_error(ActiveRecord::RecordNotFound) }
+      it { expect { set_binaries }.to raise_error(ActiveRecord::RecordNotFound) }
     end
   end
 
@@ -46,16 +46,16 @@ RSpec.describe Webui::Packages::BinariesController, :vcr do
     end
 
     context 'with a failure in the backend' do
-      before do
-        allow(Backend::Api::BuildResults::Binaries).to receive(:fileinfo_ext).and_raise(Backend::Error, 'fake message')
-      end
-
       subject do
         get :show, params: { package_name: toms_package,
                              project_name: home_tom,
                              repository_name: repo_for_home_tom,
                              arch: 'x86_64',
                              filename: 'filename.txt' }
+      end
+
+      before do
+        allow(Backend::Api::BuildResults::Binaries).to receive(:fileinfo_ext).and_raise(Backend::Error, 'fake message')
       end
 
       it { expect(response).to have_http_status(:success) }
@@ -67,10 +67,6 @@ RSpec.describe Webui::Packages::BinariesController, :vcr do
     end
 
     context 'without file info' do
-      before do
-        allow(Backend::Api::BuildResults::Binaries).to receive(:fileinfo_ext).and_return(nil)
-      end
-
       subject do
         get :show, params: { package_name: toms_package,
                              project_name: home_tom,
@@ -79,16 +75,11 @@ RSpec.describe Webui::Packages::BinariesController, :vcr do
                              filename: 'filename.txt' }
       end
 
-      it { expect { subject }.to raise_error(ActiveRecord::RecordNotFound) }
-    end
-
-    context 'without a valid architecture' do
       before do
-        get :show, params: { package_name: toms_package, project_name: home_tom, repository_name: repo_for_home_tom, arch: 'fake_arch', filename: 'filename.txt' }
+        allow(Backend::Api::BuildResults::Binaries).to receive(:fileinfo_ext).and_return(nil)
       end
 
-      it { expect(flash[:error]).to eq("Couldn't find architecture 'fake_arch'.") }
-      it { is_expected.to redirect_to(package_binaries_page) }
+      it { expect { subject }.to raise_error(ActiveRecord::RecordNotFound) }
     end
 
     context 'with a valid download url' do

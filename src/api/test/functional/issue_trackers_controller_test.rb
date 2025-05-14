@@ -10,12 +10,12 @@ class IssueTrackersControllerTest < ActionDispatch::IntegrationTest
     login_king
     get '/issue_trackers'
     assert_response :success
-    assert_select 'issue-tracker', 26
+    assert_select 'issue-tracker', 27
   end
 
   def test_create_and_update_new_trackers
     # Create a new issue tracker
-    issue_tracker_xml = <<-EOF
+    issue_tracker_xml = <<-ISSUE_TRACKER
     <issue-tracker>
       <name>test</name>
       <description>My test issue tracker</description>
@@ -28,12 +28,12 @@ class IssueTrackersControllerTest < ActionDispatch::IntegrationTest
       <url>http://example.com</url>
       <show-url>http://example.com/@@@</show-url>
     </issue-tracker>
-    EOF
+    ISSUE_TRACKER
     post '/issue_trackers', params: issue_tracker_xml
-    assert_response 401
+    assert_response :unauthorized
     login_adrian
     post '/issue_trackers', params: issue_tracker_xml
-    assert_response 403
+    assert_response :forbidden
     login_king
     post '/issue_trackers', params: issue_tracker_xml
     assert_response :success
@@ -54,7 +54,7 @@ class IssueTrackersControllerTest < ActionDispatch::IntegrationTest
     # FIXME: check backend data
 
     # Update that issue tracker
-    issue_tracker_xml = <<-EOF
+    issue_tracker_xml = <<-ISSUE_TRACKER
     <issue-tracker>
       <name>test</name>
       <description>My even better test issue tracker</description>
@@ -65,10 +65,10 @@ class IssueTrackersControllerTest < ActionDispatch::IntegrationTest
       <url>http://test.com</url>
       <show-url>http://test.com/@@@</show-url>
     </issue-tracker>
-    EOF
+    ISSUE_TRACKER
     login_adrian
     raw_put '/issue_trackers/test', issue_tracker_xml
-    assert_response 403
+    assert_response :forbidden
     login_king
     raw_put '/issue_trackers/test', issue_tracker_xml
     assert_response :success
@@ -87,7 +87,7 @@ class IssueTrackersControllerTest < ActionDispatch::IntegrationTest
     # Delete that issue tracker again
     login_adrian
     delete '/issue_trackers/test'
-    assert_response 403
+    assert_response :forbidden
     login_king
     delete '/issue_trackers/test'
     assert_response :success

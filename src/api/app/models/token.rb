@@ -12,6 +12,7 @@ class Token < ApplicationRecord
   end
 
   validates :description, length: { maximum: 64 }
+  validates :enabled, inclusion: { in: [true, false], message: "must be 'true' or 'false'." }
   validates :string, uniqueness: { case_sensitive: false }
   validates :scm_token, absence: true, if: -> { type != 'Token::Workflow' }
 
@@ -77,7 +78,7 @@ class Token < ApplicationRecord
     URI.parse(workflow_configuration_url)
 
     # Check if we get a successful response
-    Workflows::YAMLDownloader.new({}, token: self).call
+    Workflows::YAMLDownloader.new(WorkflowRun.new(request_payload: {}), token: self).call
   rescue URI::InvalidURIError => e
     errors.add(:workflow_configuration_url, "must be a valid url: #{e}")
   rescue Token::Errors::NonExistentWorkflowsFile => e
@@ -91,17 +92,19 @@ end
 #
 #  id                          :integer          not null, primary key
 #  description                 :string(64)       default("")
+#  enabled                     :boolean          default(TRUE), not null, indexed
 #  scm_token                   :string(255)      indexed
 #  string                      :string(255)      indexed
 #  triggered_at                :datetime
 #  type                        :string(255)
 #  workflow_configuration_path :string(255)      default(".obs/workflows.yml")
-#  workflow_configuration_url  :string(255)
+#  workflow_configuration_url  :string(8192)
 #  executor_id                 :integer          not null, indexed
 #  package_id                  :integer          indexed
 #
 # Indexes
 #
+#  index_tokens_on_enabled    (enabled)
 #  index_tokens_on_scm_token  (scm_token)
 #  index_tokens_on_string     (string) UNIQUE
 #  package_id                 (package_id)

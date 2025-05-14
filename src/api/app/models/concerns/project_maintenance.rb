@@ -18,17 +18,17 @@ module ProjectMaintenance
   end
 
   class_methods do
-    def get_maintenance_project(at = nil)
-      at ||= AttribType.find_by_namespace_and_name!('OBS', 'MaintenanceProject')
-      maintenance_project = Project.find_by_attribute_type(at).first
+    def get_maintenance_project # rubocop:disable Naming/AccessorMethodName
+      at = AttribType.find_by_namespace_and_name!('OBS', 'MaintenanceProject')
+      maintenance_project = Project.joins(:attribs).where(attribs: { attrib_type_id: at.id }).first
 
-      return unless maintenance_project && check_access?(maintenance_project)
+      return unless maintenance_project&.check_access?
 
       maintenance_project
     end
 
-    def get_maintenance_project!(at = nil)
-      maintenance_project = get_maintenance_project(at)
+    def get_maintenance_project!
+      maintenance_project = get_maintenance_project
       raise Project::Errors::UnknownObjectError, 'There is no project flagged as maintenance project on server and no target in request defined.' unless maintenance_project
 
       maintenance_project
@@ -54,15 +54,15 @@ module ProjectMaintenance
     maintained_projects.collect { |mp| mp.project.expand_all_projects }.flatten
   end
 
-  def is_maintenance_release?
+  def maintenance_release?
     kind == 'maintenance_release'
   end
 
-  def is_maintenance_incident?
+  def maintenance_incident?
     kind == 'maintenance_incident'
   end
 
-  def is_maintenance?
+  def maintenance?
     kind == 'maintenance'
   end
 

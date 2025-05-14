@@ -22,6 +22,7 @@ class Attrib < ApplicationRecord
   validates_associated :values
   validates_associated :issues
   # Either we belong to a project or to a package
+  validates :binary, length: { maximum: 255 }
   validates :package, presence: true, if: proc { |attrib| attrib.project_id.nil? }
   validates :package_id, absence: { message: "can't also be present" }, if: proc { |attrib| attrib.project_id.present? }
   validates :project, presence: true, if: proc { |attrib| attrib.package_id.nil? }
@@ -113,6 +114,19 @@ class Attrib < ApplicationRecord
   #### Alias of methods
   alias values_addable? values_removeable?
 
+  def embargo_date
+    return unless attrib_type && name == 'EmbargoDate'
+    return unless valid?
+    return if values&.first&.value.blank?
+
+    attribute_value = values.first&.value
+    embargo_date = Time.zone.parse(attribute_value)
+    # No time set in the value, embargo it until the beginning of the next day
+    embargo_date = embargo_date.tomorrow if /^\d{4}-\d\d?-\d\d?$/.match?(attribute_value)
+
+    embargo_date
+  end
+
   private
 
   def check_timezone_identifier(value)
@@ -122,7 +136,7 @@ class Attrib < ApplicationRecord
       begin
         TZInfo::Timezone.get(timezone)
       rescue TZInfo::InvalidTimezoneIdentifier
-        errors.add(:base, :invalid_date, message: "Value '#{value}' contains a non-valid timezone")
+        errors.add(:embargo_date, :invalid_date, message: "Value '#{value}' contains a non-valid timezone")
         return false
       end
     end
@@ -134,12 +148,12 @@ class Attrib < ApplicationRecord
     begin
       parsed_value = Time.zone.parse(value)
     rescue ArgumentError => e
-      errors.add(:base, :invalid_date, message: "Value '#{value}' couldn't be parsed: '#{e.message}'")
+      errors.add(:embargo_date, :invalid_date, message: "Value '#{value}' couldn't be parsed: '#{e.message}'")
       return false
     end
 
     if parsed_value.nil?
-      errors.add(:base, :invalid_date, message: "Value '#{value}' couldn't be parsed")
+      errors.add(:embargo_date, :invalid_date, message: "Value '#{value}' couldn't be parsed")
       return false
     end
 

@@ -4,12 +4,16 @@ module Event
     payload_keys :description, :who, :user, :group, :project, :package, :role, :notifiable_id
     shortenable_key :description
 
+    def subject
+      raise AbstractMethodCalled
+    end
+
     def parameters_for_notification
-      super.merge({ notifiable_type: notifiable_type, notifiable_id: notifiable_id })
+      super.merge({ notifiable_type: notifiable_type, notifiable_id: notifiable_id, type: "Notification#{notifiable_type}" })
     end
 
     def any_roles
-      [User.find_by(login: payload['user']) || Group.find_by(title: payload['group'])]
+      [User.find_by(login: payload['user']) || ::Group.find_by(title: payload['group'])]
     end
 
     def notifiable_type
@@ -30,6 +34,13 @@ module Event
 
     def originator
       payload_address('who')
+    end
+
+    # FIXME: Use this to get rid of notifiable_type / notifiable_id
+    def event_object
+      return Package.unscoped.includes(:project).where(name: Package.striping_multibuild_suffix(payload['package']), projects: { name: payload['project'] }) if payload['package']
+
+      Project.unscoped.find_by(name: payload['project'])
     end
   end
 end

@@ -90,9 +90,9 @@ def inject_build_job(project, package, repo, arch, extrabinary = nil)
   f.write(output)
   f.close
   extrabinary = " -o -name #{extrabinary}" if extrabinary
-  # rubocop:disable Layout/LineLength
-  system("cd #{Rails.root}/test/fixtures/backend/binary/; exec find . -name '*#{arch}.rpm' -o -name '*src.rpm' -o -name logfile -o -name _statistics #{extrabinary} | cpio -H newc -o 2>/dev/null | curl -s -X POST -T - 'http://localhost:3201/putjob?arch=#{arch}&code=succeeded&job=#{jobfile.gsub(%r{.*/}, '')}&jobid=#{jobid}' > /dev/null")
-  # rubocop:enable Layout/LineLength
+  system("cd #{Rails.root}/test/fixtures/backend/binary/; exec find . -name '*#{arch}.rpm' -o -name '*src.rpm' -o -name logfile -o -name _statistics #{extrabinary} | " \
+         'cpio -H newc -o 2>/dev/null | ' \
+         "curl -s -X POST -T - 'http://localhost:3201/putjob?arch=#{arch}&code=succeeded&job=#{jobfile.gsub(%r{.*/}, '')}&jobid=#{jobid}' > /dev/null")
   system("echo \"#{verifymd5}  #{package}\" > #{jobfile}:dir/meta")
 end
 
@@ -113,28 +113,27 @@ module Minitest
   end
 end
 
-class ActionDispatch::IntegrationTest
-  # usually we do only test at the end of all tests to not slow down too much.
-  # but for debugging or for deep testing the check can be run after each test case
-  def after_teardown
-    super
-    # begin
-    #   # something else is going wrong in some random test and you do not know where?
-    #   # add the specific test for it here:
-    #   # login_king
-    #   # get "/source/home:Iggy/TestPack/_link"
-    #   # assert_response 404
-    #
-    #   # simple test that the objects itself or the same in backend and api.
-    #   # it does not check the content (eg. repository list in project meta)
-    #   compare_project_and_package_lists
-    # rescue MiniTest::Assertion => e
-    #   puts "Backend became out of sync in #{name}"
-    #   puts e.inspect
-    #   exit
-    # end
-  end
-end
+# class ActionDispatch::IntegrationTest
+#   # usually we do only test at the end of all tests to not slow down too much.
+#   # but for debugging or for deep testing the check can be run after each test case
+#   def after_teardown
+#     begin
+#       # something else is going wrong in some random test and you do not know where?
+#       # add the specific test for it here:
+#       # login_king
+#       # get "/source/home:Iggy/TestPack/_link"
+#       # assert_response 404
+#
+#       # simple test that the objects itself or the same in backend and api.
+#       # it does not check the content (eg. repository list in project meta)
+#       compare_project_and_package_lists
+#     rescue MiniTest::Assertion => e
+#       puts "Backend became out of sync in #{name}"
+#       puts e.inspect
+#       exit
+#     end
+#   end
+# end
 
 module ActionDispatch
   module Integration
@@ -221,17 +220,17 @@ module Webui
     teardown do
       dirpath = Rails.root.join('tmp', 'capybara')
       htmlpath = dirpath.join("#{name}.html")
-      if !passed?
-        Dir.mkdir(dirpath) unless Dir.exist?(dirpath)
-        save_page(htmlpath)
-      elsif File.exist?(htmlpath)
-        File.unlink(htmlpath)
+      if passed?
+        FileUtils.rm_f(htmlpath)
+      else
+        FileUtils.mkdir_p(dirpath)
+        save_page(htmlpath) # rubocop:disable Lint/Debugger
       end
 
       Capybara.reset!
       Rails.cache.clear
       WebMock.reset!
-      ActiveRecord::Base.clear_active_connections!
+      ActiveRecord::Base.connection_handler.clear_active_connections!
     end
   end
 end
@@ -276,7 +275,7 @@ module ActionDispatch
     end
 
     def load_fixture(path)
-      File.read(File.join(ActionController::TestCase.fixture_path, path))
+      File.read(File.join(ActionController::TestCase.fixture_paths, path))
     end
 
     def load_backend_file(path)
@@ -304,7 +303,7 @@ module ActionDispatch
       raise ArgumentError, 'we need a :controller' unless hash.key?(:controller)
       raise ArgumentError, 'we need a :action' unless hash.key?(:action)
 
-      super(hash)
+      super
     end
 
     def login_king
@@ -357,7 +356,7 @@ class ActiveSupport::TestCase
   end
 
   def load_fixture(path)
-    File.read(File.join(ActionController::TestCase.fixture_path, path))
+    File.read(File.join(ActionController::TestCase.fixture_paths, path))
   end
 
   def load_backend_file(path)

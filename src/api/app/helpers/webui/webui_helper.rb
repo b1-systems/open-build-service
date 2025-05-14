@@ -5,18 +5,6 @@ module Webui::WebuiHelper
   include Webui::BuildresultHelper
   include Webui::ElisionsHelper
 
-  def bugzilla_url(email_list = '', desc = '')
-    return '' if @configuration['bugzilla_url'].blank?
-
-    assignee = email_list.first if email_list
-    cc = ('&cc=' + email_list[1..-1].join('&cc=')) if email_list.length > 1 && email_list
-
-    Addressable::URI.escape(
-      "#{@configuration['bugzilla_url']}/enter_bug.cgi?classification=7340&product=openSUSE.org" \
-      "&component=3rd party software&assigned_to=#{assignee}#{cc}&short_desc=#{desc}"
-    )
-  end
-
   def format_projectname(prjname, login)
     splitted = prjname.split(':', 3)
     if splitted[0] == 'home'
@@ -69,12 +57,12 @@ module Webui::WebuiHelper
   end
 
   def check_first(first)
-    first.nil? ? true : nil
+    first.nil? || nil
   end
 
   def image_template_icon(template)
     default_icon = image_url('drive-optical-48.png')
-    icon = template.source_path('_icon') if template.has_icon?
+    icon = template.source_path('_icon') if template.icon?
     capture_haml do
       content_tag(:object, data: icon || default_icon, type: 'image/png', title: template.title, width: 32, height: 32) do
         content_tag(:img, src: default_icon, alt: template.title, width: 32, height: 32)
@@ -134,7 +122,7 @@ module Webui::WebuiHelper
     style += "border-width: 0 0 0 0;\n" if opts[:no_border] || opts[:read_only]
     style += "height: #{opts[:height]};\n" unless opts[:height] == 'auto'
     style += "width: #{opts[:width]}; \n" unless opts[:width] == 'auto'
-    style + "}\n"
+    "#{style}}\n"
   end
 
   def package_link(pack, opts = {})
@@ -209,11 +197,6 @@ module Webui::WebuiHelper
     role.blank? ? 'become bugowner (previous bugowners will be deleted)' : "get the role #{role}"
   end
 
-  def replace_jquery_meta_characters(input)
-    # The stated characters are c&p from https://api.jquery.com/category/selectors/
-    input.gsub(%r{[!"#$%&'()*+,./:\\;<=>?@\[\]^`{|}~]}, '_')
-  end
-
   def word_break(string, length = 80)
     return '' unless string
 
@@ -223,7 +206,7 @@ module Webui::WebuiHelper
 
   # paths param will accept one or more paths to match to make this tab active.
   # Only the first one will be used as link though if more than one is present.
-  def tab_link(label, paths, active = false, html_class = 'nav-link text-nowrap')
+  def tab_link(label, paths, html_class = 'nav-link text-nowrap', active: false)
     paths = [paths] unless paths.respond_to?(:select)
     paths_match = paths.any? { |path| request.path.eql?(path) }
     html_class << ' active' if active || paths_match
@@ -331,6 +314,16 @@ module Webui::WebuiHelper
     return 'light' unless feature_enabled?('color_themes')
 
     User.session&.color_theme || 'system'
+  end
+
+  def contact_link
+    blank_contact = ::Configuration.contact_name.blank? || ::Configuration.contact_url.blank?
+    blank_email = ::Configuration[:admin_email] == 'unconfigured@openbuildservice.org'
+    return 'contacting instance administrators' if blank_contact && blank_email
+
+    name = ::Configuration.contact_name || 'email'
+    url = ::Configuration.contact_url || "mailto:#{::Configuration.admin_email}"
+    link_to(name, url)
   end
 end
 

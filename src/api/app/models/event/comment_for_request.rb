@@ -3,9 +3,11 @@ module Event
     include CommentEvent
     self.message_bus_routing_key = 'request.comment'
     self.description = 'New comment for request created'
-    payload_keys :request_number, :diff_ref
-    receiver_roles :source_maintainer, :target_maintainer, :creator, :reviewer, :source_watcher, :target_watcher,
+    payload_keys :request_number, :diff_file_index, :diff_line_number
+    receiver_roles :source_maintainer, :target_maintainer, :creator, :reviewer, :source_project_watcher, :target_project_watcher,
                    :source_package_watcher, :target_package_watcher, :request_watcher
+
+    self.notification_explanation = 'Receive notifications for comments created on a request for which you are...'
 
     def subject
       "Request #{payload['number']} commented by #{payload['commenter']} (#{actions_summary})"
@@ -15,7 +17,7 @@ module Event
       # limit the error string
       attribs['comment'] = attribs['comment'][0..800] if attribs['comment'].present?
       attribs['files'] = attribs['files'][0..800] if attribs['files'].present?
-      super(attribs, keys)
+      super
     end
 
     def metric_measurement
@@ -23,7 +25,7 @@ module Event
     end
 
     def metric_tags
-      { diff_ref: payload['diff_ref'].present? }
+      { diff_ref: payload['diff_file_index'].present? }
     end
 
     def metric_fields

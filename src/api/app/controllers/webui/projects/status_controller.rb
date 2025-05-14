@@ -67,7 +67,7 @@ module Webui
         pname = package.name
 
         currentpack['requests_from'] = []
-        key = @api_obj.name + '/' + pname
+        key = "#{@api_obj.name}/#{pname}"
         if @submits.key?(key)
           return if @ignore_pending
 
@@ -107,7 +107,7 @@ module Webui
         return unless currentpack['firstfail'] || currentpack['failedcomment'] || currentpack['upstream_version'] ||
                       !currentpack['problems'].empty? || !currentpack['requests_from'].empty? || !currentpack['requests_to'].empty?
 
-        return if @limit_to_old && !(currentpack['upstream_version'])
+        return if @limit_to_old && !currentpack['upstream_version']
 
         @packages << currentpack
       end
@@ -198,7 +198,7 @@ module Webui
             @submits[key] << number
           end
         end
-        BsRequest.where(number: @declined_requests.keys).each do |r|
+        BsRequest.where(number: @declined_requests.keys).find_each do |r|
           @declined_requests[r.number] = r
         end
       end

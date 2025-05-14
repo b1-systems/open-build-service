@@ -1,29 +1,18 @@
 // Override Bootstrap's default colors
 $gray-100: #f8f9fa;
-$gray-200: #f0f0f0;
 $gray-300: #e9ecef;
 $gray-400: #aeaeae;
 $gray-500: #878c92;
 
-$blue: #069;
-$green: #008000;
-$pink: #708;
-$indigo: #219;
-$purple: #30a;
-$teal: #164;
-$orange: #a50;
-$yellow: #f0ad4e;
-$cyan: #007a7c;
+$custom-blue:   #069;
+$custom-green:  #008000;
+$custom-yellow: #f0ad4e;
+$custom-cyan:   #007a7c;
 
-$primary: $green;
-$secondary: $blue;
-$warning: $yellow;
-$info: $cyan;
-$success: $green;
-$selected: $gray-200;
-$hover: $gray-400;
+$primary:   $custom-green;
+$secondary: $custom-blue;
+$success:   $custom-green;
+$info:      $custom-cyan;
+$warning:   $custom-yellow;
 
-$link-hover-color: $green;
-$link-color: $blue;
-
-$menu-hover-color: lighten($color: $green, $amount: 10%);
+$link-color: $custom-blue;

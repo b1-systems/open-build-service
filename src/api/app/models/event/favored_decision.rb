@@ -1,17 +1,13 @@
 module Event
-  class FavoredDecision < Base
-    receiver_roles :reporter, :offender
-    self.description = 'Reported content has been favored'
+  class FavoredDecision < Decision
+    self.description = 'Reported content favored'
+    self.notification_explanation = 'Receive notifications for favored report decisions.'
 
-    payload_keys :id, :reason, :moderator_id, :report_last_id, :reportable_type
+    receiver_roles :offender, :reporter
 
     def subject
-      decision = Decision.find(payload['id'])
+      decision = ::Decision.find(payload['id'])
       "Favored #{decision.reports.first.reportable&.class&.name || decision.reports.first.reportable_type} Report".squish
-    end
-
-    def parameters_for_notification
-      super.merge(notifiable_type: 'Decision')
     end
   end
 end

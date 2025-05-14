@@ -494,7 +494,7 @@ sub update_cosign {
   for my $digest (sort keys %$digests_to_cosign) {
     my $oci = 1;	# always use oci mime types
     my $containerinfo = $digests_to_cosign->{$digest}->[1];
-    my $numlayers = ($containerinfo->{'slsa_provenance'} ? 1 : 0) + ($containerinfo->{'spdx_file'} ? 1 : 0) + ($containerinfo->{'cyclonedx_file'} ? 1 : 0) + scalar(@{$containerinfo->{'intoto_files'} || []});
+    my $numlayers = ($containerinfo->{'slsa_provenance_file'} ? 1 : 0) + ($containerinfo->{'spdx_file'} ? 1 : 0) + ($containerinfo->{'cyclonedx_file'} ? 1 : 0) + scalar(@{$containerinfo->{'intoto_files'} || []});
     if (!$numlayers) {
       delete $sigs->{'attestations'}->{$digest};
       next;
@@ -505,12 +505,13 @@ sub update_cosign {
       next;
     }
     print "creating $numlayers cosign attestations for $gun $digest\n";
+    my %predicatetypes;
     my @attestations;
-    push @attestations, BSConSign::fixup_intoto_attestation($containerinfo->{'slsa_provenance'}, $signfunc, $digest, $gun) if $containerinfo->{'slsa_provenance'};
-    push @attestations, BSConSign::fixup_intoto_attestation(readstr($containerinfo->{'spdx_file'}), $signfunc, $digest, $gun) if $containerinfo->{'spdx_file'};
-    push @attestations, BSConSign::fixup_intoto_attestation(readstr($containerinfo->{'cyclonedx_file'}), $signfunc, $digest, $gun) if $containerinfo->{'cyclonedx_file'};
-    push @attestations, BSConSign::fixup_intoto_attestation(readstr($_), $signfunc, $digest, $gun) for @{$containerinfo->{'intoto_files'} || []};
-    my @attestation_ents = BSConSign::create_cosign_attestation_ents(\@attestations);
+    push @attestations, BSConSign::fixup_intoto_attestation(readstr($containerinfo->{'slsa_provenance_file'}), $signfunc, $digest, $gun, \%predicatetypes) if $containerinfo->{'slsa_provenance_file'};
+    push @attestations, BSConSign::fixup_intoto_attestation(readstr($containerinfo->{'spdx_file'}), $signfunc, $digest, $gun, \%predicatetypes) if $containerinfo->{'spdx_file'};
+    push @attestations, BSConSign::fixup_intoto_attestation(readstr($containerinfo->{'cyclonedx_file'}), $signfunc, $digest, $gun, \%predicatetypes) if $containerinfo->{'cyclonedx_file'};
+    push @attestations, BSConSign::fixup_intoto_attestation(readstr($_), $signfunc, $digest, $gun, \%predicatetypes) for @{$containerinfo->{'intoto_files'} || []};
+    my @attestation_ents = BSConSign::create_cosign_attestation_ents(\@attestations, undef, \%predicatetypes);
     my $mani_id = create_cosign_manifest($repodir, $oci, $knownmanifests, $knownblobs, @attestation_ents);
     $sigs->{'attestations'}->{$digest} = $mani_id;
     if ($rekorserver) {
@@ -539,7 +540,9 @@ sub create_manifestinfo {
 
   my $repodir = "$registrydir/$repo";
   my ($projid, $repoid) = split('/', $prp, 2);
+  # copy so we can add/delete stuff
   $imginfo = { %$imginfo, 'project' => $projid, 'repository' => $repoid };
+  delete $imginfo->{'containerinfo'};
   my $bins = BSPublisher::Containerinfo::create_packagelist($containerinfo);
   $_->{'base'} && ($_->{'base'} = \1) for @{$bins || []};	# turn flag to True
   $imginfo->{'packages'} = $bins if $bins;
@@ -657,8 +660,7 @@ sub push_containers {
       my $govariant = $config->{'variant'} || $containerinfo->{'govariant'};
       my $goarch = $config->{'architecture'} || 'any';
       my $goos = $config->{'os'} || 'any';
-      my $platformstr = "architecture:$goarch os:$goos";
-      $platformstr .= " variant:$govariant" if $govariant;
+      my $platformstr = BSContar::make_platformstr($goarch, $govariant, $goos);
       if ($multiplatforms{$platformstr}) {
 	print "ignoring $containerinfo->{'file'}, already have $platformstr\n";
 	next;
@@ -716,6 +718,7 @@ sub push_containers {
         'goarch' => $goarch,
         'goos' => $goos,
 	'distmanifest' => $mani_id,
+	'containerinfo' => $containerinfo,	# tmp, will be deleted later
       };
       $imginfo->{'govariant'} = $govariant if $govariant;
       $imginfo->{'type'} = $containerinfo->{'type'} if $containerinfo->{'type'};
@@ -765,6 +768,7 @@ sub push_containers {
     $containerdigests .= "$mani_id $mani_size $tag\n";
     $taginfo->{'distmanifest'} = $mani_id;
     $info{$tag} = $taginfo;
+    $data->{'regdata_cb'}->($data, $registry, "$repo:$tag", $taginfo) if $data->{'regdata_cb'};
   }
 
   # write signatures file (need to do this early as it adds manifests/blobs)
@@ -806,6 +810,11 @@ sub push_containers {
     unlink("$repodir/:cosign");
     disownrepo($prp, $repo);
     return $containerdigests;
+  }
+
+  # get rid of the containerinfo elements again
+  for my $taginfo (values %info) {
+    delete $_->{'containerinfo'} for @{$taginfo->{'images'} || []};
   }
 
   # write info file

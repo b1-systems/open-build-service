@@ -448,6 +448,7 @@ sub server {
       last unless $pid > 0;
       my $slot = delete $chld{$pid};
       $slot = delete $chld2{$pid} unless defined $slot;
+      printf("Child %d died from signal %d\n", $pid, $? & 127) if $? & 127;
       if (defined($slot)) {
         if ($serverstatus_ok && defined(sysseek(STA, $slot * 256, Fcntl::SEEK_SET))) {
 	  syswrite(STA, "\0" x 256, 256);
@@ -670,7 +671,8 @@ sub parse_error_string {
 
 sub request_infostr {
   my ($req) = @_;
-  my $id = $req->{'reqid'} || $$;
+  my $id = $req->{'reqid'} || $req->{'keepalive_count'};
+  $id = $id ? "$$.$id" : $$;
   return sprintf("%s: %3ds %-7s %-22s %s%s\n", BSUtil::isotime($req->{'starttime'}), time() - $req->{'starttime'}, "[$id]",
       "$req->{'action'} ($req->{'peer'})", $req->{'path'}, ($req->{'query'}) ? "?$req->{'query'}" : '');
 }

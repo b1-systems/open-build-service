@@ -1,6 +1,6 @@
 module Webui
   module Packages
-    class BinariesController < Packages::MainController
+    class BinariesController < Webui::WebuiController
       include Webui::Packages::BinariesHelper
 
       # TODO: Keep in sync with Build::query in backend/build/Build.pm.
@@ -12,11 +12,12 @@ module Webui
 
       before_action :set_project
       before_action :set_package
+      before_action :set_multibuild_flavor
       before_action :set_repository
-      before_action :set_architecture, only: %i[show dependency]
+      before_action :set_architecture, only: %i[show dependency filelist]
       before_action :set_dependant_project, only: :dependency
       before_action :set_dependant_repository, only: :dependency
-      before_action :set_filename, only: %i[show dependency]
+      before_action :set_filename, only: %i[show dependency filelist]
 
       prepend_before_action :lockout_spiders
 
@@ -46,7 +47,7 @@ module Webui
         end
       rescue Backend::Error => e
         flash[:error] = e.message
-        redirect_back(fallback_location: { controller: :package, action: :show, project: @project, package: @package })
+        redirect_back_or_to({ controller: :package, action: :show, project: @project, package: @package })
       end
 
       def show
@@ -66,24 +67,29 @@ module Webui
                                                                       @architecture, params[:dependant_name])
         return if @fileinfo # avoid displaying an error for non-existing packages
 
-        redirect_back(fallback_location: project_package_repository_binary_url(project_name: @project, package_name: @package,
-                                                                               repository: @repository, arch: @architecture, filename: @filename))
+        redirect_back_or_to project_package_repository_binary_url(project_name: @project, package_name: @package,
+                                                                  repository: @repository, arch: @architecture, filename: @filename)
       end
 
       def destroy
         authorize @package, :update?
 
-        opts = params.slice(:arch)
-        opts[:repository] = params[:repository_name]
-        opts[:package] = @package_name
-        opts[:project] = @project.name
-        if @package.wipe_binaries(opts)
+        begin
+          Backend::Api::Build::Project.wipe_binaries(@project.name, { package: @package_name,
+                                                                      repository: params[:repository_name],
+                                                                      arch: params[:arch] }.compact)
           flash[:success] = "Triggered wipe binaries for #{elide(@project.name)}/#{elide(@package_name)} successfully."
-        else
-          flash[:error] = "Error while triggering wipe binaries for #{elide(@project.name)}/#{elide(@package_name)}: #{@package.errors.full_messages.to_sentence}."
+        rescue Backend::Error, Timeout::Error, Project::WritePermissionError => e
+          flash[:error] = "Error while triggering wipe binaries for #{elide(@project.name)}/#{elide(@package_name)}: #{e.message}."
         end
 
-        redirect_to project_package_repository_binaries_path(project_name: @project, package_name: @package, repository_name: @repository)
+        redirect_to project_package_repository_binaries_path(project_name: @project, package_name: @package_name, repository_name: @repository)
+      end
+
+      def filelist
+        data = Backend::Api::BuildResults::Binaries.fileinfo_ext(@project.name, @package_name, @repository.name, @architecture.name, @filename, withfilelist: 1)
+        filelist = data.elements('filelist')
+        render json: { data: filelist.map { |f| { name: f } } }
       end
 
       private
@@ -94,7 +100,7 @@ module Webui
         return @dependant_project if @dependant_project
 
         flash[:error] = "Project '#{elide(@dependant_project_name)}' is invalid."
-        redirect_back(fallback_location: root_path)
+        redirect_back_or_to root_path
       end
 
       def set_dependant_repository
@@ -104,12 +110,16 @@ module Webui
         return @dependant_repository if @dependant_repository
 
         flash[:error] = "Repository '#{@dependant_repository_name}' is invalid."
-        redirect_back(fallback_location: project_show_path(project: @project.name))
+        redirect_back_or_to project_show_path(project: @project.name)
       end
 
       def set_filename
         # Ensure it really is just a file name, no '/..', etc.
         @filename = File.basename(params[:binary_filename] || params[:filename])
+      end
+
+      def set_multibuild_flavor
+        @multibuild_flavor = @package_name.gsub(/.*:/, '') if @package_name.present? && @package_name.include?(':')
       end
 
       # Get an URL to a binary produced by the build.

@@ -33,7 +33,6 @@ class BuildController < ApplicationController
 
     if request.get?
       pass_to_backend
-      nil
     elsif request.post?
       # check if user has project modify rights
       allowed = false
@@ -57,7 +56,7 @@ class BuildController < ApplicationController
 
       if !allowed && !params[:package].nil?
         [params[:package]].flatten.each do |pack_name|
-          pkg = Package.find_by_project_and_name(prj.name, pack_name)
+          pkg = Package.find_by_project_and_name(prj.name, Package.multibuild_flavor(pack_name))
           if pkg.nil?
             allowed = permissions.project_change?(prj)
             unless allowed
@@ -83,7 +82,6 @@ class BuildController < ApplicationController
       end
 
       pass_to_backend
-      nil
     elsif request.put?
       if User.admin_session?
         pass_to_backend
@@ -91,12 +89,11 @@ class BuildController < ApplicationController
         render_error status: 403, errorcode: 'execute_cmd_no_permission',
                      message: "No permission to execute command on project #{params[:project]}"
       end
-      nil
     else
       render_error status: 400, errorcode: 'illegal_request',
                    message: "Illegal request: #{request.method.to_s.upcase} #{request.path}"
-      nil
     end
+    nil
   end
 
   def buildinfo
@@ -116,7 +113,7 @@ class BuildController < ApplicationController
     # implementation since python 3. this would break all local builds otherwise with unfixed
     # osc python 3 versions
     # Fixed for osc: https://github.com/openSUSE/osc/pull/958
-    if request.user_agent.present? && (request.user_agent[0..5] == 'osc/0.' && request.user_agent[6..-1].to_i < 175)
+    if request.user_agent.present? && request.user_agent[0..5] == 'osc/0.' && request.user_agent[6..].to_i < 175
       path += request.query_string.empty? ? '?' : '&'
       path += 'striphdrmd5'
     end

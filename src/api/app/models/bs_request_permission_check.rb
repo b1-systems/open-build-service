@@ -1,8 +1,24 @@
 class BsRequestPermissionCheck
   include BsRequest::Errors
 
-  def cmd_addreview_permissions(permissions_granted)
-    raise ReviewChangeStateNoPermission, 'The request is not in state new or review' unless req.state.in?(%i[review new])
+  attr_accessor :opts, :req, :accept_user
+
+  # check if the request can change state - or throw an APIError if not
+  def initialize(request, options)
+    self.req = request
+    self.opts = options
+    self.accept_user = if request.approver
+                         User.find_by!(login: request.approver)
+                       else
+                         User.session!
+                       end
+
+    @write_permission_in_source = false
+    @write_permission_in_target = false
+  end
+
+  def cmd_addreview_permissions(permissions_granted, relaxed_state_check = 0)
+    raise ReviewChangeStateNoPermission, 'The request is not in state new or review' unless relaxed_state_check || req.state.in?(%i[review new])
 
     req.bs_request_actions.each do |action|
       set_permissions_for_action(action)
@@ -29,17 +45,17 @@ class BsRequestPermissionCheck
     req.bs_request_actions.each do |action|
       set_permissions_for_action(action)
 
-      raise TargetNotMaintenance, 'The target project is already an incident, changing is not possible via set_incident' if @target_project.is_maintenance_incident?
+      raise TargetNotMaintenance, 'The target project is already an incident, changing is not possible via set_incident' if @target_project.maintenance_incident?
       raise TargetNotMaintenance, "The target project is not of type maintenance but #{@target_project.kind}" unless @target_project.kind == 'maintenance'
 
-      tip = Project.get_by_name(action.target_project + ':' + opts[:incident])
-      raise ProjectLocked if tip && tip.is_locked?
+      tip = Project.get_by_name("#{action.target_project}:#{opts[:incident]}")
+      raise ProjectLocked if tip && tip.locked?
     end
 
     require_permissions_in_target_or_source
   end
 
-  def cmd_changereviewstate_permissions(opts)
+  def cmd_changereviewstate_permissions
     # Basic validations of given parameters
     by_user = User.find_by_login!(opts[:by_user]) if opts[:by_user]
     by_group = Group.find_by_title!(opts[:by_group]) if opts[:by_group]
@@ -55,7 +71,7 @@ class BsRequestPermissionCheck
     raise ReviewChangeStateNoPermission, 'The request is neither in state review nor new' unless req.state.in?(%i[review new])
     raise ReviewNotSpecified, 'The review must specified via by_user, by_group or by_project(by_package) argument.' unless by_user || by_group || by_package || by_project
     raise ReviewChangeStateNoPermission, "review state change is not permitted for #{User.session!.login}" if by_user && User.session! != by_user
-    raise ReviewChangeStateNoPermission, "review state change for group #{by_group.title} is not permitted for #{User.session!.login}" if by_group && !User.session!.is_in_group?(by_group)
+    raise ReviewChangeStateNoPermission, "review state change for group #{by_group.title} is not permitted for #{User.session!.login}" if by_group && !User.session!.in_group?(by_group)
 
     if by_package && !User.session!.can_modify?(by_package, true)
       raise ReviewChangeStateNoPermission, "review state change for package #{opts[:by_project]}/#{opts[:by_package]} " \
@@ -67,7 +83,7 @@ class BsRequestPermissionCheck
     raise ReviewChangeStateNoPermission, "review state change for project #{opts[:by_project]} is not permitted for #{User.session!.login}"
   end
 
-  def cmd_changestate_permissions(opts)
+  def cmd_changestate_permissions
     # We do not support to revert changes from accepted requests (yet)
     raise PostRequestNoPermission, 'change state from an accepted state is not allowed.' if req.state == :accepted
 
@@ -97,35 +113,33 @@ class BsRequestPermissionCheck
     target_project = req.bs_request_actions.first.target_project_object
     user_is_staging_manager = User.session!.groups_users.exists?(group: target_project.staging.managers_group) if target_project && target_project.staging
 
-    permission_granted = false
-    if User.admin_session?
-      permission_granted = true
-    elsif opts[:newstate] == 'deleted'
+    if opts[:newstate] == 'deleted' && !User.admin_session?
       raise PostRequestNoPermission, 'Deletion of a request is only permitted for administrators. Please revoke the request instead.'
     end
 
-    if opts[:newstate].in?(%w[new review revoked superseded]) && req.creator == User.session!.login
+    permission_granted =
+      User.admin_session? ||
+
       # request creator can reopen, revoke or supersede a request which was declined
-      permission_granted = true
-    elsif opts[:newstate] == 'revoked' && req.creator == opts[:override_creator]
+      (opts[:newstate].in?(%w[new review revoked superseded]) && req.creator == User.session!.login) ||
+
       # NOTE: request should be revoked if project is removed.
       # override_creator is needed if the logged in user is different than the creator of the request
       # at the time of removing the project.
-      permission_granted = true
-    elsif req.state == :declined && opts[:newstate].in?(%w[new review]) && (req.commenter == User.session!.login || user_is_staging_manager)
+      (opts[:newstate] == 'revoked' && req.creator == opts[:override_creator]) ||
+
       # people who declined a request shall also be able to reopen it
 
       # NOTE: Staging managers should be able to repoen a request to unstage a declined request.
       # The reason behind `user_is_staging_manager`, is that we need to manage reviews to send
       # the request to the staging backlog.
-      permission_granted = true
-    end
+      (req.state == :declined && opts[:newstate].in?(%w[new review]) && (req.commenter == User.session!.login || user_is_staging_manager))
 
     # permission and validation check for each action inside
     req.bs_request_actions.each do |action|
       set_permissions_for_action(action, accept_check ? 'accepted' : opts[:newstate])
 
-      check_newstate_action!(action, opts)
+      check_newstate_action!(action)
 
       # TODO: Get the relevant project attribute, from the target project or target package. Retrieve the accepter and check if it's the same person than the creator. And fail if true
       target_package = Package.get_by_project_and_name(action.target_project, action.target_package) if Package.exists_by_project_and_name(action.target_project, action.target_package)
@@ -151,25 +165,9 @@ class BsRequestPermissionCheck
     extra_permissions_check_changestate unless permission_granted || opts[:cmd] == 'approve'
   end
 
-  attr_accessor :opts, :req, :accept_user
-
-  # check if the request can change state - or throw an APIError if not
-  def initialize(request, options)
-    self.req = request
-    self.opts = options
-    self.accept_user = if request.approver
-                         User.find_by!(login: request.approver)
-                       else
-                         User.session!
-                       end
-
-    @write_permission_in_source = false
-    @write_permission_in_target = false
-  end
-
   private
 
-  def check_accepted_action(action, opts)
+  def check_accepted_action(action)
     raise NotExistingTarget, "Unable to process project #{action.target_project}; it does not exist." unless @target_project
 
     check_action_target(action)
@@ -192,9 +190,11 @@ class BsRequestPermissionCheck
     end
 
     # target must exist
-    raise NotExistingTarget, "Unable to process package #{action.target_project}/#{action.target_package}; it does not exist." if action.action_type.in?(%i[delete add_role set_bugowner]) && action.target_package && !@target_package
+    if action.action_type.in?(%i[delete add_role set_bugowner]) && action.target_package && !@target_package
+      raise NotExistingTarget, "Unable to process package #{action.target_project}/#{action.target_package}; it does not exist."
+    end
 
-    check_delete_accept(action, opts) if action.action_type == :delete
+    check_delete_accept(action) if action.action_type == :delete
 
     return unless action.makeoriginolder && Package.exists_by_project_and_name(action.target_project, action.target_package)
 
@@ -229,13 +229,13 @@ class BsRequestPermissionCheck
       raise SourceMissing, err if err
     end
     # maintenance incident target permission checks
-    return unless action.is_maintenance_incident?
+    return unless action.maintenance_incident?
     return if @target_project.kind.in?(%w[maintenance maintenance_incident])
 
     raise TargetNotMaintenance, "The target project is not of type maintenance or incident but #{@target_project.kind}"
   end
 
-  def check_delete_accept(action, opts)
+  def check_delete_accept(action)
     if @target_package
       return if opts.include?(:force) && opts[:force].in?([nil, '1'])
 
@@ -267,15 +267,21 @@ class BsRequestPermissionCheck
         raise ReleaseTargetNoPermission, "Release target project #{releasetarget.target_repository.project.name} is not writable by you" unless User.session!.can_modify?(releasetarget.target_repository.project)
       end
     end
+
+    # Is the source_project under embargo still?
+    return if action.embargo_date.blank?
+    return if opts[:force]
+
+    raise BsRequest::Errors::UnderEmbargo, "The project #{action.source_project} is under embargo until #{action.embargo_date}" if action.embargo_date > Time.now.utc
   end
 
   # check if the action can change state - or throw an APIError if not
-  def check_newstate_action!(action, opts)
+  def check_newstate_action!(action)
     # relaxed checks for final exit states
     return if opts[:newstate].in?(%w[declined revoked superseded])
 
     if opts[:newstate] == 'accepted' || opts[:cmd] == 'approve'
-      check_accepted_action(action, opts)
+      check_accepted_action(action)
     else # only check the target is sane
       check_action_target(action)
     end
@@ -356,8 +362,8 @@ class BsRequestPermissionCheck
         @write_permission_in_this_action = true
       end
     else
-      @write_permission_in_target = true if @target_project && PackagePolicy.new(accept_user, Package.new(project: @target_project), true).create?
-      @write_permission_in_this_action = true if @target_project && PackagePolicy.new(accept_user, Package.new(project: @target_project), ignore_lock).create?
+      @write_permission_in_target = true if @target_project && PackagePolicy.new(accept_user, Package.new(project: @target_project), ignore_lock: true).create?
+      @write_permission_in_this_action = true if @target_project && PackagePolicy.new(accept_user, Package.new(project: @target_project), ignore_lock: ignore_lock).create?
     end
   end
 end

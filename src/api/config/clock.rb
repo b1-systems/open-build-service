@@ -1,5 +1,5 @@
-require File.dirname(__FILE__) + '/boot'
-require File.dirname(__FILE__) + '/environment'
+require "#{File.dirname(__FILE__)}/boot"
+require "#{File.dirname(__FILE__)}/environment"
 
 require 'clockwork'
 
@@ -46,7 +46,7 @@ module Clockwork
   end
 
   every(1.hour, 'accept requests') do
-    User.session = User.get_default_admin
+    User.session = User.default_admin
     BsRequest.delayed_auto_accept
   end
 
@@ -78,7 +78,7 @@ module Clockwork
   end
 
   every(1.day, 'create cleanup requests', at: '06:00') do
-    User.session = User.get_default_admin
+    User.session = User.default_admin
     ProjectCreateAutoCleanupRequestsJob.perform_later
   end
 
@@ -89,5 +89,10 @@ module Clockwork
   # check for new breakages between api and backend due to dull code
   every(1.week, 'consistency check', at: 'Sunday 03:00') do
     Old::ConsistencyCheckJob.perform_later
+  end
+
+  # Expire assignments after 24h
+  every(1.day, 'expire assignments') do
+    ExpireAssignmentsJob.perform_later
   end
 end

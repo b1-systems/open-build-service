@@ -41,31 +41,31 @@ RSpec.describe Project, :vcr do
     end
 
     describe '#missing_reviews' do
+      subject { staging_project.missing_reviews }
+
       let(:other_user) { create(:confirmed_user) }
       let(:other_package) { create(:package) }
       let(:group) { create(:group) }
-      let!(:review_1) { create(:review, creator: user, by_user: other_user, bs_request: submit_request) }
-      let!(:review_2) { create(:review, creator: user, by_group: group, bs_request: submit_request) }
-      let!(:review_3) { create(:review, creator: user, by_project: other_package.project, bs_request: submit_request) }
-      let!(:review_4) { create(:review, creator: user, by_package: other_package, by_project: other_package.project, bs_request: submit_request) }
-
-      subject { staging_project.missing_reviews }
+      let!(:review1) { create(:review, creator: user, by_user: other_user, bs_request: submit_request) }
+      let!(:review2) { create(:review, creator: user, by_group: group, bs_request: submit_request) }
+      let!(:review3) { create(:review, creator: user, by_project: other_package.project, bs_request: submit_request) }
+      let!(:review4) { create(:review, creator: user, by_package: other_package, by_project: other_package.project, bs_request: submit_request) }
 
       it 'contains all open reviews of staged requests' do
         expect(subject).to contain_exactly(
-          { id: review_1.id, request: submit_request.number, state: 'new', package: target_package.name, creator: user.login, by: other_user.login, review_type: 'by_user' },
-          { id: review_2.id, request: submit_request.number, state: 'new', package: target_package.name, creator: user.login, by: group.title, review_type: 'by_group' },
-          { id: review_3.id, request: submit_request.number, state: 'new', package: target_package.name, creator: user.login, by: other_package.project.name, review_type: 'by_project' },
-          { id: review_4.id, request: submit_request.number, state: 'new', package: target_package.name, creator: user.login, by: other_package.name, review_type: 'by_package' }
+          { id: review1.id, request: submit_request.number, state: 'new', package: target_package.name, creator: user.login, by: other_user.login, review_type: 'by_user' },
+          { id: review2.id, request: submit_request.number, state: 'new', package: target_package.name, creator: user.login, by: group.title, review_type: 'by_group' },
+          { id: review3.id, request: submit_request.number, state: 'new', package: target_package.name, creator: user.login, by: other_package.project.name, review_type: 'by_project' },
+          { id: review4.id, request: submit_request.number, state: 'new', package: target_package.name, creator: user.login, by: other_package.name, review_type: 'by_package' }
         )
       end
 
       context 'when there is an accepted review' do
         before do
-          review_2.update(state: 'accepted')
+          review2.update(state: 'accepted')
         end
 
-        it { expect(subject.pluck(:id)).not_to include(review_2.id) }
+        it { expect(subject.pluck(:id)).not_to include(review2.id) }
       end
     end
 
@@ -212,6 +212,8 @@ RSpec.describe Project, :vcr do
     end
 
     describe '#copy' do
+      subject { staging_project.reload.copy(new_project_name) }
+
       let(:staging_project) do
         create(:staging_project, staging_workflow: staging_workflow, project_config: 'Prefer: foo', name: "home:#{user}:Staging:XYZ")
       end
@@ -223,8 +225,6 @@ RSpec.describe Project, :vcr do
       # other custom code that would conflict with what 'deep_cloneable' does
       let!(:path_elements) { create_list(:path_element, 3, repository: repository) }
       let!(:dod_repository) { create(:download_repository, repository: repository) }
-
-      subject { staging_project.reload.copy(new_project_name) }
 
       it 'creates a new staging project' do
         expect(subject).to be_instance_of(Project)
@@ -272,6 +272,8 @@ RSpec.describe Project, :vcr do
     end
 
     describe '.accept' do
+      subject { staging_project.accept }
+
       let(:user) { create(:confirmed_user, :with_home, login: 'tom') }
       let(:managers_group) { create(:group) }
       let(:target_project) { create(:project, name: 'target_project') }
@@ -284,7 +286,7 @@ RSpec.describe Project, :vcr do
       let!(:package) { create(:package_with_file, name: 'package_with_file', project: staging_project) }
 
       let(:requester) { create(:confirmed_user, login: 'requester') }
-      let(:target_package_2) { create(:package, name: 'target_package_2', project: target_project) }
+      let(:target_package2) { create(:package, name: 'target_package_2', project: target_project) }
       let(:staged_request) do
         create(
           :bs_request_with_submit_action,
@@ -301,8 +303,8 @@ RSpec.describe Project, :vcr do
         create(
           :bs_request_with_submit_action,
           creator: requester,
-          description: "Request for package #{target_package_2}",
-          target_package: target_package_2,
+          description: "Request for package #{target_package2}",
+          target_package: target_package2,
           source_package: source_package,
           staging_project: staging_project,
           review_by_project: staging_project.name,
@@ -314,8 +316,6 @@ RSpec.describe Project, :vcr do
         login user
         staged_request_with_by_project_review
       end
-
-      subject { staging_project.accept }
 
       context "when the staging project is in 'acceptable' state" do
         let!(:project_log_entry_comment_for_project) do
@@ -360,13 +360,13 @@ RSpec.describe Project, :vcr do
 
       context 'when the staging project has missing reviews' do
         let!(:user_relationship) { create(:relationship, project: target_project, user: user) }
-        let(:target_package_3) { create(:package, name: 'target_package_3', project: target_project) }
+        let(:target_package3) { create(:package, name: 'target_package_3', project: target_project) }
         let!(:open_staged_request) do
           create(
             :bs_request_with_submit_action,
-            description: "Request for package #{target_package_3}",
+            description: "Request for package #{target_package3}",
             creator: requester,
-            target_package: target_package_3,
+            target_package: target_package3,
             source_package: source_package,
             staging_project: staging_project,
             staging_owner: user,
@@ -391,8 +391,8 @@ RSpec.describe Project, :vcr do
           create(
             :bs_request_with_submit_action,
             creator: requester,
-            description: "Request for package #{target_package_2}",
-            target_package: target_package_2,
+            description: "Request for package #{target_package2}",
+            target_package: target_package2,
             source_package: source_package,
             staging_project: staging_project,
             review_by_project: staging_project.name,

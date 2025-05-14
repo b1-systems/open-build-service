@@ -9,7 +9,7 @@ module BackendProxy
     # Either directly with a file cache or, if configured,
     # transparently with web server specific forwarding headers.
     def pass_to_backend(path = nil)
-      path ||= get_request_path
+      path ||= http_request_path
 
       if request.get? || request.head?
         volley_backend_path(path) unless forward_from_backend(path)
@@ -53,7 +53,7 @@ module BackendProxy
     # as the send_file function only references the path to it. So we keep it
     # open for ourselves. And once the controller is garbage collected, it should
     # be fine to unlink the data
-    @volleyfile = Tempfile.new('volley', "#{Rails.root}/tmp", encoding: 'ascii-8bit')
+    @volleyfile = Tempfile.new('volley', Rails.root.join('tmp').to_s, encoding: 'ascii-8bit')
     opts = { url_based_filename: true }
 
     backend_http.request_get(path) do |res|
@@ -112,7 +112,7 @@ module BackendProxy
 
   # Get the path/query from ActionDispatch::Request
   # FIXME: Use request.fullpath
-  def get_request_path
+  def http_request_path
     path = request.path_info
     query_string = request.query_string
     if request.form_data?
@@ -120,14 +120,14 @@ module BackendProxy
       query_string += '&' if query_string.present?
       query_string += request.raw_post
     end
-    query_string = '?' + query_string if query_string.present?
+    query_string = "?#{query_string}" if query_string.present?
     path + query_string
   end
 
   # Create a temp file from the request body for POST/PUT methods
   # FIXME: This should be merged with the implementation inside volley_backend_path
   def download_request
-    file = Tempfile.new('volley', "#{Rails.root}/tmp", encoding: 'ascii-8bit')
+    file = Tempfile.new('volley', Rails.root.join('tmp').to_s, encoding: 'ascii-8bit')
     b = request.body
     buffer = ''
     file.write(buffer) while b.read(40_960, buffer)

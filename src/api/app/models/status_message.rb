@@ -11,24 +11,15 @@ class StatusMessage < ApplicationRecord
   scope :for_severity, ->(severity) { where(severity: severity) if severity.present? }
   scope :for_communication_scope, ->(communication_scope) { where(communication_scope: communication_scope) if communication_scope.present? }
 
-  enum severity: { information: 0, green: 1, yellow: 2, red: 3, announcement: 4 }
-  enum communication_scope: { all_users: 0, logged_in_users: 1, admin_users: 2, in_beta_users: 3, in_rollout_users: 4 }
-
-  # xml: A Nokogiri object
-  def self.from_xml(xml)
-    StatusMessage.create! if xml.blank?
-    doc = Nokogiri::XML(xml, &:strict).root
-    message = doc.css('message').text
-    severity = doc.css('severity').text
-    scope = doc.css('scope').text
-    scope = 'all_users' if scope.blank?
-    StatusMessage.new(message: message, severity: severity, communication_scope: scope, user: User.session!)
-  end
+  enum :severity, { information: 0, green: 1, yellow: 2, red: 3, announcement: 4 }
+  enum :communication_scope, { all_users: 0, logged_in_users: 1, admin_users: 2, in_beta_users: 3, in_rollout_users: 4 }
+  alias_attribute :scope, :communication_scope
 
   def acknowledge!
     return false if acknowledged?
 
     users << User.session!
+    RabbitmqBus.send_to_bus('metrics', "user.acknowledged_status_message status_message_id=#{id}")
     true
   end
 
@@ -48,7 +39,7 @@ class StatusMessage < ApplicationRecord
     scopes = [:all_users]
     return scopes unless User.session
 
-    scopes << :admin_users if User.session.is_admin?
+    scopes << :admin_users if User.session.admin?
     scopes << :in_rollout_users if User.session.in_rollout?
     scopes << :in_beta_users if User.session.in_beta?
     scopes << :logged_in_users

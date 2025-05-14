@@ -564,6 +564,22 @@ sub jobfinished {
     $status->{'status'} = 'succeeded';
     writexml("$dst/.status", "$dst/status", $status, $BSXML::buildstatus);
     $changed->{$prp} ||= 1;     # package is no longer blocking
+    # update the .nouseforbuild status if it changed
+    my $oldnouseforbuild = -e "$dst/.nouseforbuild" ? 1 : 0;
+    if ($oldnouseforbuild != ($info->{'nouseforbuild'} ? 1 : 0)) {
+      print "updateing nouseforbuild flag\n";
+      unlink("$dst/.nouseforbuild");
+      BSUtil::touch("$dst/.nouseforbuild") if $info->{'nouseforbuild'};
+      my $dstcache = $ectx->{'dstcache'};
+      # recreate bininfo to pick up the change
+      unlink("$dst/.bininfo");
+      my $bininfo = read_bininfo($dst, 1);
+      BSSched::BuildResult::update_bininfo_merge($gdst, $packid, $bininfo, $dstcache);
+      # integrate into :full
+      BSSched::BuildRepo::checkuseforbuild($gctx, $prp, $dstcache);
+      $changed->{$prp} = 2;
+      delete $gctx->{'repounchanged'}->{$prp};
+    }
     return;
   }
   if ($code eq 'failed') {
@@ -594,21 +610,21 @@ sub jobfinished {
   mkdir_p("$gdst/:logfiles.success");
   mkdir_p("$gdst/:logfiles.fail");
 
+  unlink("$jobdatadir/.nouseforbuild");
+  BSUtil::touch("$jobdatadir/.nouseforbuild") if $info->{'nouseforbuild'};
   unlink("$jobdatadir/.preinstallimage");
   BSUtil::touch("$jobdatadir/.preinstallimage") if $info->{'file'} eq '_preinstallimage';
   my $jobhist = makejobhist($info, $status, $js, 'succeeded');
   addbuildstats($jobdatadir, $dst, $jobhist) if ($all{'_statistics'});
-  my $useforbuildenabled = 1;
-  $useforbuildenabled = BSUtil::enabled($repoid, $projpacks->{$projid}->{'useforbuild'}, $useforbuildenabled, $myarch);
-  $useforbuildenabled = BSUtil::enabled($repoid, $pdata->{'useforbuild'}, $useforbuildenabled, $myarch);
-  my $prpsearchpath = $gctx->{'prpsearchpath'}->{$prp};
+
+  # update build result directory and full tree
   my $dstcache = $ectx->{'dstcache'};
-  BSSched::BuildResult::update_dst_full($gctx, $prp, $packid, $jobdatadir, $meta, $useforbuildenabled, $prpsearchpath, $dstcache);
-  $changed->{$prp} = 2 if $useforbuildenabled;
-  my $repounchanged = $gctx->{'repounchanged'};
-  delete $repounchanged->{$prp} if $useforbuildenabled;
-  $repounchanged->{$prp} = 2 if $repounchanged->{$prp};
+  my $changed_full = BSSched::BuildResult::update_dst_full($gctx, $prp, $packid, $jobdatadir, $meta, $dstcache);
   $changed->{$prp} ||= 1;
+  $changed->{$prp} = 2 if $changed_full;
+  my $repounchanged = $gctx->{'repounchanged'};
+  delete $repounchanged->{$prp} if $changed_full;
+  $repounchanged->{$prp} = 2 if $repounchanged->{$prp};
 
   # save meta file
   rename($meta, "$gdst/:meta/$packid") if $meta;
@@ -1024,12 +1040,11 @@ sub create {
 
   my $syspath;
   my $searchpath = path2buildinfopath($gctx, $ctx->{'prpsearchpath'});
+  $syspath = path2buildinfopath($gctx, $ctx->{'prpsearchpath_host'}) if $ctx->{'crossmode'};
   if ($kiwimode) {
     # switch searchpath to kiwi info path
-    $syspath = $searchpath if @$searchpath;
+    $syspath = $searchpath if @$searchpath && !$ctx->{'crossmode'};
     $searchpath = path2buildinfopath($gctx, [ expandkiwipath($ctx, $info) ]);
-  } elsif ($ctx->{'crossmode'}) {
-    $syspath = path2buildinfopath($gctx, $ctx->{'prpsearchpath_host'});
   }
 
   my $expanddebug = $ctx->{'expanddebug'};
@@ -1241,6 +1256,7 @@ sub create {
     my $signflavor = $BSConfig::sign_flavor ? $bconf->{'buildflags:signflavor'} : undef;
     return ('broken', "illegal sign flavor '$signflavor'") if $signflavor && !grep {$_ eq $signflavor} @$BSConfig::sign_flavor;
     $binfo->{'signflavor'} = $signflavor if $signflavor;
+    $binfo->{'nouseforbuild'} = 1 if $info->{'nouseforbuild'};
   }
   $ctx->writejob($job, $binfo, $reason);
 
@@ -1433,7 +1449,8 @@ sub diffsortedmd5 {
 
 sub createextrapool {
   my ($ctx, $bconf, $prps, $unorderedrepos, $prios, $arch) = @_;
-  my $pool = $ctx->newpool($bconf);
+  my $pool = eval { $ctx->newpool($bconf) };
+  return (undef, 'extra pool creation failed') unless $pool;
   my $delayed = '';
   for my $prp (@{$prps || []}) {
     return (undef, "repository '$prp' is unavailable") if !$ctx->checkprpaccess($prp);

@@ -24,13 +24,13 @@ class BsRequestActionRelease < BsRequestAction
   #### Instance methods (public and then protected/private)
 
   # For consistency reasons with the other BsRequestActions
-  # rubocop:disable Naming/PredicateName
-  def is_release?
+  def release?
     true
   end
-  # rubocop:enable Naming/PredicateName
 
   def uniq_key
+    return "#{target_project}/#{target_package}/#{target_repository}" if target_repository.present?
+
     "#{target_project}/#{target_package}"
   end
 
@@ -48,8 +48,7 @@ class BsRequestActionRelease < BsRequestAction
   end
 
   # For consistency reasons with the other BsRequestActions
-  # rubocop:disable Naming/AccessorMethodName
-  def set_acceptinfo(acceptinfo)
+  def fill_acceptinfo(acceptinfo)
     # released packages are expanded copies, so we can not use
     # the link information. We need to patch the "old" part
     base_package_name = target_package.gsub(/\.[^.]*$/, '')
@@ -65,11 +64,10 @@ class BsRequestActionRelease < BsRequestAction
     end
     self.bs_request_action_accept_info = BsRequestActionAcceptInfo.create(acceptinfo)
   end
-  # rubocop:enable Naming/AccessorMethodName
 
   def minimum_priority
     spkg = Package.find_by_project_and_name(source_project, source_package)
-    return unless spkg && spkg.is_patchinfo?
+    return unless spkg && spkg.patchinfo?
 
     pi = Xmlhash.parse(spkg.patchinfo.document.to_xml)
     pi['rating']
@@ -77,6 +75,10 @@ class BsRequestActionRelease < BsRequestAction
 
   def name
     "Release #{uniq_key}"
+  end
+
+  def short_name
+    "Release #{source_package}"
   end
 
   private
@@ -120,6 +122,8 @@ end
 #  updatelink            :boolean          default(FALSE)
 #  created_at            :datetime
 #  bs_request_id         :integer          indexed, indexed => [target_package_id], indexed => [target_project_id]
+#  source_package_id     :integer          indexed
+#  source_project_id     :integer          indexed
 #  target_package_id     :integer          indexed => [bs_request_id], indexed
 #  target_project_id     :integer          indexed => [bs_request_id], indexed
 #
@@ -129,7 +133,9 @@ end
 #  index_bs_request_actions_on_bs_request_id_and_target_package_id  (bs_request_id,target_package_id)
 #  index_bs_request_actions_on_bs_request_id_and_target_project_id  (bs_request_id,target_project_id)
 #  index_bs_request_actions_on_source_package                       (source_package)
+#  index_bs_request_actions_on_source_package_id                    (source_package_id)
 #  index_bs_request_actions_on_source_project                       (source_project)
+#  index_bs_request_actions_on_source_project_id                    (source_project_id)
 #  index_bs_request_actions_on_target_package                       (target_package)
 #  index_bs_request_actions_on_target_package_id                    (target_package_id)
 #  index_bs_request_actions_on_target_project                       (target_project)

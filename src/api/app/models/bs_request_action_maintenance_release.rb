@@ -22,7 +22,7 @@ class BsRequestActionMaintenanceRelease < BsRequestAction
   #### To define class methods as private use private_class_method
   #### private
   #### Instance methods (public and then protected/private)
-  def is_maintenance_release?
+  def maintenance_release?
     true
   end
 
@@ -41,7 +41,7 @@ class BsRequestActionMaintenanceRelease < BsRequestAction
     opts[:projectCommit][target_project] = source_project
 
     # lock project when last package is released
-    return if pkg.project.is_locked?
+    return if pkg.project.locked?
 
     f = pkg.project.flags.find_by_flag_and_status('lock', 'disable')
     pkg.project.flags.delete(f) if f # remove possible existing disable lock flag
@@ -102,7 +102,7 @@ class BsRequestActionMaintenanceRelease < BsRequestAction
     raise LackingReleaseMaintainership, 'Creating a maintenance release request action requires maintainership in source package'
   end
 
-  def set_acceptinfo(ai)
+  def fill_acceptinfo(ai)
     # packages in maintenance_release projects are expanded copies, so we can not use
     # the link information. We need to patch the "old" part
     base_package_name = target_package.gsub(/\.[^.]*$/, '')
@@ -122,7 +122,7 @@ class BsRequestActionMaintenanceRelease < BsRequestAction
   def create_post_permissions_hook
     spkg = Package.find_by_project_and_name(source_project, source_package)
     # we avoid patchinfo's to be able to complete meta data about the update
-    return if spkg.is_patchinfo?
+    return if spkg.patchinfo?
 
     return if spkg.enabled_for?('lock', nil, nil)
 
@@ -135,7 +135,7 @@ class BsRequestActionMaintenanceRelease < BsRequestAction
 
   def minimum_priority
     spkg = Package.find_by_project_and_name(source_project, source_package)
-    return unless spkg && spkg.is_patchinfo?
+    return unless spkg && spkg.patchinfo?
 
     pi = Xmlhash.parse(spkg.patchinfo.document.to_xml)
     pi['rating']
@@ -143,6 +143,10 @@ class BsRequestActionMaintenanceRelease < BsRequestAction
 
   def name
     "Release #{uniq_key}"
+  end
+
+  def short_name
+    "Release #{source_package}"
   end
 
   private
@@ -192,6 +196,8 @@ end
 #  updatelink            :boolean          default(FALSE)
 #  created_at            :datetime
 #  bs_request_id         :integer          indexed, indexed => [target_package_id], indexed => [target_project_id]
+#  source_package_id     :integer          indexed
+#  source_project_id     :integer          indexed
 #  target_package_id     :integer          indexed => [bs_request_id], indexed
 #  target_project_id     :integer          indexed => [bs_request_id], indexed
 #
@@ -201,7 +207,9 @@ end
 #  index_bs_request_actions_on_bs_request_id_and_target_package_id  (bs_request_id,target_package_id)
 #  index_bs_request_actions_on_bs_request_id_and_target_project_id  (bs_request_id,target_project_id)
 #  index_bs_request_actions_on_source_package                       (source_package)
+#  index_bs_request_actions_on_source_package_id                    (source_package_id)
 #  index_bs_request_actions_on_source_project                       (source_project)
+#  index_bs_request_actions_on_source_project_id                    (source_project_id)
 #  index_bs_request_actions_on_target_package                       (target_package)
 #  index_bs_request_actions_on_target_package_id                    (target_package_id)
 #  index_bs_request_actions_on_target_project                       (target_project)

@@ -72,9 +72,9 @@ RSpec.describe BsRequest, :vcr do
 
       before do
         login(reviewer)
-      end
 
-      subject! { request.assignreview(by_group: group.title, reviewer: reviewer.login) }
+        request.assignreview(by_group: group.title, reviewer: reviewer.login)
+      end
 
       it { expect(request.reviews.count).to eq(2) }
 
@@ -93,6 +93,8 @@ RSpec.describe BsRequest, :vcr do
   end
 
   describe '#addreview' do
+    subject { Review.last }
+
     let(:reviewer) { create(:confirmed_user) }
     let(:history_element) { HistoryElement::RequestReviewAdded.last }
     let(:group) { create(:group) }
@@ -102,8 +104,6 @@ RSpec.describe BsRequest, :vcr do
       login(reviewer)
       request.addreview(by_group: group.title)
     end
-
-    subject { Review.last }
 
     it { expect(subject.state).to eq(:new) }
     it { expect(subject.by_group).to eq(group.title) }
@@ -584,17 +584,17 @@ RSpec.describe BsRequest, :vcr do
     end
 
     context 'with options' do
-      before do
-        login(user)
-        # For submit requests with 'sourceupdate' the user needs to be able to modify the (forwarded) source package
-        target_package.relationships.create(user: user, role: Role.find_by_title!('maintainer'))
-      end
-
       subject do
         submit_request.forward_to(
           project: user.home_project.name,
           options: { description: 'my description' }
         )
+      end
+
+      before do
+        login(user)
+        # For submit requests with 'sourceupdate' the user needs to be able to modify the (forwarded) source package
+        target_package.relationships.create(user: user, role: Role.find_by_title!('maintainer'))
       end
 
       it 'sets the given description' do
@@ -652,40 +652,12 @@ RSpec.describe BsRequest, :vcr do
     end
   end
 
-  describe '::with_open_reviews_for' do
-    include_context 'a BsRequest with reviews'
-
-    context "when request state is 'review' but review state is not 'new'" do
-      before do
-        bs_request.reviews.find_by(by_user: reviewer.login).update(state: 'accepted')
-      end
-
-      it { expect(BsRequest.with_open_reviews_for(by_user: reviewer.login)).to be_empty }
-    end
-
-    context "when request state is 'review' and review state is 'new'" do
-      it 'queries requests with reviews by user' do
-        expect(BsRequest.with_open_reviews_for(by_user: reviewer.login)).to contain_exactly(bs_request)
-      end
-
-      it 'queries requests with reviews by group' do
-        bs_request.reviews.create!(by_group: group.title)
-        expect(BsRequest.with_open_reviews_for(by_group: group.title)).to contain_exactly(bs_request)
-      end
-
-      it 'queries requests with reviews by package' do
-        bs_request.reviews.create!(by_package: target_package, by_project: target_project)
-        expect(BsRequest.with_open_reviews_for(by_package: target_package.name)).to contain_exactly(bs_request)
-      end
-    end
-  end
-
   describe '#as_json' do
+    subject { submit_request.as_json }
+
     before do
       submit_request.update(superseded_by: delete_request.id)
     end
-
-    subject { submit_request.as_json }
 
     it 'returns a json representation of a bs request' do
       expect(subject).to include(

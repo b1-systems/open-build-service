@@ -20,6 +20,7 @@ use warnings;
 
 use Digest::MD5 ();
 
+use BSOBS;
 use BSUtil;
 use BSSched::BuildJob;
 use BSSched::ProjPacks;		# for orderpackids
@@ -27,7 +28,7 @@ use BSXML;
 use Build;			# for query
 use BSVerify;			# for verify_nevraquery
 
-my @binsufs = qw{rpm deb pkg.tar.gz pkg.tar.xz pkg.tar.zst};
+my @binsufs = @BSOBS::binsufs;
 my $binsufsre = join('|', map {"\Q$_\E"} @binsufs);
 
 =head1 NAME
@@ -70,7 +71,7 @@ sub get_bins {
   my ($d) = @_;
   my @dd = sort(ls($d));
   my @d;
-  my $havebinlink;
+  my $needunify;
   for my $bin (@dd) {
     next if $bin =~ /^::import::/;
     if ($bin =~ /\.obsbinlnk$/) {
@@ -84,12 +85,34 @@ sub get_bins {
       push @d, grep {$_ ne $bin && /^\Q$p\E/} @dd;
       # also grab all blobs
       push @d, grep {/^_blob\./} @dd;
-      $havebinlink = 1;
+      $needunify = 1;
+    }
+    if ($bin =~ /\.helminfo$/) {
+      push @d, $bin;
+      my $p = $bin;
+      $p =~ s/\.helminfo$/\./;
+      push @d, grep {$_ ne $bin && /^\Q$p\E/} @dd;
+      $needunify = 1;
     }
     push @d, $bin if $bin =~ /\.(:?rpm|deb)$/;
   }
-  @d = BSUtil::unify(@d) if $havebinlink;
+  @d = BSUtil::unify(@d) if $needunify;
   return @d;
+}
+
+sub queryhelminfo {
+  my ($file) = @_;
+  return undef unless $file =~ s/\.helminfo$//;
+  $file =~ s/.*\///;
+  $file = "helm:$file";
+  my $d = {
+    'name' => $file,
+    'version' => 0,
+    'release' => 0,
+    'arch' => 'noarch',
+  };
+  ($d->{'name'}, $d->{'version'}) = ($1, $2) if $file =~ /^(.*)-([^\-]+)$/;
+  return $d;
 }
 
 =head2 check - check if a patchinfo needs to be rebuilt
@@ -113,6 +136,7 @@ sub check {
   my $patchinfo = $pdata->{'patchinfo'};
   if (exists $patchinfo->{'seperate_build_arch'}) {
     # build on all schedulers, but don't take content from each other
+    return ('excluded') if $BSConfig::localarch && $myarch eq 'local';
     @archs = ($myarch);
   };
   my $buildarch = $archs[0];
@@ -144,9 +168,7 @@ sub check {
     my $pdatas = $proj->{'package'} || {};
     my @missing;
     for my $apackid (@packages) {
-      if (!$pdatas->{$apackid}) {
-        push @missing, $_;
-      }
+      push @missing, $apackid unless $pdatas->{$apackid};
     }
     $broken = 'missing packages: '.join(', ', @missing) if @missing;
   } else {
@@ -253,11 +275,11 @@ sub check {
     }
     my $blockedarch;
     for my $apackid (@packages) {
-      my $code = $apackstatus->{$apackid} || '';
+      my $code = $apackstatus->{$apackid} || 'unknown';
       next if $code eq 'excluded';
       if ($code ne 'done' && $code ne 'failed' && $code ne 'succeeded' && $code ne 'disabled' && $code ne 'locked') {
         $blockedarch = 1;
-        push @blocked, "$arch/$apackid";
+        push @blocked, "$arch/$apackid ($code)";
         next;
       }
       if (-e "$agdst/:logfiles.fail/$apackid") {
@@ -465,6 +487,7 @@ sub build {
   }
 
   my %supportstatus;
+  my %superseded_by;
   my $target;
   my $firstissued = ($updateinfodata || {})->{'firstissued'} || $now;
 
@@ -493,7 +516,7 @@ sub build {
         delete $updateinfodata_tocopy{$tocopy};
       }
     }
-    if ($updateinfodata_tocopy{$tocopy} && (!defined($mpackid) || ($updateinfodata->{'metas'}->{$mpackid} || '') eq $ckmetas->{$mpackid})) {
+    if ($ptype ne 'binary' && $updateinfodata_tocopy{$tocopy} && (!defined($mpackid) || ($updateinfodata->{'metas'}->{$mpackid} || '') eq $ckmetas->{$mpackid})) {
       print "        reusing old packages for '$tocopy'\n";
       $from = "$gdst/$packid";
       @bins = grep {$updateinfodata->{'binaryorigins'}->{$_} eq $tocopy} keys(%{$updateinfodata->{'binaryorigins'}});
@@ -567,6 +590,13 @@ sub build {
 	$d->{'path'} =~ s/.*\///;
 	$d->{'path'} = "../$packid/$d->{'path'}";
 	BSUtil::store("$jobdatadir/.$bin", "$jobdatadir/$bin", $d);
+      } elsif ($bin =~ /\.helminfo$/) {
+        if (%binaryfilter) {
+          unlink("$jobdatadir/$bin");
+          next;
+	}
+	$d = queryhelminfo("$jobdatadir/$bin");
+	next unless $d;
       } else {
         if (%binaryfilter) {
           unlink("$jobdatadir/$bin");
@@ -609,9 +639,11 @@ sub build {
 	}
       }
       $donebins{$bin} = $tocopy;
-      $bininfo->{$bin} = {'name' => $d->{'name'}, 'arch' => $d->{'arch'}, 'hdrmd5' => $d->{'hdrmd5'}, 'filename' => $bin, 'id' => "$s[9]/$s[7]/$s[1]"};
-      $bininfo->{$bin}->{'leadsigmd5'} = $d->{'leadsigmd5'} if $d->{'leadsigmd5'};
-      $bininfo->{$bin}->{'md5sum'} = $d->{'md5sum'} if $d->{'md5sum'};
+      if ($bin !~ /\.helminfo$/) {
+        $bininfo->{$bin} = {'name' => $d->{'name'}, 'arch' => $d->{'arch'}, 'hdrmd5' => $d->{'hdrmd5'}, 'filename' => $bin, 'id' => "$s[9]/$s[7]/$s[1]"};
+        $bininfo->{$bin}->{'leadsigmd5'} = $d->{'leadsigmd5'} if $d->{'leadsigmd5'};
+        $bininfo->{$bin}->{'md5sum'} = $d->{'md5sum'} if $d->{'md5sum'};
+      }
       my $upd = {
         'name' => $d->{'name'},
         'version' => $d->{'version'},
@@ -621,6 +653,11 @@ sub build {
         'filename' => $bin,
         'src' => "$d->{'arch'}/$bin",   # as hopefully written by the publisher
       };
+      # fixup filename for containers/helm charts
+      # (actually should read containerinfo/helminfo, but for now we do it the lazy way)
+      $upd->{'filename'} =~ s/\.obsbinlnk$/\.tar/ if $d->{'name'} =~ /^container:/;
+      $upd->{'filename'} =~ s/\.helminfo$/\.tgz/ if $d->{'name'} =~ /^helm:/;
+      $upd->{'embargo_date'} = $patchinfo->{'embargo_date'} if $patchinfo->{'embargo_date'};
       $upd->{'reboot_suggested'} = 'True' if exists $patchinfo->{'reboot_needed'};
       $upd->{'relogin_suggested'} = 'True' if exists $patchinfo->{'relogin_needed'};
       $upd->{'restart_suggested'} = 'True' if exists $patchinfo->{'zypp_restart_needed'};
@@ -630,6 +667,10 @@ sub build {
         next unless $ci->{'supportstatus'};
         $upd->{'supportstatus'} = $ci->{'supportstatus'};
         $supportstatus{$bin} = $ci->{'supportstatus'};
+        if ($ci->{'superseded_by'}) {
+          $upd->{'superseded_by'} = $ci->{'superseded_by'};
+          $superseded_by{$bin} = $ci->{'superseded_by'};
+        }
       }
     }
     $metas{$mpackid} = Digest::MD5::md5_hex($m) if $ptype eq 'binary';
@@ -675,6 +716,7 @@ sub build {
   $update->{'severity'} = $patchinfo->{'rating'} if defined $patchinfo->{'rating'};
   $update->{'description'} = $patchinfo->{'description'};
   $update->{'message'} = $patchinfo->{'message'} if defined $patchinfo->{'message'};
+  $update->{'blocked_in_product'} = $patchinfo->{'blocked_in_product'} if $patchinfo->{'blocked_in_product'};
   # FIXME: do not guess the release element!
   $update->{'release'} = $repoid eq 'standard' ? $projid : $repoid;
   $update->{'release'} =~ s/_standard$//;
@@ -723,10 +765,14 @@ sub build {
   };
   $update->{'pkglist'} = {'collection' => [ $col ] };
   $update->{'patchinforef'} = "$projid/$packid";        # deleted in publisher...
-  if ($category ne 'no_updateinfo') {
+  if ($category eq 'no_updateinfo') {
+    # we write here an empty updateinfo on purpose, because other code path need to be aware
+    # that these binaries are updates only (eg. when populating :full tree)
+    writexml("$jobdatadir/updateinfo.xml", undef, {'update' => []}, $BSXML::updateinfo);
+  } else {
     writexml("$jobdatadir/updateinfo.xml", undef, {'update' => [$update]}, $BSXML::updateinfo);
-    $bininfo->{'updateinfo.xml'} = genbininfo($jobdatadir, 'updateinfo.xml');
   };
+  $bininfo->{'updateinfo.xml'} = genbininfo($jobdatadir, 'updateinfo.xml');
   writestr("$jobdatadir/logfile", undef, "update built succeeded ".localtime($now)."\n");
   $updateinfodata = {
     'packages' => \@tocopy,
@@ -735,6 +781,7 @@ sub build {
     'firstissued' => $firstissued,
   };
   $updateinfodata->{'supportstatus'} = \%supportstatus if %supportstatus;
+  $updateinfodata->{'superseded_by'} = \%superseded_by if %superseded_by;
   $updateinfodata->{'filtered'} = \%filtered if %filtered;
   $updateinfodata->{'target'} = $target if $target;
   BSUtil::store("$jobdatadir/.updateinfodata", undef, $updateinfodata);

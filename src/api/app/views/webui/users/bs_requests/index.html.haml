@@ -1,0 +1,5 @@
+- @pagetitle = "My Requests"
+
+= render(partial: 'webui/shared/bs_requests/form',
+         locals: { selected_filter: @selected_filter, bs_requests_creators: @bs_requests_creators,
+                   url: @url, bs_requests: @bs_requests, viewed_object: 'You' })

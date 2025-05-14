@@ -6,6 +6,8 @@ class Webui::MonitorController < Webui::WebuiController
 
   DEFAULT_SEARCH_RANGE = 24
 
+  HOURS_IN_ONE_YEAR = 8760
+
   def index
     if request.post? && !params[:project].nil? && Project.valid_name?(params[:project])
       redirect_to project: params[:project]
@@ -44,7 +46,8 @@ class Webui::MonitorController < Webui::WebuiController
   def events
     data = {}
 
-    arch = Architecture.find_by(name: params.fetch(:arch, @default_architecture))
+    arch = Architecture.find_by(name: params.fetch(:arch, @default_architecture).to_s)
+    return render json: {} unless arch
 
     range = params.fetch(:range, DEFAULT_SEARCH_RANGE)
 
@@ -71,10 +74,15 @@ class Webui::MonitorController < Webui::WebuiController
     render json: data
   end
 
+  def old; end
+
   private
 
   def status_history(key, range)
-    MonitorControllerService::StatusHistoryFetcher.new(key, range.to_i).call
+    user_range = [HOURS_IN_ONE_YEAR, range.to_i].min
+    Rails.cache.fetch("#{key}-#{user_range}", expires_in: user_range.to_i.hours / 150) do
+      StatusHistory.history_by_key_and_hours(key, user_range).sort_by { |a| a[0] }
+    end
   end
 
   def set_default_architecture

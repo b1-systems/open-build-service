@@ -91,7 +91,7 @@ def ignore_by_backend_400_message?(message)
                         'repoid is empty', 'packid is empty',
                         'bad private key', 'pubkey is already expired',
                         'not a RSA pubkey', ' self-sig does not expire',
-                        'excess hash entries: ', 'conflict in file'].freeze
+                        'excess hash entries: ', 'conflict in file', 'packet too big'].freeze
   messages_to_ignore.each do |ignored_error_message|
     return true if message.include?(ignored_error_message)
   end
@@ -100,12 +100,14 @@ def ignore_by_backend_400_message?(message)
 end
 
 def ignore_by_class?(notice)
-  exceptions_to_ignore = ['ActiveRecord::RecordNotFound', 'ActionController::InvalidAuthenticityToken',
-                          'CGI::Session::CookieStore::TamperedWithCookie', 'ActionController::UnknownAction',
-                          'AbstractController::ActionNotFound', 'Bunny::TCPConnectionFailedForAllHosts',
-                          'Timeout::Error', 'Net::HTTPBadResponse', 'Errno::ECONNRESET', 'Interrupt',
-                          'RoutesHelper::WebuiMatcher::InvalidRequestFormat', 'ActionDispatch::Http::MimeNegotiation::InvalidType',
-                          'ActionController::UnknownFormat', 'Backend::NotFoundError', 'AMQ::Protocol::EmptyResponseError']
+  exceptions_to_ignore = ['AbstractController::ActionNotFound',
+                          'ActionController::BadRequest', 'ActionController::InvalidAuthenticityToken',
+                          'ActionController::UnknownAction', 'ActionController::UnknownFormat',
+                          'ActionDispatch::Http::MimeNegotiation::InvalidType',
+                          'ActiveRecord::RecordNotFound', 'Backend::NotFoundError',
+                          'CGI::Session::CookieStore::TamperedWithCookie',
+                          'Interrupt', 'Net::HTTPBadResponse',
+                          'RoutesHelper::WebuiMatcher::InvalidRequestFormat']
 
   notice[:errors].pluck(:type).intersect?(exceptions_to_ignore)
 end

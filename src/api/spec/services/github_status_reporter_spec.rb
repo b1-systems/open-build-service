@@ -1,31 +1,31 @@
 RSpec.describe GithubStatusReporter, type: :service do
   let(:scm_status_reporter) { GithubStatusReporter.new(event_payload, event_subscription_payload, token, state, workflow_run, event_type, initial_report: initial_report) }
+  let(:workflow_run) { create(:workflow_run, scm_vendor: 'github', request_payload: request_payload, token: create(:workflow_token, string: token)) }
+  let(:request_payload) { file_fixture('request_payload_github_pull_request_opened.json').read }
 
   describe '.new' do
     context 'status pending when event_type is missing' do
+      subject { scm_status_reporter }
+
       let(:event_payload) { {} }
       let(:event_subscription_payload) { {} }
       let(:token) { 'XYCABC' }
       let(:event_type) { nil }
       let(:state) { 'pending' }
-      let(:workflow_run) { nil }
       let(:initial_report) { false }
-
-      subject { scm_status_reporter }
 
       it { expect(subject.state).to eq('pending') }
     end
 
     context 'status failed on github' do
+      subject { scm_status_reporter }
+
       let(:event_payload) { { project: 'home:john_doe', package: 'hello', repository: 'openSUSE_Tumbleweed', arch: 'i586' } }
       let(:event_subscription_payload) { { scm: 'github' } }
       let(:token) { 'XYCABC' }
       let(:event_type) { 'Event::BuildFail' }
       let(:state) { 'failure' }
-      let(:workflow_run) { nil }
       let(:initial_report) { false }
-
-      subject { scm_status_reporter }
 
       it { expect(subject.state).to eq('failure') }
     end
@@ -33,6 +33,8 @@ RSpec.describe GithubStatusReporter, type: :service do
 
   describe '#call' do
     context 'when sending a report back to SCM fails' do
+      subject { scm_status_reporter.call }
+
       let(:scm_status_reporter) { GithubStatusReporter.new(event_payload, event_subscription_payload, token, state, workflow_run, initial_report: false) }
 
       let!(:user) { create(:confirmed_user, :with_home, login: 'jane_doe') }
@@ -55,8 +57,6 @@ RSpec.describe GithubStatusReporter, type: :service do
       end
 
       let(:octokit_client) { Octokit::Client.new }
-
-      subject { scm_status_reporter.call }
 
       context "repository doesn't exist" do
         before do
@@ -107,17 +107,18 @@ RSpec.describe GithubStatusReporter, type: :service do
 
     context 'when sending a report back to GitHub' do
       context 'when is an initial report' do
+        subject { scm_status_reporter.call }
+
         let(:event_payload) do
           { project: 'home:danidoni', package: 'hello_world',
             repository: 'openSUSE_Tumbleweed', arch: 'x86_64' }
         end
         let(:event_subscription_payload) do
-          { scm: 'github', target_repository_full_name: 'danidoni/hello_world', commit_sha: '123456789' }
+          { scm: 'github', target_repository_full_name: 'openSUSE/repo123', commit_sha: '123456789' }
         end
         let(:token) { 'XYCABC' }
         let(:event_type) { nil }
         let(:state) { 'pending' }
-        let(:workflow_run) { nil }
         let(:initial_report) { false }
         let(:expected_status_options) do
           {
@@ -127,31 +128,30 @@ RSpec.describe GithubStatusReporter, type: :service do
         end
         let(:octokit_client) { instance_spy(Octokit::Client, create_status: true) }
 
-        subject { scm_status_reporter.call }
-
         before do
           allow(Octokit::Client).to receive(:new).and_return(octokit_client)
           subject
         end
 
         it 'creates a commit status' do
-          expect(octokit_client).to have_received(:create_status).with('danidoni/hello_world', '123456789', state, expected_status_options)
+          expect(octokit_client).to have_received(:create_status).with('openSUSE/repo123', '123456789', state, expected_status_options)
         end
       end
 
       context 'when reporting a submit request' do
+        subject { scm_status_reporter.call }
+
         let(:event_payload) do
           { project: 'home:danidoni', package: 'hello_world',
             repository: 'openSUSE_Tumbleweed', arch: 'x86_64',
             number: 1, state: 'new' }
         end
         let(:event_subscription_payload) do
-          { scm: 'github', target_repository_full_name: 'danidoni/hello_world', commit_sha: '123456789' }
+          { scm: 'github', target_repository_full_name: 'openSUSE/repo123', commit_sha: '123456789' }
         end
         let(:token) { 'XYCABC' }
         let(:event_type) { 'Event::RequestStatechange' }
         let(:state) { 'pending' }
-        let(:workflow_run) { nil }
         let(:initial_report) { false }
         let(:expected_status_options) do
           {
@@ -161,15 +161,13 @@ RSpec.describe GithubStatusReporter, type: :service do
         end
         let(:octokit_client) { instance_spy(Octokit::Client, create_status: true) }
 
-        subject { scm_status_reporter.call }
-
         before do
           allow(Octokit::Client).to receive(:new).and_return(octokit_client)
           subject
         end
 
         it 'creates a commit status' do
-          expect(octokit_client).to have_received(:create_status).with('danidoni/hello_world', '123456789', state, expected_status_options)
+          expect(octokit_client).to have_received(:create_status).with('openSUSE/repo123', '123456789', state, expected_status_options)
         end
       end
     end

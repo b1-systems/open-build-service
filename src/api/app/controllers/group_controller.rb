@@ -4,9 +4,12 @@ class GroupController < ApplicationController
   validate_action groupinfo: { method: :get, response: :group }
   validate_action groupinfo: { method: :put, request: :group, response: :status }
   validate_action groupinfo: { method: :delete, response: :status }
+  validate_action update: { method: :put, request: :group }
 
   # raise an exception if authorize has not yet been called.
   after_action :verify_authorized, except: %i[index show]
+
+  rescue_from ActiveRecord::RecordNotFound, with: :record_not_found
 
   rescue_from Pundit::NotAuthorizedError do |exception|
     pundit_action = case exception.query.to_s
@@ -28,6 +31,7 @@ class GroupController < ApplicationController
     else
       @list = Group.all
     end
+    @list = @list.order(:title)
     @list = @list.where('title LIKE ?', "#{params[:prefix]}%") if params[:prefix].present?
   end
 
@@ -56,7 +60,7 @@ class GroupController < ApplicationController
     xmlhash = Xmlhash.parse(request.raw_post)
     raise InvalidParameterError, 'group name from path and xml mismatch' unless group.title == xmlhash.value('title')
 
-    group.update_from_xml(xmlhash)
+    group.update_from_xml(xmlhash, user_session_login: User.session.login)
     group.save!
 
     render_ok
@@ -73,13 +77,19 @@ class GroupController < ApplicationController
     when 'add_user'
       group.add_user(user)
     when 'remove_user'
-      group.remove_user(user)
+      group.remove_user(user, user_session_login: User.session.login)
     when 'set_email'
-      group.set_email(params[:email])
+      group.update!(email: params[:email])
     else
       raise UnknownCommandError, 'cmd must be set to add_user or remove_user'
     end
 
     render_ok
+  end
+
+  private
+
+  def record_not_found
+    render_error status: 404, message: "Couldn't find Group '#{params[:title]}'"
   end
 end

@@ -6,7 +6,7 @@ module Old
     queue_as :consistency_check
 
     def perform
-      User.get_default_admin.run_as { _perform(nil) }
+      User.default_admin.run_as { _perform(nil) }
     end
 
     def check_one_project(project, fix)
@@ -38,7 +38,7 @@ module Old
 
     # for manual fixing by admin via rails command
     def fix_project
-      User.get_default_admin.run_as { check_project(true) }
+      User.default_admin.run_as { check_project(true) }
     end
 
     def check_project(fix = nil)
@@ -74,7 +74,7 @@ module Old
     private
 
     def fix
-      User.get_default_admin.run_as { _perform(true) }
+      User.default_admin.run_as { _perform(true) }
     end
 
     def initialize
@@ -104,7 +104,7 @@ module Old
         errors << "Project meta is different in backend for #{project.name}\n#{diff}\n"
         if fix
           # Assume that api is right
-          project.store(login: User.get_default_admin.login, comment: 'out-of-sync fix')
+          project.store(login: User.default_admin.login, comment: 'out-of-sync fix')
         end
       end
 
@@ -211,6 +211,7 @@ module Old
       end
       # filter multibuild source container
       package_list_backend = plb.map { |e| e.start_with?('_patchinfo:', '_product:') ? e : e.gsub(/:.*$/, '') }
+      package_list_backend.uniq! # remove duplicates due to flavors
 
       diff = package_list_api - package_list_backend
       unless diff.empty?
@@ -231,7 +232,7 @@ module Old
         if fix
           # restore from backend
           diff.each do |package|
-            meta = Backend::Api::Sources::Project.meta(project.name)
+            meta = Backend::Api::Sources::Package.meta(project.name, package)
             pkg = project.packages.new(name: package)
             pkg.commit_opts = { no_backend_write: 1 }
             pkg.update_from_xml(Xmlhash.parse(meta), true) # ignore locked project
@@ -239,7 +240,7 @@ module Old
           rescue ActiveRecord::RecordInvalid,
                  Backend::NotFoundError
             Backend::Api::Sources::Package.delete(project.name, package)
-            errors << "DELETED in backend due to invalid data #{project.name}/#{package}\n"
+            errors << "DELETED in backend due to invalid data #{project.name}/#{package}: #{meta}\n"
           end
         end
       end

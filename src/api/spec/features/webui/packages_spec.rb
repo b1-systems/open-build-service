@@ -122,6 +122,8 @@ RSpec.describe 'Packages', :js, :vcr do
     it 'via live build log' do
       visit package_live_build_log_path(project: user.home_project, package: package, repository: repository.name, arch: 'x86_64')
       click_link('Trigger Rebuild', match: :first)
+
+      expect(page).to have_text('no repository defined')
       expect(a_request(:post, rebuild_url)).to have_been_made.once
     end
 
@@ -132,6 +134,8 @@ RSpec.describe 'Packages', :js, :vcr do
 
       visit project_package_repository_binaries_path(project_name: user.home_project, package_name: package, repository_name: repository.name)
       click_link('Trigger')
+
+      expect(page).to have_text('no repository defined')
       expect(a_request(:post, rebuild_url)).to have_been_made.once
     end
   end
@@ -150,7 +154,7 @@ RSpec.describe 'Packages', :js, :vcr do
                             </resultlist>
                             )
       result_path = "#{CONFIG['source_url']}/build/#{user.home_project}/_result?"
-      stub_request(:get, result_path + 'view=status&package=test_package&multibuild=1&locallink=1&lastbuild=0')
+      stub_request(:get, "#{result_path}view=status&package=test_package&multibuild=1&locallink=1&lastbuild=0")
         .and_return(body: result)
       stub_request(:get, result_path + "arch=i586&package=#{package}&repository=#{repository.name}&view=status")
         .and_return(body: result)
@@ -250,12 +254,13 @@ RSpec.describe 'Packages', :js, :vcr do
 
     expect(page).to have_text('Do you really want to request the deletion of package ')
     fill_in('bs_request_description', with: 'Hey, why not?')
-    expect { click_button('Request') }.to change(BsRequest, :count).by(1)
+    click_button('Request')
 
     # The project name can be ellipsed when it's too long, so this explains why it's hardcoded in the spec
     expect(page).to have_text("Delete package home:othe...test_user / #{other_users_package}")
     expect(page).to have_css('#description-text', text: 'Hey, why not?')
     expect(page).to have_text('In state new')
+    expect(BsRequest.where(description: 'Hey, why not?', state: 'new').count).to be(1)
   end
 
   it "changing the package's devel project" do
@@ -268,32 +273,36 @@ RSpec.describe 'Packages', :js, :vcr do
     fill_in('Description:', with: 'Hey, why not?')
     click_button('Request')
 
-    request = BsRequest.where(description: 'Hey, why not?', creator: user.login, state: 'review')
-    expect(request).to exist
-    expect(page).to have_current_path("/request/show/#{request.first.number}")
     expect(page).to have_text(/Created by\s+#{user.login}/)
     expect(page).to have_text('In state review')
     expect(page).to have_text("Set the devel project to package #{third_project.name} / develpackage for package #{user.home_project} / develpackage")
+    request = BsRequest.where(description: 'Hey, why not?', creator: user.login, state: 'review')
+    expect(request).to exist
+    expect(page).to have_current_path("/request/show/#{request.first.number}")
   end
 
   describe "editing a package's details" do
     it 'updates the package title and description' do
+      Flipper.enable(:foster_collaboration)
       login user
       visit package_show_path(package: package, project: user.home_project)
       click_link('Edit')
       wait_for_ajax
 
       within('#edit_package_details') do
-        fill_in('package_details[title]', with: 'test title')
+        fill_in('package_details[title]', with: 'test "little" title')
         fill_in('package_details[description]', with: 'test description')
         fill_in('package_details[url]', with: 'https://test.url')
+        fill_in('package_details[report_bug_url]', with: 'https://test-report-bug.url')
         click_button('Update')
       end
 
       expect(find_by_id('flash')).to have_text('Package was successfully updated.')
-      expect(page).to have_text('test title')
+      expect(page).to have_text('test "little" title')
       expect(page).to have_text('test description')
       expect(page).to have_text('https://test.url')
+      click_link('Actions') if mobile?
+      expect(page).to have_link('Report Bug', href: 'https://test-report-bug.url')
     end
   end
 
@@ -306,7 +315,7 @@ RSpec.describe 'Packages', :js, :vcr do
       end
 
       it 'can edit' do
-        visit package_meta_path(package.project, package)
+        visit project_package_meta_path(package.project, package)
         fill_in_editor_field('<!-- Comment for testing -->')
         find('.save').click
         expect(page).to have_text('The Meta file has been successfully saved.')
@@ -322,7 +331,7 @@ RSpec.describe 'Packages', :js, :vcr do
       end
 
       it 'can not edit' do
-        visit package_meta_path(package.project, package)
+        visit project_package_meta_path(package.project, package)
         within('.card-body') do
           expect(page).to have_no_css('.toolbar')
         end
@@ -343,8 +352,8 @@ RSpec.describe 'Packages', :js, :vcr do
         fill_in 'package_name', with: 'cool stuff'
         click_button('Create')
 
-        expect(page).to have_text("Invalid package name: 'cool stuff'")
-        expect(page).to have_current_path("/package/new/#{user.home_project_name}", ignore_query: true)
+        expect(page).to have_text('Failed to create package: Name is illegal')
+        expect(page).to have_current_path("/project/show/#{user.home_project_name}", ignore_query: true)
       end
 
       it 'creates a package' do
@@ -382,6 +391,28 @@ RSpec.describe 'Packages', :js, :vcr do
         expect(page).to have_text("Package 'coolstuff' was created successfully")
         expect(page).to have_current_path(package_show_path(project: global_project.to_s, package: 'coolstuff'), ignore_query: true)
       end
+    end
+  end
+
+  describe 'Viewing package with older revision' do
+    let(:revision_package) { create(:package_with_file, name: 'revision_test_package', project: user.home_project) }
+    let(:revision) { revision_package.rev.to_i - 1 }
+    let(:hashed_revision) { revision_package.dir_hash(rev: revision) }
+    let(:srcmd5) { hashed_revision['srcmd5'] }
+    let(:file_in_revision) { hashed_revision.elements('entry')[0]['name'] }
+
+    before do
+      login(user)
+      revision_package.save_file(filename: 'revision_file', file: 'new content')
+      visit package_show_path(project: user.home_project, package: revision_package, rev: revision)
+    end
+
+    it 'contains file from revision including the revision parameter' do
+      expect(page).to have_link(file_in_revision, href: project_package_file_path(revision_package.project, revision_package, file_in_revision, rev: srcmd5, expand: 1))
+    end
+
+    it 'does not display delete buttons for files' do
+      expect(page).to have_no_css('a[title="Delete file"]')
     end
   end
 end

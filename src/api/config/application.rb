@@ -7,6 +7,7 @@ require 'active_record/railtie'
 require 'action_mailer/railtie'
 require 'action_controller/railtie'
 require 'action_view/railtie'
+require 'active_storage/engine'
 require 'sprockets/railtie'
 require 'rails/test_unit/railtie'
 
@@ -37,8 +38,8 @@ module OBSApi
     # Application configuration should go into files in config/initializers
     # -- all .rb files in that directory are automatically loaded.
 
-    # Enable rails version 6.1 defaults
-    config.load_defaults(6.1)
+    # Enable rails version 7.0 defaults
+    config.load_defaults 7.0
     # FIXME: This is a known isue in RAILS 6.1 https://github.com/rails/rails/issues/40867
     config.active_record.has_many_inversing = false
 
@@ -89,7 +90,7 @@ module OBSApi
 
     # Use the database for sessions instead of the file system
     # (create the session table with 'rails create_sessions_table')
-    # config.action_controller.session_store = :active_record_store
+    # config.action_controller.session_store :active_record_store
 
     # put the rubygem requirements here for a clean handling
     # rails gems:install (installs the needed gems)

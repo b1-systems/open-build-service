@@ -22,7 +22,7 @@ RSpec.describe CommentsController do
         get :index, format: :xml, params: { project: object }
       end
 
-      include_examples 'request comment index'
+      it_behaves_like 'request comment index'
       it { expect(response.body).to include("<comments project=\"#{object.name}\">") }
     end
 
@@ -35,7 +35,7 @@ RSpec.describe CommentsController do
         get :index, format: :xml, params: { package: object, project: object.project.name }
       end
 
-      include_examples 'request comment index'
+      it_behaves_like 'request comment index'
       it { expect(response.body).to include("<comments project=\"#{object.project.name}\" package=\"#{object.name}\">") }
     end
 
@@ -48,14 +48,14 @@ RSpec.describe CommentsController do
         get :index, format: :xml, params: { request_number: object.number }
       end
 
-      include_examples 'request comment index'
+      it_behaves_like 'request comment index'
       it { expect(response.body).to include("<comments request=\"#{object.number}\">") }
     end
 
     context 'of a bs_request_action (inline comment)', :vcr do
       let(:submit_request) { create(:bs_request_with_submit_action) }
       let(:object) { create(:bs_request_action_submit_with_diff, bs_request: submit_request) }
-      let(:comment) { create(:comment, commentable: object, diff_ref: 'diff_0_n1') }
+      let(:comment) { create(:comment, commentable: object, diff_file_index: 0, diff_line_number: 1) }
 
       before do
         login user
@@ -159,6 +159,10 @@ RSpec.describe CommentsController do
     end
 
     it { expect(response.body).to include("<comment_history comment=\"#{comment.id}\">") }
-    it { expect(response.body).to include("<comment who=\"#{comment.paper_trail.previous_version.user}\" when=\"#{comment.paper_trail.previous_version.created_at}\" id=\"#{comment.id}\">#{comment.paper_trail.previous_version.body}</comment>") }
+
+    it {
+      expect(response.body).to include("<comment who=\"#{comment.paper_trail.previous_version.user}\" when=\"#{comment.paper_trail.previous_version.created_at}\" " \
+                                       "id=\"#{comment.id}\">#{comment.paper_trail.previous_version.body}</comment>")
+    }
   end
 end

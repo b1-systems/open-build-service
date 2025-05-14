@@ -46,10 +46,24 @@ namespace :dev do
   task :bootstrap, [:old_test_suite] => %i[prepare environment] do |_t, args|
     args.with_defaults(old_test_suite: false)
 
-    begin
-      Rake::Task['db:version'].invoke
-    rescue StandardError
-      puts 'Creating and seeding the database...'
+    database_exists = false
+
+    puts 'Checking if database exists...'
+    if RailsVersion.is_7_2?
+      # Since Rails 7.2 `Rake::Task['db:version'].invoke` does not raise exception anymore if the database does not exist.
+      # So we need to check if the database exists before running the task.
+      database_exists = true if ActiveRecord::Base.connection.database_exists?
+    else
+      begin
+        Rake::Task['db:version'].invoke
+        database_exists = true
+      rescue StandardError
+        nil
+      end
+    end
+
+    unless database_exists
+      puts 'Database does not exist. Creating and seeding the database...'
       Rake::Task['db:setup'].invoke
       if args.old_test_suite
         puts 'Old test suite. Loading fixtures...'
@@ -101,7 +115,7 @@ namespace :dev do
       IssueTrackerWriteToBackendJob.perform_now
 
       iggy = create(:staff_user, login: 'Iggy')
-      admin = User.get_default_admin
+      admin = User.default_admin
       User.session = admin
 
       interconnect = create(:remote_project, name: 'openSUSE.org', remoteurl: 'https://api.opensuse.org/public')
@@ -159,8 +173,8 @@ namespace :dev do
           source_package: leap_apache
         )
         new_package1.staging_project = sworkflow.staging_projects.first
-        new_package1.reviews << create(:review, by_project: new_package1.staging_project)
         new_package1.save
+        create(:review, by_project: new_package1.staging_project, bs_request: new_package1)
         new_package1.change_review_state(:accepted, by_group: sworkflow.managers_group.title)
 
         new_package2 = create(
@@ -171,8 +185,8 @@ namespace :dev do
           source_package: leap_apache
         )
         new_package2.staging_project = sworkflow.staging_projects.second
-        new_package2.reviews << create(:review, by_project: new_package2.staging_project)
         new_package2.save
+        create(:review, by_project: new_package2.staging_project, bs_request: new_package2)
         new_package2.change_review_state(:accepted, by_group: sworkflow.managers_group.title)
         new_package2.change_review_state(:accepted, by_user: checker.login)
         new_package2.change_review_state(:accepted, by_group: osrt.title)
@@ -224,6 +238,8 @@ namespace :dev do
       # Trigger package builds for home:Admin
       home_admin.store
 
+      create_list(:label_template, 5, project: home_admin)
+
       # Create some Reports
       Rake::Task['dev:reports:data'].invoke
 
@@ -250,6 +266,45 @@ namespace :dev do
 
       # Create notifications by running the `dev:notifications:data` task two times
       Rake::Task['dev:notifications:data'].invoke(2)
+      Rake::Task['dev:assignments'].invoke
+    end
+
+    desc 'Create more data'
+    task :create_more_data, [:repetitions] => :development_environment do |_t, args|
+      args.with_defaults(repetitions: 1)
+      repetitions = args.repetitions.to_i
+
+      require 'factory_bot'
+      include FactoryBot::Syntax::Methods
+
+      admin = User.default_admin
+      User.session = admin
+
+      # Create n project with n packages each
+      repetitions.times do |repetition|
+        new_project_name = "#{Faker::Lorem.words.join(':')}_#{repetition}"
+        new_project = create(:project, name: new_project_name, commit_user: admin)
+        repetitions.times do |repetition_package|
+          create(:package_with_file, name: "#{Faker::Lorem.words.join('_')}_#{repetition_package}", project: new_project, file_content: 'some content')
+        end
+      end
+
+      Rake::Task['dev:requests:multiple_actions_request'].invoke(repetitions)
+      Rake::Task['dev:requests:request_with_multiple_submit_actions_builds_and_diffs'].invoke(repetitions)
+
+      actions_count_for_small_request = 10
+      actions_count_for_medium_request = 100
+      actions_count_for_large_request = 1000
+      Rake::Task['dev:requests:request_with_multiple_submit_actions_builds_and_diffs'].invoke(10, actions_count_for_small_request)
+      Rake::Task['dev:requests:request_with_multiple_submit_actions_builds_and_diffs'].invoke(2, actions_count_for_medium_request)
+      Rake::Task['dev:requests:request_with_multiple_submit_actions_builds_and_diffs'].invoke(1, actions_count_for_large_request)
+
+      Rake::Task['dev:requests:request_with_delete_action'].invoke(repetitions)
+
+      # TODO: refactor the task, it is very slow compared to the others
+      Rake::Task['dev:notifications:data'].invoke(repetitions)
+
+      Rake::Task['dev:news:data'].invoke(repetitions)
     end
   end
 end

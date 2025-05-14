@@ -181,6 +181,7 @@ sub newpool {
   if ($bconf) {
     $pool->settype('deb') if $bconf->{'binarytype'} eq 'deb';
     $pool->settype('arch') if $bconf->{'binarytype'} eq 'arch';
+    $pool->settype('apk') if $bconf->{'binarytype'} eq 'apk';
     $pool->setmodules($bconf->{'modules'}) if $bconf->{'modules'} && defined &BSSolv::pool::setmodules;
   }
   return $pool;
@@ -247,7 +248,7 @@ sub buildinfo {
   BSSched::BuildJob::add_expanddebug($ctx, 'meta deps expansion') if $expanddebug;
   die("unresolvable: ".join(", ", @edeps)."\n") unless $eok;
   $info->{'edeps'} = \@edeps;
-  my ($status, $error) = $handler->check($ctx, $packid, $pdata, $info, $bconf->{'type'});
+  my ($status, $error) = $handler->check($ctx, $packid, $pdata, $info, $bconf->{'type'}, \@edeps);
   die("$status: $error\n") if $status ne 'scheduled';
   ($status, $error) = $handler->build($ctx, $packid, $pdata, $info, $error);
   die("$status: $error\n") if $status ne 'scheduled';

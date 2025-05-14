@@ -1,5 +1,4 @@
 class EventSubscription < ApplicationRecord
-  # TODO: remove watcher, source_watcher and target_watcher as soon as the renaming steps and migration are finished.
   RECEIVER_ROLE_TEXTS = {
     maintainer: 'Maintainer',
     bugowner: 'Bugowner',
@@ -9,21 +8,24 @@ class EventSubscription < ApplicationRecord
     reviewer: 'Reviewer',
     commenter: 'Commenter or mentioned user',
     creator: 'Creator',
-    watcher: 'Watching the project',
-    source_watcher: 'Watching the source project',
-    target_watcher: 'Watching the target project',
+    project_watcher: 'Watching the project',
+    source_project_watcher: 'Watching the source project',
+    target_project_watcher: 'Watching the target project',
     any_role: 'Any role',
     package_watcher: 'Watching the package',
     source_package_watcher: 'Watching the source package',
     target_package_watcher: 'Watching the target package',
     request_watcher: 'Watching the request',
-    moderator: 'User with moderator role',
+    moderator: 'As a moderator',
     token_executor: 'User who runs the workflow',
-    reporter: 'Reporter',
-    offender: 'Offender'
+    token_member: 'User the token is shared with',
+    reporter: 'As a reporter of the content',
+    offender: 'As the creator of the content',
+    member: 'Member',
+    assignee: 'Assignee'
   }.freeze
 
-  enum channel: {
+  enum :channel, {
     disabled: 0,
     instant_email: 1,
     web: 2,
@@ -34,7 +36,7 @@ class EventSubscription < ApplicationRecord
   # Channels used by the event system, but not meant to be enabled by hand
   INTERNAL_ONLY_CHANNELS = ['scm'].freeze
 
-  serialize :payload, JSON
+  serialize :payload, coder: JSON
 
   belongs_to :user, inverse_of: :event_subscriptions, optional: true
   belongs_to :group, inverse_of: :event_subscriptions, optional: true
@@ -45,9 +47,10 @@ class EventSubscription < ApplicationRecord
 
   validates :receiver_role, inclusion: {
     in: %i[maintainer bugowner reader source_maintainer target_maintainer
-           reviewer commenter creator watcher source_watcher target_watcher
+           reviewer commenter creator
+           project_watcher source_project_watcher target_project_watcher
            package_watcher target_package_watcher source_package_watcher request_watcher any_role
-           moderator reporter offender token_executor]
+           moderator reporter offender token_executor token_member member assignee]
   }
 
   scope :for_eventtype, ->(eventtype) { where(eventtype: eventtype) }

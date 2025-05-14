@@ -1,12 +1,14 @@
 module Event
   class UndeletePackage < Base
+    include EventObjectPackage
+
     self.message_bus_routing_key = 'package.undelete'
-    self.description = 'Package was undeleted'
+    self.description = 'Package undeleted'
     payload_keys :project, :package, :sender, :comment
 
     def set_payload(attribs, keys)
       attribs['comment'] = attribs['comment'][0..800] if attribs['comment'].present?
-      super(attribs, keys)
+      super
     end
     create_jobs :update_backend_infos_job
   end

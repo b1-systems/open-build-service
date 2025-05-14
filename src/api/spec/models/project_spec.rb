@@ -60,15 +60,15 @@ RSpec.describe Project, :vcr do
     end
   end
 
-  describe '#has_distribution' do
+  describe '#distribution?' do
     context 'remote distribution' do
       let(:remote_distribution) { create(:repository, name: 'snapshot', remote_project_name: 'openSUSE:Factory', project: remote_project) }
       let(:other_remote_distribution) { create(:repository, name: 'standard', remote_project_name: 'openSUSE:Leap:42.1', project: remote_project) }
       let(:repository) { create(:repository, name: 'openSUSE_Tumbleweed', project: project) }
       let!(:path_element) { create(:path_element, parent_id: repository.id, repository_id: remote_distribution.id, position: 1) }
 
-      it { expect(project.has_distribution('openSUSE.org:openSUSE:Factory', 'snapshot')).to be(true) }
-      it { expect(project.has_distribution('openSUSE.org:openSUSE:Leap:42.1', 'standard')).to be(false) }
+      it { expect(project.distribution?('openSUSE.org:openSUSE:Factory', 'snapshot')).to be(true) }
+      it { expect(project.distribution?('openSUSE.org:openSUSE:Leap:42.1', 'standard')).to be(false) }
     end
 
     context 'local distribution' do
@@ -78,14 +78,14 @@ RSpec.describe Project, :vcr do
         let(:repository) { create(:repository, name: 'Base_repo2', project: project) }
         let!(:path_element) { create(:path_element, parent_id: repository.id, repository_id: distribution_repository.id, position: 1) }
 
-        it { expect(project.has_distribution('BaseDistro2.0', 'BaseDistro2_repo')).to be(true) }
+        it { expect(project.distribution?('BaseDistro2.0', 'BaseDistro2_repo')).to be(true) }
       end
 
       context 'with not linked distribution' do
         let(:not_linked_distribution) { create(:project, name: 'BaseDistro') }
         let!(:not_linked_distribution_repository) { create(:repository, name: 'BaseDistro_repo', project: not_linked_distribution) }
 
-        it { expect(project.has_distribution('BaseDistro', 'BaseDistro_repo')).to be(false) }
+        it { expect(project.distribution?('BaseDistro', 'BaseDistro_repo')).to be(false) }
       end
 
       context 'with linked distribution but wrong query' do
@@ -94,8 +94,8 @@ RSpec.describe Project, :vcr do
         let(:other_repository) { create(:repository, name: 'Base_repo3', project: project) }
         let!(:path_element) { create(:path_element, parent_id: other_repository.id, repository_id: other_distribution_repository.id, position: 1) }
 
-        it { expect(project.has_distribution('BaseDistro3.0', 'standard')).to be(false) }
-        it { expect(project.has_distribution('BaseDistro4.0', 'BaseDistro3_repo')).to be(false) }
+        it { expect(project.distribution?('BaseDistro3.0', 'standard')).to be(false) }
+        it { expect(project.distribution?('BaseDistro4.0', 'BaseDistro3_repo')).to be(false) }
       end
     end
   end
@@ -256,7 +256,7 @@ RSpec.describe Project, :vcr do
       it 'has ::' do
         property_of do
           string = sized(1) { string(/[a-zA-Z0-9\-+]/) } + sized(range(1, 199)) { string(/[-+\w.:]/) }
-          index = range(0, (string.length - 2))
+          index = range(0, string.length - 2)
           string[index] = string[index + 1] = ':'
           string
         end.check do |string|
@@ -266,7 +266,7 @@ RSpec.describe Project, :vcr do
 
       it 'end with :' do
         property_of do
-          string = sized(1) { string(/[a-zA-Z0-9\-+]/) } + sized(range(0, 198)) { string(/[-+\w.:]/) } + ':'
+          string = "#{sized(1) { string(/[a-zA-Z0-9\-+]/) }}#{sized(range(0, 198)) { string(/[-+\w.:]/) }}:"
           guard(string !~ /:[:._]/)
           string
         end.check do |string|
@@ -311,6 +311,8 @@ RSpec.describe Project, :vcr do
 
   describe '#open_requests' do
     shared_examples 'with_open_requests' do
+      subject { project.open_requests }
+
       let(:admin_user) { create(:admin_user, login: 'king') }
       let(:confirmed_user) { create(:confirmed_user, login: 'confirmed_user') }
       let(:source_package) { create(:package, :as_submission_source) }
@@ -345,8 +347,6 @@ RSpec.describe Project, :vcr do
         accepted_incident.state = :accepted
         accepted_incident.save!
       end
-
-      subject { project.open_requests }
 
       it 'does include reviews' do
         expect(subject[:reviews]).to eq([review.number])
@@ -427,6 +427,7 @@ RSpec.describe Project, :vcr do
     def reset_project_in_backend
       Backend::Api::Sources::Project.delete 'project_used_for_restoration' if CONFIG['global_write_through']
     rescue Backend::NotFoundError
+      # Ignore this exception on purpose
     end
 
     before do
@@ -443,9 +444,9 @@ RSpec.describe Project, :vcr do
     end
 
     context 'with linked repositories' do
-      let(:repository_1) { create(:repository, name: 'Tumbleweed', architectures: %w[i586 x86_64], project: deleted_project) }
-      let(:repository_2) { create(:repository, name: 'RepoWithLink', architectures: %w[i586 x86_64], project: deleted_project) }
-      let!(:path_elements) { create(:path_element, repository: repository_2, link: repository_1) }
+      let(:repository1) { create(:repository, name: 'Tumbleweed', architectures: %w[i586 x86_64], project: deleted_project) }
+      let(:repository2) { create(:repository, name: 'RepoWithLink', architectures: %w[i586 x86_64], project: deleted_project) }
+      let!(:path_elements) { create(:path_element, repository: repository2, link: repository1) }
 
       it 'project meta is properly restored' do
         reset_project_in_backend
@@ -459,6 +460,8 @@ RSpec.describe Project, :vcr do
     end
 
     context 'on a project with packages' do
+      subject { Project.restore('project_used_for_restoration', user: admin_user.login) }
+
       let(:package1) { deleted_project.packages.first }
       let(:package1_meta_before_deletion) { package1.render_xml }
       let(:package2) { deleted_project.packages.last }
@@ -468,8 +471,6 @@ RSpec.describe Project, :vcr do
         reset_project_in_backend
         deleted_project.destroy!
       end
-
-      subject { Project.restore('project_used_for_restoration', user: admin_user.login) }
 
       it 'creates package records in the database' do
         expect(subject.packages.size).to eq(2)
@@ -514,9 +515,9 @@ RSpec.describe Project, :vcr do
     before do
       allow(xml).to receive(:person)
       allow(xml).to receive(:group)
-    end
 
-    subject! { project.render_relationships(xml) }
+      project.render_relationships(xml)
+    end
 
     it { expect(xml).to have_received(:person).with(userid: user.login, role: 'bugowner') }
     it { expect(xml).to have_received(:group).with(groupid: group.title, role: 'bugowner') }
@@ -524,26 +525,26 @@ RSpec.describe Project, :vcr do
 
   # NOTE: the code deletes a user with user.delete (not user.destroy) which has a customized behaviour, setting the user to `state=delete`.
   describe '#maintainers' do
-    let(:user_1) { create(:confirmed_user, :with_home) }
-    let(:user_2) { create(:confirmed_user) }
+    subject { user1.home_project }
+
+    let(:user1) { create(:confirmed_user, :with_home) }
+    let(:user2) { create(:confirmed_user) }
     let(:group_user) { create(:confirmed_user) }
     let(:group) { create(:group_with_user, user: group_user) }
-    let!(:user_relationship) { create(:relationship_project_user, project: subject, user: user_2) }
+    let!(:user_relationship) { create(:relationship_project_user, project: subject, user: user2) }
     let!(:group_relationship) { create(:relationship_project_group, project: subject, group: group) }
 
-    subject { user_1.home_project }
-
-    before { group.users << user_2 }
+    before { group.users << user2 }
 
     it 'returns all the users but user_2 only once' do
-      expect(subject.maintainers).to match([user_1, user_2, group_user])
+      expect(subject.maintainers).to match([user1, user2, group_user])
     end
 
     context 'when one of the users is deleted' do
-      before { user_2.delete }
+      before { user2.delete }
 
       it 'still returns the deleted user' do
-        expect(subject.maintainers).to match([user_1, user_2, group_user])
+        expect(subject.maintainers).to match([user1, user2, group_user])
       end
     end
 
@@ -553,7 +554,7 @@ RSpec.describe Project, :vcr do
       end
 
       it "returns the deleted user but not the deleted group's user" do
-        expect(subject.maintainers).to match([user_1, user_2])
+        expect(subject.maintainers).to match([user1, user2])
       end
     end
   end
@@ -567,9 +568,9 @@ RSpec.describe Project, :vcr do
 
     before do
       login(user)
-    end
 
-    subject! { project.remove_all_persons }
+      project.remove_all_persons
+    end
 
     it 'deletes the relationship' do
       expect(Relationship).not_to exist(relationship.id)
@@ -586,9 +587,9 @@ RSpec.describe Project, :vcr do
 
     before do
       login(groups_user.user)
-    end
 
-    subject! { project.remove_all_groups }
+      project.remove_all_groups
+    end
 
     it 'deletes the relationship' do
       expect(Relationship).not_to exist(relationship.id)
@@ -604,7 +605,7 @@ RSpec.describe Project, :vcr do
   describe '#basename' do
     subject { create(:project, name: 'foo:bar:baz') }
 
-    it "returns the lowest level of ':' seperated subproject names" do
+    it "returns the lowest level of ':' separated subproject names" do
       expect(subject.basename).to eq('baz')
     end
   end
@@ -660,7 +661,7 @@ RSpec.describe Project, :vcr do
     end
 
     it 'erases all enable flags shadowed' do
-      expect(new_xml['build']['enable'].to_s).to eq('{"arch"=>"i586"}')
+      expect(new_xml['build']['enable']).to eq({ 'arch' => 'i586' })
     end
 
     it 'updates basics' do
@@ -669,12 +670,12 @@ RSpec.describe Project, :vcr do
   end
 
   describe '#categories' do
-    let(:project) { create(:project) }
-    let(:attrib_namespace) { AttribNamespace.create!(name: 'OBS') }
-
     subject do
       project.categories
     end
+
+    let(:project) { create(:project) }
+    let(:attrib_namespace) { AttribNamespace.create!(name: 'OBS') }
 
     context 'when there are quality categories attributes set for the project' do
       let(:category_attrib_type) do
@@ -704,12 +705,12 @@ RSpec.describe Project, :vcr do
   end
 
   describe '#very_important_projects_with_categories' do
-    let(:project) { create(:project) }
-    let(:attrib_namespace) { AttribNamespace.create!(name: 'OBS') }
-
     subject do
       Project.very_important_projects_with_categories
     end
+
+    let(:project) { create(:project) }
+    let(:attrib_namespace) { AttribNamespace.create!(name: 'OBS') }
 
     context 'when there are Very Important Projects' do
       context 'with quality categories' do
@@ -761,19 +762,19 @@ RSpec.describe Project, :vcr do
   end
 
   describe '#expand_maintained_projects' do
+    subject { maintenance_project.expand_maintained_projects }
+
     let(:link_target_project) { create(:project, name: 'openSUSE:Maintenance') }
     let(:maintenance_project) { create(:maintenance_project, target_project: link_target_project) }
-
-    subject { maintenance_project.expand_maintained_projects }
 
     it { expect(subject).not_to be_empty }
     it { expect(subject).to include(link_target_project) }
   end
 
   describe '#expand_all_repositories' do
-    let!(:project) { create(:project_with_repository, name: 'super_project') }
-
     subject { project.expand_all_repositories }
+
+    let!(:project) { create(:project_with_repository, name: 'super_project') }
 
     it { expect(subject).not_to be_empty }
     it { expect(subject).to include(project.repositories.first) }
@@ -800,5 +801,25 @@ RSpec.describe Project, :vcr do
     end
 
     it { expect(project.project_state).not_to be_nil }
+  end
+
+  describe '#find_remote_project' do
+    let(:project) { create(:remote_project, name: 'hans:wurst') }
+
+    it { expect(Project.find_remote_project(nil)).to be_nil }
+    it { expect(Project.find_remote_project('peter:paul')).to be_nil }
+    it { expect(Project.find_remote_project('hans:wurst')).to be_nil }
+    it { expect(Project.find_remote_project('hans:wurst:leber')).to eq([project, 'leber']) }
+    it { expect(Project.find_remote_project('hans:wurst:leber:salami')).to eq([project, 'leber:salami']) }
+  end
+
+  describe '#bs_requests' do
+    let(:project) { create(:project) }
+    let!(:incoming_request) { create(:bs_request_with_submit_action, source_project: project) }
+    let!(:outgoing_request) { create(:bs_request_with_submit_action, target_project: project) }
+    let!(:request_with_review) { create(:delete_bs_request, target_project: create(:project), review_by_project: project) }
+    let!(:unrelated_request) { create(:bs_request_with_submit_action, source_project: create(:project)) }
+
+    it { expect(project.bs_requests).to contain_exactly(incoming_request, outgoing_request, request_with_review) }
   end
 end

@@ -11,7 +11,7 @@ class BsRequestStateBadgeComponent < ApplicationComponent
   def call
     content_tag(
       :span,
-      icon_state_tag.concat(state),
+      icon_state_tag.concat(state.to_s),
       class: ['badge', "text-bg-#{decode_state_color}", css_class]
     )
   end
@@ -54,10 +54,10 @@ class BsRequestStateBadgeComponent < ApplicationComponent
     if %i[declined revoked].include?(state)
       content_tag(
         :span,
-        tag.i(class: "fas fa-#{decode_state_icon}").concat(
-          tag.i(class: 'fas fa-slash fa-stack-1x fa-stack-slash top-icon')
+        tag.i(class: 'fas fa-code-pull-request').concat(
+          tag.i(class: 'fas fa-times fa-xs')
         ),
-        class: 'position-relative me-1'
+        class: 'fa-custom-pr-closed me-1'
       )
     else
       tag.i(class: "fas fa-#{decode_state_icon} me-1")

@@ -39,6 +39,7 @@ function initializeMonitorDataTable() {
   var statusHash = data.statushash;
   var tableInfo = data.tableinfo;
   var projectName = data.project;
+  var scmsync = data.scmsync;
 
   initializeDataTable('#project-monitor-table', { // jshint ignore:line
     responsive: false,
@@ -58,7 +59,9 @@ function initializeMonitorDataTable() {
         className: 'text-start',
         data: null,
         render: function (packageName) {
-          var url = '/package/show/' + projectName + '/' + packageName;
+          if (scmsync !== undefined) return packageName;
+          var packageNameWithoutMultibuildFlavor = packageName.replace(/:\w+$/, '');
+          var url = '/package/show/' + projectName + '/' + packageNameWithoutMultibuildFlavor;
           return '<a href="' + url + '">' + packageName + '</a>';
         }
       },
@@ -101,5 +104,14 @@ function setupProjectMonitor() { // jshint ignore:line
 
   $('.dropdown-menu.keep-open').on('click', function (e) {
     e.stopPropagation();
+  });
+  $('.monitor-search').on('input', function (e) {
+    var labels = $(this).closest('.dropdown-menu').find('.form-check-label');
+    Array.from(labels).forEach((label) => {
+      var element = label.closest('.dropdown-item');
+      element.classList.remove('d-none');
+      if (!label.innerText.includes(e.target.value))
+        element.classList.add('d-none');
+    });
   });
 }

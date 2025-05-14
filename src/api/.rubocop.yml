@@ -1,9 +1,12 @@
-require:
-  - rubocop-rails
-  - rubocop-rspec
-  - rubocop-performance
+plugins:
   - rubocop-capybara
   - rubocop-factory_bot
+  - rubocop-performance
+  - rubocop-rails
+  - rubocop-rspec
+  - rubocop-rspec_rails
+
+require:
   - ./lib/rubocop/cop/view_component/avoid_global_state.rb
   - ./lib/rubocop/cop/view_component/file_name.rb
   - ./lib/rubocop/cop/view_component/class_name.rb
@@ -153,7 +156,7 @@ Style/MethodCallWithArgsParentheses:
     - raw_post
     - raw_put
     - read
-    - redirect_back
+    - redirect_back_or_to
     - redirect_to
     - references
     - register_driver
@@ -195,11 +198,8 @@ Style/MethodCallWithArgsParentheses:
 # We disabled this cop because of Rantly.
 Style/MultilineBlockChain:
   Exclude:
-    - 'spec/**/*'
-
-# We disabled this cop because HAML doesn't work well with ActiveSupport::SafeBuffer and the to_s method of it is always returning the same object class
-Style/RedundantInterpolation:
-  Enabled: false
+    - 'spec/helpers/webui/**/*'
+    - 'spec/models/**/*'
 
 # For routes, we use the EnforcedStyle 'template' while for other files, we should use the EnforcedStyle 'annotated'.
 # We could use this cop, but it's going to litter the code with a bunch of RuboCop comments without adding much value.
@@ -227,120 +227,6 @@ Style/StringLiterals:
     # due to changes from single to double quotes... we have better things to do!
     - 'config/**/*'
 
-# Exclude files for this cop here since we want to tackle them one by one. Our exclusion limit is too low, so
-# it gets disabled in the todo's file. Since we don't want to raise the exclusion limit globally we simply
-# exclude the affected files here manually, and remove them one by one after the cop is resolved.
-Style/StringConcatenation:
-  Exclude:
-    - 'app/components/notification_action_bar_component.rb'
-    - 'app/controllers/build/file_controller.rb'
-    - 'app/controllers/concerns/backend_proxy.rb'
-    - 'app/controllers/person_controller.rb'
-    - 'app/controllers/public_controller.rb'
-    - 'app/controllers/source_controller.rb'
-    - 'app/controllers/webui/apidocs_controller.rb'
-    - 'app/controllers/webui/main_controller.rb'
-    - 'app/controllers/webui/package_controller.rb'
-    - 'app/controllers/concerns/webui/project_build_result_parsing.rb'
-    - 'app/controllers/webui/projects/maintenance_incident_requests_controller.rb'
-    - 'app/controllers/webui/projects/rebuild_times_controller.rb'
-    - 'app/controllers/webui/projects/status_controller.rb'
-    - 'app/controllers/webui/repositories_controller.rb'
-    - 'app/helpers/webui/elisions_helper.rb'
-    - 'app/helpers/webui/group_helper.rb'
-    - 'app/helpers/webui/monitor_helper.rb'
-    - 'app/helpers/webui/project_helper.rb'
-    - 'app/helpers/webui/repository_helper.rb'
-    - 'app/helpers/webui/user_helper.rb'
-    - 'app/helpers/webui/webui_helper.rb'
-    - 'app/lib/gitea_api/v1/client.rb'
-    - 'app/lib/suse/validator.rb'
-    - 'app/mailers/admin_mailer.rb'
-    - 'app/mixins/parse_package_diff.rb'
-    - 'app/models/branch_package.rb'
-    - 'app/models/bs_request.rb'
-    - 'app/models/bs_request/find_for/project.rb'
-    - 'app/models/bs_request_action.rb'
-    - 'app/models/bs_request_permission_check.rb'
-    - 'app/models/buildresult.rb'
-    - 'app/models/distribution.rb'
-    - 'app/models/event/factory.rb'
-    - 'app/models/event/request.rb'
-    - 'app/models/issue_tracker/issue_summary.rb'
-    - 'app/models/maintenance_incident.rb'
-    - 'app/models/package.rb'
-    - 'app/models/product.rb'
-    - 'app/models/project.rb'
-    - 'app/models/project/update_from_xml_command.rb'
-    - 'app/models/repository.rb'
-    - 'app/models/token/rebuild.rb'
-    - 'app/models/token/workflow.rb'
-    - 'app/models/user.rb'
-    - 'app/models/user_ldap_strategy.rb'
-    - 'app/queries/packages_finder.rb'
-    - 'app/services/trigger_controller_service/token_extractor.rb'
-    - 'app/validators/workflow_steps_validator.rb'
-    - 'app/views/models/_project.xml.builder'
-    - 'app/views/models/_remote_project.xml.builder'
-    - 'app/views/models/staging/_staging_project.xml.builder'
-    - 'config/clock.rb'
-    - 'config/environment.rb'
-    - 'config/initializers/02_apiversion.rb'
-    - 'config/initializers/nokogiri_builder.rb'
-    - 'lib/memory_debugger.rb'
-    - 'lib/tasks/dev/rake_support.rb'
-    - 'lib/tasks/extract.rake'
-    - 'lib/tasks/statistics/github/code_frequency.rake'
-    - 'lib/tasks/statistics/github/commit_activity.rake'
-    - 'lib/tasks/watchlist_migration.rake'
-    - 'lib/xpath_engine.rb'
-    - 'script/reformat_memprof'
-    - 'script/start_test_backend'
-    - 'spec/controllers/status/checks_controller_spec.rb'
-    - 'spec/controllers/trigger_controller_spec.rb'
-    - 'spec/controllers/worker/status_controller_spec.rb'
-    - 'spec/features/webui/packages_spec.rb'
-    - 'spec/features/webui/repositories_spec.rb'
-    - 'spec/helpers/webui/package_helper_spec.rb'
-    - 'spec/helpers/webui/webui_helper_spec.rb'
-    - 'spec/models/kiwi/repository_spec.rb'
-    - 'spec/models/package_spec.rb'
-    - 'spec/models/project_spec.rb'
-    - 'spec/models/update_notification_events_spec.rb'
-    - 'spec/models/workflow/step/branch_package_step_spec.rb'
-    - 'spec/models/workflow/step/link_package_step_spec.rb'
-    - 'test/functional/aaa_pre_consistency_test.rb'
-    - 'test/functional/about_controller_test.rb'
-    - 'test/functional/architectures_controller_test.rb'
-    - 'test/functional/attributes_test.rb'
-    - 'test/functional/backend_test.rb'
-    - 'test/functional/binary_release_test.rb'
-    - 'test/functional/branch_publish_flag_test.rb'
-    - 'test/functional/build_controller_test.rb'
-    - 'test/functional/channel_maintenance_test.rb'
-    - 'test/functional/configurations_controller_test.rb'
-    - 'test/functional/distributions_controller_test.rb'
-    - 'test/functional/group_test.rb'
-    - 'test/functional/interconnect_test.rb'
-    - 'test/functional/issue_controller_test.rb'
-    - 'test/functional/issue_trackers_controller_test.rb'
-    - 'test/functional/kgraft_maintenance_test.rb'
-    - 'test/functional/person_controller_test.rb'
-    - 'test/functional/product_test.rb'
-    - 'test/functional/public_controller_test.rb'
-    - 'test/functional/published_controller_test.rb'
-    - 'test/functional/read_permission_test.rb'
-    - 'test/functional/release_management_test.rb'
-    - 'test/functional/request_controller_test.rb'
-    - 'test/functional/search_controller_test.rb'
-    - 'test/functional/source_controller_test.rb'
-    - 'test/functional/source_services_test.rb'
-    - 'test/functional/statistics_controller_test.rb'
-    - 'test/functional/status_controller_test.rb'
-    - 'test/functional/trigger_controller_test.rb'
-    - 'test/functional/zzz_post_consistency_test.rb'
-    - 'test/integration/last_events_test.rb'
-
 ##################### Metrics ##################################
 
 Metrics/ParameterLists:
@@ -356,6 +242,7 @@ Metrics/BlockLength:
     # FIXME: Since exclusions in `.rubocop_todo.yml` are simply ignored when we also exclude files here, the following exclusions are TODOs
     - 'app/controllers/concerns/rescue_handler.rb'
     - 'app/controllers/concerns/webui/rescue_handler.rb'
+    - 'app/jobs/update_released_binaries_job.rb'
     - 'app/models/binary_release.rb'
     - 'app/models/branch_package.rb'
     - 'app/models/bs_request.rb'
@@ -363,7 +250,6 @@ Metrics/BlockLength:
     - 'app/models/event_subscription/find_for_event.rb'
     - 'app/models/patchinfo.rb'
     - 'app/models/product.rb'
-    - 'app/models/user_ldap_strategy.rb'
     - 'app/views/attribute/show.xml.builder'
     - 'app/views/models/_project.xml.builder'
     - 'app/views/models/_remote_project.xml.builder'
@@ -373,9 +259,6 @@ Metrics/BlockLength:
     - 'app/views/webui/feeds/notifications.rss.builder'
     - 'config/environments/development.rb'
     - 'config/environments/production.rb'
-    - 'config/initializers/influxdb_dj_subscriber.rb'
-    - 'db/data/20170306084550_remove_duplicate_repositories.rb'
-    - 'db/migrate/20140908125426_convert_request_history.rb'
     - 'lib/memory_debugger.rb'
     - 'script/reformat_memprof'
     - 'test/functional/backend_test.rb'
@@ -387,8 +270,10 @@ Metrics/BlockLength:
     - 'included'
 ##################### Rails ##################################
 
-Rails:
-  Enabled: true
+Rails/CreateTableWithTimestamps:
+  Exclude:
+    - 'db/migrate/20171030143054_create_kiwi_preference_types.rb'
+    - 'db/migrate/20240513154336_remove_watched_projects.rb'
 
 # Actually is not possible to enable this cop because we have several overwritten methods.
 Rails/DynamicFindBy:
@@ -411,10 +296,6 @@ Rails/Output:
     # FIXME: Since exclusions in `.rubocop_todo.yml` are simply ignored when we also exclude files here, the following exclusions are TODOs
     - 'app/lib/backend/test.rb'
 
-Rails/RedundantActiveRecordAllMethod:
-  Exclude:
-  - 'spec/queries/workflow_runs_finder_spec.rb'
-
 # Migrations creating unique indexes are sometimes not possible to run...
 # they raise a pretty weird error about some duplicate entries, even though those entries don't exist.
 Rails/UniqueValidationWithoutIndex:
@@ -431,15 +312,10 @@ Rails/I18nLocaleTexts:
 
 ##################### RSpec ##################################
 
-RSpec/FilePath:
-  Enabled: false
-
 RSpec/SpecFilePathFormat:
   Exclude:
     - 'spec/controllers/concerns/rescue_authorization_handler_spec.rb'
-    - 'spec/models/project/image_template_spec.rb'
     - 'spec/models/project/maintenance_incidents_spec.rb'
-    - 'spec/models/users/requests_spec.rb'
 
 RSpec/LetSetup:
   Enabled: false
@@ -450,7 +326,6 @@ RSpec/MultipleExpectations:
   Max: 2
   Exclude:
     - 'spec/features/**/*.rb'
-    - 'spec/bootstrap/features/**/*.rb'
     # FIXME: Since exclusions in `.rubocop_todo.yml` are simply ignored when we also exclude files here, the following exclusions are TODOs
     - 'spec/controllers/attribute_controller_spec.rb'
     - 'spec/controllers/group_controller_spec.rb'
@@ -461,13 +336,11 @@ RSpec/MultipleExpectations:
     - 'spec/controllers/staging/staging_projects_controller_spec.rb'
     - 'spec/controllers/statistics/maintenance_statistics_controller_spec.rb'
     - 'spec/controllers/status/checks_controller_spec.rb'
-    - 'spec/controllers/webui/apidocs_controller_spec.rb'
     - 'spec/controllers/webui/attribute_controller_spec.rb'
     - 'spec/controllers/webui/feeds_controller_spec.rb'
     - 'spec/controllers/webui/groups/bs_requests_controller_spec.rb'
     - 'spec/controllers/webui/groups/users_controller_spec.rb'
     - 'spec/controllers/webui/groups_controller_spec.rb'
-    - 'spec/controllers/webui/package_controller/binaries.spec'
     - 'spec/controllers/webui/package_controller_spec.rb'
     - 'spec/controllers/webui/packages/branches_controller_spec.rb'
     - 'spec/controllers/webui/packages/files_controller_spec.rb'
@@ -513,16 +386,12 @@ RSpec/MultipleExpectations:
     - 'spec/models/review_spec.rb'
     - 'spec/models/statistics/maintenance_statistic_spec.rb'
     - 'spec/models/unregistered_user_spec.rb'
-    - 'spec/models/user_ldap_strategy_spec.rb'
     - 'spec/models/user_spec.rb'
-    - 'spec/requests/package_undelete_spec.rb'
     - 'spec/routing/api_matcher_spec.rb'
-    - 'spec/services/notification_creator_spec.rb'
     - 'spec/shared/examples/a_bs_requests_data_table_controller.rb'
     - 'spec/shared/examples/a_bs_requests_data_table_controller_with_state_and_type_options.rb'
     - 'spec/shared/examples/a_project_status_controller.rb'
     - 'spec/shared/examples/a_subscriptions_form_for_subscriber.rb'
-    - 'spec/shared/examples/features/beta/user_tab.rb'
     - 'spec/shared/examples/features/boostrap_flag_tables.rb'
     - 'spec/shared/examples/features/bootstrap_user_tab.rb'
     - 'spec/shared/examples/features/flags_tables.rb'
@@ -535,10 +404,6 @@ RSpec/NamedSubject:
 RSpec/NestedGroups:
   Enabled: false
 
-RSpec/Rails/AvoidSetupHook:
-  Exclude:
-    # Don't parse minitests for RSpec cops
-    - 'test/**/*'
 RSpec/RepeatedExample:
   Exclude:
     # This cop is currently not recognizing the pundit rspec helpers.

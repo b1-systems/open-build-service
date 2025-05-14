@@ -51,8 +51,6 @@ class IssueTracker < ApplicationRecord
   end
 
   def update_issues_github
-    return unless enable_fetch
-
     # must be like this "url = https://github.com/repos/#{self.owner}/#{self.name}/issues"
     url = URI.parse("#{self.url}?since=#{self.issues_updated.to_time.iso8601}")
     mtime = Time.now
@@ -143,7 +141,7 @@ class IssueTracker < ApplicationRecord
         return false
       end
       result['bugs'].each { |r| parse_single_bugzilla_issue(r) }
-      ids = ids[limit_per_slice..-1]
+      ids = ids[limit_per_slice..]
     end
     true
   end
@@ -285,8 +283,6 @@ class IssueTracker < ApplicationRecord
   end
 
   def update_issues_bugzilla
-    return unless enable_fetch
-
     begin
       result = bugzilla_server.search(bugzilla_args.merge(last_change_time: self.issues_updated))
     rescue Net::ReadTimeout, Errno::ECONNRESET
@@ -310,8 +306,6 @@ class IssueTracker < ApplicationRecord
   end
 
   def update_issues_cve
-    return unless enable_fetch
-
     # fixed URL of all entries
     # cveurl = "https://cve.mitre.org/data/downloads/allitems.xml.gz"
     http = Net::HTTP.start('cve.mitre.org', use_ssl: true)
@@ -324,7 +318,7 @@ class IssueTracker < ApplicationRecord
     h = http.get('/data/downloads/allitems.xml.gz')
     unzipedio = StringIO.new(h.body) # Net::HTTP is decompressing already
     listener = IssueTracker::CVEParser.new
-    listener.set_tracker(self)
+    listener.tracker = self
     parser = Nokogiri::XML::SAX::Parser.new(listener)
     parser.parse_io(unzipedio)
     # we skip callbacks to avoid scheduling expensive jobs
@@ -356,7 +350,7 @@ end
 #  password       :string(255)
 #  publish_issues :boolean          default(TRUE)
 #  regex          :string(255)      not null
-#  show_url       :string(255)
+#  show_url       :string(8192)
 #  url            :string(255)      not null
 #  user           :string(255)
 #

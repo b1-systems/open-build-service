@@ -13,8 +13,7 @@
                       height: '300px',
                       stacked: true,
                       responsive: true,
-                      colors: ['#008000', '#DC3545', '#FFCC00', '#EEEEEE'],
-                      library: { scales: { y: { ticks: { stepSize: 1 }}}},
+                      colors: ['#008000', '#DC3545', '#FFCC00'],
                     )
       :javascript
         linkBuildSummaryChartToBuildResultsTab();
@@ -31,7 +30,8 @@
               - raw_data.each do |result|
                 - if result[:repository] == repo
                   = render partial: 'webui/shared/build_status_badge', locals: { status: result[:status],
-                                                                                 text: helpers.repository_status(result),
+                                                                                 text: result[:status].humanize,
+                                                                                 details: result[:details],
                                                                                  architecture: result[:architecture],
                                                                                  url: helpers.live_build_log_url(result[:status],
                                                                                                          result[:project_name],

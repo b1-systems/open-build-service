@@ -1,6 +1,3 @@
-all:
-	make -C docs/api/api apidocs
-
 install:
 	make -C dist install
 	make -C src/api install
@@ -15,4 +12,4 @@ clean:
 	make -C src/api clean
 
 resolve_swagger_yaml:
-	cd dist/ && ./resolve_swagger_yaml.rb -i ../src/api/public/apidocs/OBS-v2.10.50.yaml -o ../src/api/public/apidocs/OBS-v2.10.50.yaml -f
+	cd dist/ && LANG=en_US.UTF-8 ./resolve_swagger_yaml.rb -i ../src/api/public/apidocs/OBS-v2.10.50.yaml -o ../src/api/public/apidocs/OBS-v2.10.50.yaml -f

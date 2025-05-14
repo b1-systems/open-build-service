@@ -4,7 +4,7 @@ puts 'Seeding architectures table...'
 # NOTE: armvXel is actually obsolete (because it never exist as official platform),
 # but kept for compatibility reasons. armv7hl is in for compatibility (soft/hard).
 %w[aarch64 aarch64_ilp32 armv4l armv5l armv6l armv7l armv5el armv6el armv7el
-   armv7hl armv8el hppa i586 i686 ia64 k1om local m68k mips mips32
+   armv7hl armv8el hppa i586 i686 ia64 k1om local loongarch64 m68k mips mips32
    mips64 ppc ppc64 ppc64p7 ppc64le riscv64 s390 s390x sparc sparc64 sparc64v
    sparcv8 sparcv9 sparcv9v x86_64].each do |arch_name|
   Architecture.where(name: arch_name).first_or_create
@@ -20,7 +20,7 @@ puts 'Seeding configurations table...'
 # set default configuration settings if no settings exist
 Configuration.skip_callback(:save, :after, :delayed_write_to_backend)
 Configuration.first_or_create(name: 'private', title: 'Open Build Service') do |conf|
-  conf.description = <<-EOT
+  conf.description = <<-DESCRIPTION
   <p class="description">
     The <a href="http://openbuildservice.org">Open Build Service (OBS)</a>
     is an open and complete distribution development platform that provides a transparent
@@ -39,7 +39,7 @@ Configuration.first_or_create(name: 'private', title: 'Open Build Service') do |
     <a href="http://wiki.opensuse.org/openSUSE:Build_Service_installations">this wiki page</a>.
     Have fun and fast build times!
   </p>
-  EOT
+  DESCRIPTION
 end
 
 puts 'Seeding roles table...'
@@ -170,6 +170,8 @@ at.attrib_type_modifiable_bies.where(user_id: admin.id).first_or_create
 at = ans.attrib_types.where(name: 'EnforceRevisionsInRequests').first_or_create
 at.attrib_type_modifiable_bies.where(role_id: maintainer_role.id).first_or_create
 at = ans.attrib_types.where(name: 'PlannedReleaseDate').first_or_create(value_count: 1)
+at.attrib_type_modifiable_bies.where(role_id: maintainer_role.id).first_or_create
+at = ans.attrib_types.where(name: 'RejectBranch').first_or_create(value_count: 1)
 at.attrib_type_modifiable_bies.where(role_id: maintainer_role.id).first_or_create
 
 update_all_attrib_type_descriptions
@@ -348,3 +350,8 @@ IssueTracker.where(name: 'gh').first_or_create(description: 'Generic Github Trac
                                                regex: '(?:gh|github)#([\w-]+\/[\w-]+#\d+)',
                                                url: 'https://www.github.com',
                                                label: 'gh#@@@', show_url: 'https://github.com/@@@')
+IssueTracker.where(name: 'svg').first_or_create(description: 'GNU Savannah bug tracker',
+                                                kind: 'other',
+                                                regex: 'svg#(\d+)',
+                                                url: 'https://savannah.gnu.org/bugs',
+                                                label: 'svg#@@@', show_url: 'https://savannah.gnu.org/bugs/?@@@')

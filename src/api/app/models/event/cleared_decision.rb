@@ -1,17 +1,13 @@
 module Event
-  class ClearedDecision < Base
-    receiver_roles :reporter
-    self.description = 'Reported content has been cleared'
+  class ClearedDecision < Decision
+    self.description = 'Reported content cleared'
+    self.notification_explanation = 'Receive notifications for cleared report decisions.'
 
-    payload_keys :id, :reason, :moderator_id, :report_last_id, :reportable_type
+    receiver_roles :reporter
 
     def subject
-      decision = Decision.find(payload['id'])
+      decision = ::Decision.find(payload['id'])
       "Cleared #{decision.reports.first.reportable&.class&.name || decision.reports.first.reportable_type} Report".squish
-    end
-
-    def parameters_for_notification
-      super.merge(notifiable_type: 'Decision')
     end
   end
 end

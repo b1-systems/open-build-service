@@ -1,7 +1,7 @@
 RSpec.describe User do
   let(:admin_user) { create(:admin_user, login: 'king') }
   let(:user) { create(:user, :with_home, login: 'eisendieter') }
-  let(:confirmed_user) { create(:confirmed_user, login: 'confirmed_user') }
+  let(:confirmed_user) { create(:confirmed_user, :with_home, login: 'confirmed_user') }
   let(:user_belongs_to_confirmed_owner) { create(:user, owner: confirmed_user) }
   let(:user_belongs_to_unconfirmed_owner) { create(:confirmed_user, owner: user) }
   let(:input) { { 'Event::RequestCreate' => { source_maintainer: '1' } } }
@@ -30,36 +30,36 @@ RSpec.describe User do
   end
 
   context 'seen_since' do
+    subject { User.seen_since(3.months.ago) }
+
     let!(:dead_user) { create(:dead_user, login: 'caspar') }
     let!(:active_user) { create(:confirmed_user, login: 'active_user') }
-
-    subject { User.seen_since(3.months.ago) }
 
     it { expect(subject).not_to include(dead_user) }
     it { expect(subject).to include(active_user) }
   end
 
-  context 'is_admin?' do
-    it { expect(admin_user.is_admin?).to be(true) }
-    it { expect(user.is_admin?).to be(false) }
+  context 'admin?' do
+    it { expect(admin_user.admin?).to be(true) }
+    it { expect(user.admin?).to be(false) }
   end
 
-  describe '#is_active?' do
+  describe '#active?' do
     it 'returns true if user is confirmed' do
-      expect(confirmed_user).to be_is_active
+      expect(confirmed_user).to be_active
     end
 
     it 'returns false if user is NOT confirmed' do
-      expect(user).not_to be_is_active
+      expect(user).not_to be_active
     end
 
     context 'when user has owner' do
       it 'returns true if owner is confirmed' do
-        expect(user_belongs_to_confirmed_owner).to be_is_active
+        expect(user_belongs_to_confirmed_owner).to be_active
       end
 
       it 'returns false if owner not confirmed' do
-        expect(user_belongs_to_unconfirmed_owner).not_to be_is_active
+        expect(user_belongs_to_unconfirmed_owner).not_to be_active
       end
     end
   end
@@ -107,12 +107,6 @@ RSpec.describe User do
     it { expect { subject }.to change(User, :count).by(1) }
   end
 
-  describe '#can_modify_user?' do
-    it { expect(admin_user.can_modify_user?(confirmed_user)).to be(true) }
-    it { expect(user.can_modify_user?(confirmed_user)).to be(false) }
-    it { expect(user.can_modify_user?(user)).to be(true) }
-  end
-
   describe '#name' do
     context 'user with empty name' do
       before { user.update(realname: '') }
@@ -153,6 +147,10 @@ RSpec.describe User do
   end
 
   describe "methods used in the User's dashboard" do
+    before do
+      unfreeze_time
+    end
+
     let(:project) { create(:project, name: 'project_a') }
 
     it 'has involved packages' do
@@ -208,6 +206,8 @@ RSpec.describe User do
   end
 
   describe '#involved_packages' do
+    subject { confirmed_user.involved_packages }
+
     let(:group) { create(:group) }
     let!(:groups_user) { create(:groups_user, user: confirmed_user, group: group) }
 
@@ -222,8 +222,6 @@ RSpec.describe User do
 
     let(:group_project_maintained_package) { create(:package) }
     let!(:relationship_project_group) { create(:relationship_project_group, group: group, project: group_project_maintained_package.project) }
-
-    subject { confirmed_user.involved_packages }
 
     it 'does include packages where user is maintainer' do
       expect(subject).to include(maintained_package)
@@ -257,9 +255,7 @@ RSpec.describe User do
 
       it 'returns an ActiveRecord::Relation of bs requests' do
         expect(subject).to be_a(ActiveRecord::Relation)
-        subject.each do |item|
-          expect(item).to be_instance_of(BsRequest)
-        end
+        expect(subject).to all(be_instance_of(BsRequest))
       end
 
       it 'does include reviews where the user is not the creator of the request' do
@@ -358,13 +354,13 @@ RSpec.describe User do
     let!(:groups_user) { create(:groups_user, user: confirmed_user, group: group) }
 
     context 'with a lot notifications from the user' do
-      before do
-        create_list(:rss_notification, max_items_per_group, subscriber: group)
-        create_list(:rss_notification, max_items_per_user + 5, subscriber: confirmed_user)
-        create_list(:rss_notification, 3, subscriber: user)
-      end
-
       subject { confirmed_user.combined_rss_feed_items }
+
+      before do
+        create_list(:notification_for_request, max_items_per_group, :rss_notification, subscriber: group)
+        create_list(:notification_for_request, max_items_per_user + 5, :rss_notification, subscriber: confirmed_user)
+        create_list(:notification_for_request, 3, :rss_notification, subscriber: user)
+      end
 
       it { expect(subject.count).to be(max_items_per_user) }
       it { is_expected.not_to(be_any { |x| x.subscriber != confirmed_user }) }
@@ -373,13 +369,13 @@ RSpec.describe User do
     end
 
     context 'with a lot notifications from the group' do
-      before do
-        create_list(:rss_notification, 5, subscriber: confirmed_user)
-        create_list(:rss_notification, max_items_per_group - 1, subscriber: group)
-        create_list(:rss_notification, 3, subscriber: user)
-      end
-
       subject { confirmed_user.combined_rss_feed_items }
+
+      before do
+        create_list(:notification_for_request, 5, :rss_notification, subscriber: confirmed_user)
+        create_list(:notification_for_request, max_items_per_group - 1, :rss_notification, subscriber: group)
+        create_list(:notification_for_request, 3, :rss_notification, subscriber: user)
+      end
 
       it { expect(subject.count).to be(max_items_per_user) }
       it { expect(subject.count { |x| x.subscriber == confirmed_user }).to eq(1) }
@@ -388,17 +384,17 @@ RSpec.describe User do
     end
 
     context 'with a notifications mixed' do
+      subject { confirmed_user.combined_rss_feed_items }
+
       let(:batch) { max_items_per_user / 4 }
 
       before do
-        create_list(:rss_notification, max_items_per_user + batch, subscriber: confirmed_user)
-        create_list(:rss_notification, batch, subscriber: group)
-        create_list(:rss_notification, batch, subscriber: confirmed_user)
-        create_list(:rss_notification, batch, subscriber: group)
-        create_list(:rss_notification, 3, subscriber: user)
+        create_list(:notification_for_request, max_items_per_user + batch, :rss_notification, subscriber: confirmed_user)
+        create_list(:notification_for_request, batch, :rss_notification, subscriber: group)
+        create_list(:notification_for_request, batch, :rss_notification, subscriber: confirmed_user)
+        create_list(:notification_for_request, batch, :rss_notification, subscriber: group)
+        create_list(:notification_for_request, 3, :rss_notification, subscriber: user)
       end
-
-      subject { confirmed_user.combined_rss_feed_items }
 
       it { expect(subject.count).to be(max_items_per_user) }
       it { expect(subject.count { |x| x.subscriber == confirmed_user }).to be >= batch * 2 }
@@ -491,51 +487,6 @@ RSpec.describe User do
       it { is_expected.to be_nil }
       it { expect(user.reload.login_failure_count).to eq(8) }
     end
-
-    context 'when LDAP mode is enabled' do
-      include_context 'setup ldap mock with user mock', for_ssl: true
-      include_context 'an ldap connection'
-      include_context 'mock searching a user' do
-        let(:ldap_user) { double(:ldap_user, to_hash: { 'dn' => 'tux', 'sn' => ['John@obs.de', 'John', 'Smith'] }) }
-      end
-
-      let(:user) do
-        create(:user, login: 'tux', realname: 'penguin', login_failure_count: 7, last_logged_in_at: Time.zone.yesterday, email: 'tux@suse.de')
-      end
-
-      before do
-        stub_const('CONFIG', CONFIG.merge('ldap_mode' => :on,
-                                          'ldap_search_user' => 'tux',
-                                          'ldap_search_auth' => 'tux_password'))
-      end
-
-      context 'and user is already known by OBS' do
-        subject { User.find_with_credentials(user.login, 'tux_password') }
-
-        it { is_expected.to eq(user) }
-        it { expect(subject.login_failure_count).to eq(0) }
-        it { expect(subject.last_logged_in_at).to eq(Time.zone.today) }
-
-        it 'updates user data received from the LDAP server' do
-          expect(subject.email).to eq('John@obs.de')
-          expect(subject.realname).to eq('tux')
-        end
-      end
-
-      context 'and user is not yet known by OBS' do
-        subject { User.find_with_credentials('new_user', 'tux_password') }
-
-        it 'creates a new user from the data received by the LDAP server' do
-          expect { subject }.to change(User, :count).by(1)
-          expect(subject.email).to eq('John@obs.de')
-          expect(subject.login).to eq('new_user')
-          expect(subject.realname).to eq('new_user')
-          expect(subject.state).to eq('confirmed')
-          expect(subject.login_failure_count).to eq(0)
-          expect(subject.last_logged_in_at).to eq(Time.zone.today)
-        end
-      end
-    end
   end
 
   describe 'autocomplete methods' do
@@ -624,5 +575,39 @@ RSpec.describe User do
         expect(User.session).to be(user1)
       end
     end
+  end
+
+  describe '#can_modify?' do
+    let(:user) { create(:confirmed_user, :with_home, login: 'hans') }
+    let(:project) { user.home_project }
+
+    context 'projects' do
+      context 'can modify a home project' do
+        it { expect(user.can_modify?(project)).to be true }
+      end
+
+      context 'can modify sub-projects of a home project' do
+        let(:child_project) { create(:project, name: "#{project.name}:something") }
+
+        it { expect(user.can_modify?(child_project)).to be true }
+      end
+
+      context "cannot modify other people's projects" do
+        let(:project) { create(:project, name: 'home:dani:branches:home:hans:something') }
+
+        it { expect(user.can_modify?(project)).to be false }
+      end
+    end
+  end
+
+  describe '#bs_requests' do
+    let!(:incoming_request) { create(:bs_request_with_submit_action, target_project: confirmed_user.home_project, description: 'incoming') }
+    let!(:outgoing_request) { create(:bs_request_with_submit_action, creator: confirmed_user, description: 'outgoing') }
+    let!(:request_with_user_review) { create(:delete_bs_request, target_project: create(:project), review_by_user: confirmed_user, description: 'user_review') }
+    let!(:request_with_project_review) { create(:delete_bs_request, target_project: create(:project), review_by_project: confirmed_user.home_project, description: 'project_review') }
+    let!(:request_with_package_review) { create(:delete_bs_request, target_project: create(:project), review_by_package: create(:package_with_maintainer, maintainer: confirmed_user), description: 'package_review') }
+    let!(:unrelated_request) { create(:bs_request_with_submit_action, source_project: create(:project), description: 'unrelated') }
+
+    it { expect(confirmed_user.bs_requests.pluck(:description)).to contain_exactly('incoming', 'outgoing', 'user_review', 'project_review', 'package_review') }
   end
 end

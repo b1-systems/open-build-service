@@ -1,9 +1,11 @@
 class Webui::RepositoriesController < Webui::WebuiController
+  include ScmsyncChecker
+
   before_action :set_project
+  before_action :check_scmsync, if: -> { params[:package] }
   before_action :set_repository, only: [:state]
   before_action :set_architectures, only: %i[index change_flag]
-  before_action :set_repository, only: [:state]
-  before_action :set_package, only: %i[index change_flag]
+  before_action :require_package, only: %i[index change_flag], if: -> { params[:package] }
   before_action :set_main_object, only: %i[index change_flag]
   before_action :check_ajax, only: :change_flag
   after_action :verify_authorized, except: %i[index state]
@@ -29,7 +31,8 @@ class Webui::RepositoriesController < Webui::WebuiController
     authorize @project, :update?
     repository = @project.repositories.find_or_initialize_by(name: params[:repository])
     if params[:target_repo]
-      target_repository = Repository.find_by_project_and_name(params[:target_project], params[:target_repo])
+      target_project = params[:add_repo_path_target_project] || params[:add_repo_from_project_target_project] || params[:add_repo_kiwi_target_project]
+      target_repository = Repository.find_by_project_and_name(target_project, params[:target_repo])
       repository.path_elements.find_or_initialize_by(link: target_repository)
     end
 
@@ -48,7 +51,7 @@ class Webui::RepositoriesController < Webui::WebuiController
     else
       flash[:error] = "Can not add repository: #{repository.errors.full_messages.to_sentence}"
       respond_to do |format|
-        format.html { redirect_back(fallback_location: root_path) }
+        format.html { redirect_back_or_to root_path }
         format.js
       end
     end
@@ -89,7 +92,7 @@ class Webui::RepositoriesController < Webui::WebuiController
       msg << 'Repository not found.' if @project.valid? && !result
       respond_to do |format|
         flash[:error] = msg
-        format.html { redirect_back(fallback_location: root_path) }
+        format.html { redirect_back_or_to root_path }
         format.js
       end
     end
@@ -146,7 +149,7 @@ class Webui::RepositoriesController < Webui::WebuiController
     else
       flash[:error] = "Can not add image repository: #{repository.errors.full_messages.to_sentence}"
       respond_to do |format|
-        format.html { redirect_back(fallback_location: root_path) }
+        format.html { redirect_back_or_to root_path }
         format.js { render 'create' }
       end
     end
@@ -154,7 +157,7 @@ class Webui::RepositoriesController < Webui::WebuiController
 
   # POST flag/:project(/:package)
   def change_flag
-    required_parameters :flag, :command
+    params.require(%i[flag command])
     authorize @main_object, :update?
 
     flag_type = params[:flag]
@@ -162,7 +165,7 @@ class Webui::RepositoriesController < Webui::WebuiController
 
     locals = { user_can_modify: true, project: @project, package: params[:package], architectures: @architectures }
     locals[:flags] = Flag::SpecifiedFlags.new(@main_object, flag_type)
-    locals[:table_id] = 'flag_table_' + flag_type
+    locals[:table_id] = "flag_table_#{flag_type}"
 
     render partial: 'webui/shared/repositories_flag_table', locals: locals
   end
@@ -177,23 +180,13 @@ class Webui::RepositoriesController < Webui::WebuiController
       @main_object.flags.of_type(flag_type).where(repo: params[:repository], architecture: architecture).delete_all
     when /^set-(?<status>disable|enable)$/
       flag = @main_object.flags.find_or_create_by(flag: flag_type, repo: params[:repository], architecture: architecture)
-      flag.update(status: $LAST_MATCH_INFO['status'])
+      head :bad_request unless flag.update(status: $LAST_MATCH_INFO['status'])
     end
     @main_object.store
   end
 
   def set_architectures
     @architectures = Architecture.where(id: @project.repository_architectures.select(:architecture_id)).order(:name)
-  end
-
-  def set_repository
-    @repository = @project.repositories.find_by!(name: params[:repository])
-  end
-
-  def set_package
-    return unless params[:package]
-
-    require_package
   end
 
   def set_main_object

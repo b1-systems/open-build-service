@@ -19,7 +19,7 @@ class BsRequestActionSubmit < BsRequestAction
   #### private
 
   #### Instance methods (public and then protected/private)
-  def is_submit?
+  def submit?
     true
   end
 
@@ -89,7 +89,7 @@ class BsRequestActionSubmit < BsRequestAction
                                                    source_project, source_package, User.session!.login, cp_params)
     result = Xmlhash.parse(response)
 
-    set_acceptinfo(result['acceptinfo'])
+    fill_acceptinfo(result['acceptinfo'])
 
     target_package.sources_changed
 
@@ -112,7 +112,7 @@ class BsRequestActionSubmit < BsRequestAction
   end
 
   def check_action_permission!(skip_source = nil)
-    super(skip_source)
+    super
     # only perform the following check, if we are called from
     # BsRequest.permission_check_change_state! (that is, if
     # skip_source is set to true). Always executing this check
@@ -139,6 +139,41 @@ class BsRequestActionSubmit < BsRequestAction
     "Submit #{uniq_key}"
   end
 
+  def short_name
+    "Submit #{source_package}"
+  end
+
+  def creator_is_target_maintainer
+    request_creator = User.find_by_login(bs_request.creator)
+    request_creator.local_role?(Role.hashed['maintainer'], target_package_object)
+  end
+
+  def forward
+    return [] unless target_package_object
+
+    # add all the devel packages into the forwards
+    forward_object = target_package_object.developed_packages.map do |dev_pkg|
+      { project: dev_pkg.project.name, package: dev_pkg.name, type: 'devel' }
+    end
+
+    return forward_object unless (linkinfo = target_package_object.linkinfo)
+
+    # check if the link is already in the forwards, add it otherwise
+    if forward_object.none? { |forward| forward[:project] == linkinfo['project'] && forward[:package] == linkinfo['package'] }
+      forward_object << { project: linkinfo['project'], package: linkinfo['package'], type: 'link' }
+    end
+
+    forward_object
+  end
+
+  def source_srcmd5
+    source_package_object&.dir_hash({ rev: source_rev }.compact)&.[]('srcmd5')
+  end
+
+  def target_srcmd5
+    target_package_object&.dir_hash&.[]('srcmd5')
+  end
+
   #### Alias of methods
 end
 
@@ -163,6 +198,8 @@ end
 #  updatelink            :boolean          default(FALSE)
 #  created_at            :datetime
 #  bs_request_id         :integer          indexed, indexed => [target_package_id], indexed => [target_project_id]
+#  source_package_id     :integer          indexed
+#  source_project_id     :integer          indexed
 #  target_package_id     :integer          indexed => [bs_request_id], indexed
 #  target_project_id     :integer          indexed => [bs_request_id], indexed
 #
@@ -172,7 +209,9 @@ end
 #  index_bs_request_actions_on_bs_request_id_and_target_package_id  (bs_request_id,target_package_id)
 #  index_bs_request_actions_on_bs_request_id_and_target_project_id  (bs_request_id,target_project_id)
 #  index_bs_request_actions_on_source_package                       (source_package)
+#  index_bs_request_actions_on_source_package_id                    (source_package_id)
 #  index_bs_request_actions_on_source_project                       (source_project)
+#  index_bs_request_actions_on_source_project_id                    (source_project_id)
 #  index_bs_request_actions_on_target_package                       (target_package)
 #  index_bs_request_actions_on_target_package_id                    (target_package_id)
 #  index_bs_request_actions_on_target_project                       (target_project)

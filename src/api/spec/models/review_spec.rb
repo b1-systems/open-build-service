@@ -1,10 +1,8 @@
 RSpec.shared_context 'some assigned reviews and some unassigned reviews' do
-  let!(:user) { create(:user) }
-
-  let!(:review_assigned1) { create(:review, by_user: user.login) }
-  let!(:review_assigned2) { create(:review, by_user: user.login) }
-  let!(:review_unassigned1) { create(:review, by_user: user.login) }
-  let!(:review_unassigned2) { create(:review, by_user: user.login) }
+  let(:review_assigned1)   { create(:review, by_user: user.login, bs_request: bs_request) }
+  let(:review_assigned2)   { create(:review, by_user: user.login, bs_request: bs_request) }
+  let(:review_unassigned1) { create(:review, by_user: user.login, bs_request: bs_request) }
+  let(:review_unassigned2) { create(:review, by_user: user.login, bs_request: bs_request) }
 
   let!(:history_element1) do
     create(:history_element_review_assigned, op_object_id: review_assigned1.id, user_id: user.id)
@@ -25,6 +23,8 @@ RSpec.describe Review do
   let(:package) { project.packages.first }
   let(:user) { create(:user, login: 'King') }
   let(:group) { create(:group, title: 'Staff') }
+  let(:confirmed_user) { create(:confirmed_user) }
+  let(:bs_request) { create(:bs_request_with_submit_action, creator: confirmed_user) }
 
   it { is_expected.to belong_to(:bs_request).touch(true).optional }
 
@@ -47,43 +47,47 @@ RSpec.describe Review do
   end
 
   describe '.assigned' do
-    include_context 'some assigned reviews and some unassigned reviews'
-
     subject { Review.assigned }
+
+    include_context 'some assigned reviews and some unassigned reviews'
 
     it { is_expected.to contain_exactly(review_assigned1, review_assigned2) }
   end
 
   describe '.unassigned' do
-    include_context 'some assigned reviews and some unassigned reviews'
-
     subject { Review.unassigned }
+
+    include_context 'some assigned reviews and some unassigned reviews'
 
     it { is_expected.to contain_exactly(review_unassigned1, review_unassigned2) }
   end
 
   describe '.set_associations' do
+    before do
+      bs_request
+    end
+
     context 'with valid attributes' do
       it 'sets user association when by_user object exists' do
-        review = create(:review, by_user: user.login)
+        review = create(:review, by_user: user.login, bs_request: bs_request)
         expect(review.user).to eq(user)
         expect(review.by_user).to eq(user.login)
       end
 
       it 'sets group association when by_group object exists' do
-        review = create(:review, by_group: group.title)
+        review = create(:review, by_group: group.title, bs_request: bs_request)
         expect(review.group).to eq(group)
         expect(review.by_group).to eq(group.title)
       end
 
       it 'sets project association when by_project object exists' do
-        review = create(:review, by_project: project.name)
+        review = create(:review, by_project: project.name, bs_request: bs_request)
         expect(review.project).to eq(project)
         expect(review.by_project).to eq(project.name)
       end
 
       it 'sets package and project associations when by_package and by_project object exists' do
-        review = create(:review, by_project: project.name, by_package: package.name)
+        review = create(:review, by_project: project.name, by_package: package.name, bs_request: bs_request)
         expect(review.package).to eq(package)
         expect(review.by_package).to eq(package.name)
         expect(review.project).to eq(project)
@@ -92,7 +96,7 @@ RSpec.describe Review do
 
       it 'sets package and project associations when by_package and by_project object exists. remove package. Review should be invalid' do
         User.session = user
-        review = create(:review, by_project: project.name, by_package: package.name)
+        review = create(:review, by_project: project.name, by_package: package.name, bs_request: bs_request)
         expect(review.package).to eq(package)
         expect(review.by_package).to eq(package.name)
         expect(review.project).to eq(project)
@@ -148,15 +152,8 @@ RSpec.describe Review do
   end
 
   describe '#accepted_at' do
-    let!(:user) { create(:user) }
     let(:review_state) { :accepted }
-    let!(:review) do
-      create(
-        :review,
-        by_user: user.login,
-        state: review_state
-      )
-    end
+    let(:review) { create(:review, by_user: user.login, state: review_state, bs_request: bs_request) }
     let!(:history_element_review_accepted) do
       create(
         :history_element_review_accepted,
@@ -167,14 +164,9 @@ RSpec.describe Review do
     end
 
     context 'with a review assigned to and assigned to state = accepted' do
-      let!(:review2) do
-        create(
-          :review,
-          by_user: user.login,
-          review_id: review.id,
-          state: :accepted
-        )
-      end
+      subject { review.accepted_at }
+
+      let(:review2) { create(:review, by_user: user.login, review_id: review.id, state: :accepted, bs_request: bs_request) }
       let!(:history_element_review_accepted2) do
         create(
           :history_element_review_accepted,
@@ -184,23 +176,13 @@ RSpec.describe Review do
         )
       end
 
-      subject { review.accepted_at }
-
       it { is_expected.to eq(history_element_review_accepted2.created_at) }
     end
 
     context 'with a review assigned to and assigned to state != accepted' do
-      let!(:review2) do
-        create(
-          :review,
-          by_user: user.login,
-          review_id: review.id,
-          updated_at: Faker::Time.forward(days: 2),
-          state: :new
-        )
-      end
-
       subject { review.accepted_at }
+
+      let!(:review2) { create(:review, by_user: user.login, review_id: review.id, updated_at: Faker::Time.forward(days: 2), state: :new, bs_request: bs_request) }
 
       it { is_expected.to be_nil }
     end
@@ -212,24 +194,17 @@ RSpec.describe Review do
     end
 
     context 'with no reviewed assigned to and state != accepted' do
-      let(:review_state) { :new }
-
       subject { review.accepted_at }
+
+      let(:review_state) { :new }
 
       it { is_expected.to be_nil }
     end
   end
 
   describe '#declined_at' do
-    let!(:user) { create(:user) }
     let(:review_state) { :declined }
-    let!(:review) do
-      create(
-        :review,
-        by_user: user.login,
-        state: review_state
-      )
-    end
+    let(:review) { create(:review, by_user: user.login, state: review_state, bs_request: bs_request) }
     let!(:history_element_review_declined) do
       create(
         :history_element_review_declined,
@@ -240,14 +215,9 @@ RSpec.describe Review do
     end
 
     context 'with a review assigned to and assigned to state = declined' do
-      let!(:review2) do
-        create(
-          :review,
-          by_user: user.login,
-          review_id: review.id,
-          state: :declined
-        )
-      end
+      subject { review.declined_at }
+
+      let(:review2) { create(:review, by_user: user.login, review_id: review.id, state: :declined, bs_request: bs_request) }
       let!(:history_element_review_declined2) do
         create(
           :history_element_review_declined,
@@ -257,23 +227,13 @@ RSpec.describe Review do
         )
       end
 
-      subject { review.declined_at }
-
       it { is_expected.to eq(history_element_review_declined2.created_at) }
     end
 
     context 'with a review assigned to and assigned to state != declined' do
-      let!(:review2) do
-        create(
-          :review,
-          by_user: user.login,
-          review_id: review.id,
-          updated_at: Faker::Time.forward(days: 2),
-          state: :new
-        )
-      end
-
       subject { review.declined_at }
+
+      let!(:review2) { create(:review, by_user: user.login, review_id: review.id, updated_at: Faker::Time.forward(days: 2), state: :new, bs_request: bs_request) }
 
       it { is_expected.to be_nil }
     end
@@ -285,56 +245,62 @@ RSpec.describe Review do
     end
 
     context 'with no reviewed assigned to and state != declined' do
-      let(:review_state) { :new }
-
       subject { review.declined_at }
+
+      let(:review_state) { :new }
 
       it { is_expected.to be_nil }
     end
   end
 
   describe '#validate_not_self_assigned' do
-    let!(:user) { create(:user) }
-    let!(:review) { create(:review, by_user: user.login) }
+    let!(:review) { create(:review, by_user: user.login, bs_request: bs_request) }
 
     context 'assigned to itself' do
-      before { review.review_id = review.id }
+      before do
+        review.review_id = review.id
 
-      subject! { review.valid? }
+        review.valid?
+      end
 
       it { expect(review.errors[:review_id].count).to eq(1) }
     end
 
     context 'assigned to a different review' do
-      let!(:review2) { create(:review, by_user: user.login) }
+      let!(:review2) { create(:review, by_user: user.login, bs_request: bs_request) }
 
-      before { review.review_id = review2.id }
+      before do
+        review.review_id = review2.id
 
-      subject! { review.valid? }
+        review.valid?
+      end
 
       it { expect(review.errors[:review_id].count).to eq(0) }
     end
   end
 
   describe '#validate_non_symmetric_assignment' do
-    let!(:user) { create(:user) }
-    let!(:review) { create(:review, by_user: user.login) }
-    let!(:review2) { create(:review, by_user: user.login, review_id: review.id) }
+    let!(:review) { create(:review, by_user: user.login, bs_request: bs_request) }
+    let!(:review2) { create(:review, by_user: user.login, review_id: review.id, bs_request: bs_request) }
 
     context 'review1 is assigned to review2 which is already assigned to review1' do
-      before { review.review_id = review2.id }
+      before do
+        review.review_id = review2.id
 
-      subject! { review.valid? }
+        review.valid?
+      end
 
       it { expect(review.errors[:review_id].count).to eq(1) }
     end
 
     context 'review1 is assigned to review3' do
-      let!(:review3) { create(:review, by_user: user.login) }
+      let!(:review3) { create(:review, by_user: user.login, bs_request: bs_request) }
 
-      before { review.review_id = review3.id }
+      before do
+        review.review_id = review3.id
 
-      subject! { review.valid? }
+        review.valid?
+      end
 
       it { expect(review.errors[:review_id].count).to eq(0) }
     end
@@ -354,9 +320,9 @@ RSpec.describe Review do
     end
 
     context 'by_user' do
-      let!(:review) { create(:user_review) }
-
       subject { review.user }
+
+      let!(:review) { create(:user_review, bs_request: bs_request) }
 
       it_behaves_like "the subject's cache is reset when it's review changes"
     end
@@ -365,7 +331,7 @@ RSpec.describe Review do
       let(:groups_user) { create(:groups_user) }
       let(:group) { groups_user.group }
       let(:user) { groups_user.user }
-      let!(:review) { create(:review, by_group: group) }
+      let!(:review) { create(:review, by_group: group, bs_request: bs_request) }
 
       it_behaves_like "the subject's cache is reset when it's review changes" do
         subject { user }
@@ -376,11 +342,11 @@ RSpec.describe Review do
     end
 
     context 'by_package with a direct relationship' do
+      subject { relationship_package_user.user }
+
       let(:relationship_package_user) { create(:relationship_package_user) }
       let(:package) { relationship_package_user.package }
-      let!(:review) { create(:review, by_package: package, by_project: package.project) }
-
-      subject { relationship_package_user.user }
+      let!(:review) { create(:review, by_package: package, by_project: package.project, bs_request: bs_request) }
 
       it_behaves_like "the subject's cache is reset when it's review changes"
     end
@@ -391,7 +357,7 @@ RSpec.describe Review do
       let(:group) { relationship_package_group.group }
       let(:groups_user) { create(:groups_user, group: group) }
       let!(:user) { groups_user.user }
-      let!(:review) { create(:review, by_package: package, by_project: package.project) }
+      let!(:review) { create(:review, by_package: package, by_project: package.project, bs_request: bs_request) }
 
       it_behaves_like "the subject's cache is reset when it's review changes" do
         subject { user }
@@ -402,11 +368,11 @@ RSpec.describe Review do
     end
 
     context 'by_project with a direct relationship' do
+      subject { relationship_project_user.user }
+
       let(:relationship_project_user) { create(:relationship_project_user) }
       let(:project) { relationship_project_user.project }
-      let!(:review) { create(:review, by_project: project) }
-
-      subject { relationship_project_user.user }
+      let!(:review) { create(:review, by_project: project, bs_request: bs_request) }
 
       it_behaves_like "the subject's cache is reset when it's review changes"
     end
@@ -417,7 +383,7 @@ RSpec.describe Review do
       let(:group) { relationship_project_group.group }
       let(:groups_user) { create(:groups_user, group: group) }
       let!(:user) { groups_user.user }
-      let!(:review) { create(:review, by_project: project) }
+      let!(:review) { create(:review, by_project: project, bs_request: bs_request) }
 
       it_behaves_like "the subject's cache is reset when it's review changes" do
         subject { user }
@@ -435,10 +401,10 @@ RSpec.describe Review do
     let(:other_package) { other_project.packages.first }
     let(:other_package_with_same_name) { create(:package, name: package.name) }
 
-    let(:review_by_user)    { create(:review, by_user:    user.login) }
-    let(:review_by_group)   { create(:review, by_group:   group.title) }
-    let(:review_by_project) { create(:review, by_project: project.name) }
-    let(:review_by_package) { create(:review, by_project: project.name, by_package: package.name) }
+    let(:review_by_user)    { create(:review, bs_request: bs_request, by_user:    user.login) }
+    let(:review_by_group)   { create(:review, bs_request: bs_request, by_group:   group.title) }
+    let(:review_by_project) { create(:review, bs_request: bs_request, by_project: project.name) }
+    let(:review_by_package) { create(:review, bs_request: bs_request, by_project: project.name, by_package: package.name) }
 
     it 'returns true if review configuration matches provided hash' do
       expect(review_by_user.reviewable_by?(by_user:       user.login)).to be(true)
@@ -457,6 +423,8 @@ RSpec.describe Review do
   end
 
   describe '.new_from_xml_hash' do
+    subject { Review.new_from_xml_hash(review_hash) }
+
     let(:request_xml) do
       "<request>
         <review state='accepted' by_user='#{user}'/>
@@ -464,8 +432,6 @@ RSpec.describe Review do
     end
     let(:request_hash) { Xmlhash.parse(request_xml) }
     let(:review_hash) { request_hash['review'] }
-
-    subject { Review.new_from_xml_hash(review_hash) }
 
     it 'initalizes the review in state :new' do
       expect(subject.state).to eq(:new)

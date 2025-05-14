@@ -1,12 +1,21 @@
 module Event
   class Report < Base
     receiver_roles :moderator
-    self.description = 'Report for inappropriate content has been created'
+    self.description = 'Report for inappropriate content created'
+    self.notification_explanation = 'Receive notifications for reports.'
 
-    payload_keys :id, :user_id, :reportable_id, :reportable_type, :reason
+    payload_keys :id, :reporter, :reportable_id, :reportable_type, :reason, :category
+
+    def subject
+      raise AbstractMethodCalled
+    end
 
     def parameters_for_notification
-      super.merge(notifiable_type: 'Report')
+      super.merge(notifiable_type: 'Report', type: 'NotificationReport')
+    end
+
+    def event_object
+      ::Report.find_by(payload['report_last_id'])
     end
   end
 end

@@ -14,6 +14,10 @@
   display: none;
 }
 
+.diff-accordion {
+  --bs-accordion-active-bg: var(--bs-secondary-bg);
+}
+
 .pre.scroll {
   --line-index-digits: 6ch;
   --additional-padding: 0px;
@@ -43,6 +47,16 @@
         margin-left: calc(2 * (var(--line-index-digits) + 2rem + var(--bs-border-width)) + 0.5rem + var(--bs-border-width) - var(--additional-padding));
         margin-top: -1.75rem !important;
       }
+      // TODO: This is hard-coding 65% of the viewport width. Find a proper solution once the code is refactored.
+      .line-comment {
+        width: 65vw;
+      }
+      // TODO: This is hard-coding 75% of the viewport width. Find a proper solution once the code is refactored.
+      @include media-breakpoint-between(xs,sm) {
+        .line-comment {
+          width: 75vw;
+        }
+      }
       .line-comment .fa-comment {
         display: none;
       }
@@ -61,10 +75,10 @@
       .line-comment .comment-diff { display: none; }
       &:target {
         .number {
-          background-color: rgba($warning, 0.5)!important
+          background-color: rgba($editor-warning, 0.5)!important
         }
         .value {
-          background-color: rgba($warning, 0.1);
+          background-color: rgba($editor-warning, 0.1);
           width: 100%
         }
       }
@@ -93,10 +107,16 @@
         }
       }
       &.added, &.added .number {
-        background-color: rgba($success, 0.2)
+        background-color: rgba($success, 0.2);
+        .inline-diff {
+          background-color: rgba($success, 0.5);
+        }
       }
       &.removed, &.removed .number {
-        background-color: rgba($danger, 0.2)
+        background-color: rgba($danger, 0.2);
+        .inline-diff {
+          background-color: rgba($danger, 0.5);
+        }
       }
       &.range, &.comment {
         border-bottom: var(--bs-border-width) solid var(--bs-border-color);
@@ -115,6 +135,10 @@
       .content {
         margin-left: 1rem;
         white-space: pre;
+        display: inline-block;
+        .inline-diff {
+          border-radius: 4px;
+        }
       }
     }
   }

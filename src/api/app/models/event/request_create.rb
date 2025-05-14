@@ -2,8 +2,10 @@ module Event
   class RequestCreate < Request
     self.message_bus_routing_key = 'request.create'
     self.description = 'Request created'
-    receiver_roles :source_maintainer, :target_maintainer, :source_watcher, :target_watcher,
+    receiver_roles :source_maintainer, :target_maintainer, :source_project_watcher, :target_project_watcher,
                    :source_package_watcher, :target_package_watcher
+
+    self.notification_explanation = 'Receive notifications for requests created for projects/packages for which you are...'
 
     def custom_headers
       base = super
@@ -22,7 +24,7 @@ module Event
     end
 
     def parameters_for_notification
-      super.merge(notifiable_type: 'BsRequest')
+      super.merge(notifiable_type: 'BsRequest', type: 'NotificationBsRequest')
     end
 
     private

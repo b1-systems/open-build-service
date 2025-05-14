@@ -3,6 +3,12 @@ RSpec.describe Workflow::Step::ConfigureRepositories do
   let(:token) { create(:workflow_token, executor: user) }
 
   describe '#call' do
+    subject do
+      described_class.new(step_instructions: step_instructions,
+                          token: token,
+                          workflow_run: workflow_run)
+    end
+
     let(:path_project1) { create(:project, name: 'openSUSE:Factory') }
     let!(:path_repository1) { create(:repository, project: path_project1, name: 'snapshot', architectures: %w[i586 aarch64]) }
     let(:path_project2) { create(:project, name: 'openSUSE:Leap:15.4') }
@@ -27,37 +33,16 @@ RSpec.describe Workflow::Step::ConfigureRepositories do
           ]
       }
     end
-    let(:scm_webhook) do
-      SCMWebhook.new(payload: {
-                       scm: 'github',
-                       event: 'pull_request',
-                       action: 'opened',
-                       pr_number: 1,
-                       source_repository_full_name: 'openSUSE/repo123',
-                       target_repository_full_name: 'openSUSE/repo123',
-                       commit_sha: '123'
-                     })
-    end
 
-    subject do
-      described_class.new(step_instructions: step_instructions,
-                          scm_webhook: scm_webhook,
-                          token: token)
+    let(:request_payload) { file_fixture('request_payload_github_pull_request_opened.json').read }
+
+    let(:workflow_run) do
+      create(:workflow_run, scm_vendor: 'github', hook_event: 'pull_request', request_payload: request_payload)
     end
 
     context 'when the token user does not have enough permissions' do
       let(:another_user) { create(:confirmed_user, :with_home, login: 'Pop') }
       let(:token) { create(:workflow_token, executor: another_user) }
-      let(:scm_webhook) do
-        SCMWebhook.new(payload: {
-                         scm: 'github',
-                         event: 'pull_request',
-                         action: 'opened',
-                         pr_number: 1,
-                         target_repository_full_name: 'openSUSE/repo123',
-                         commit_sha: '123'
-                       })
-      end
 
       before do
         target_project
@@ -87,46 +72,14 @@ RSpec.describe Workflow::Step::ConfigureRepositories do
         end
 
         it 'configures the path elements with the right attributes' do
-          expect(configured_path_elements).to contain_exactly(have_attributes(parent_id: configured_repositories.first.id, repository_id: path_repository1.id, position: 1,
-                                                                              kind: 'standard'), have_attributes(parent_id: configured_repositories.first.id, repository_id: path_repository2.id, position: 2, kind: 'standard'))
+          expect(configured_path_elements).to contain_exactly(
+            have_attributes(parent_id: configured_repositories.first.id, repository_id: path_repository1.id, position: 1, kind: 'standard'),
+            have_attributes(parent_id: configured_repositories.first.id, repository_id: path_repository2.id, position: 2, kind: 'standard')
+          )
         end
 
         it 'overwrites previously configured architectures with those in the step instructions' do
           expect(configured_architectures.map(&:name)).to eq(%w[x86_64 ppc])
-        end
-      end
-
-      context 'and the project is missing in the step instructions' do
-        let(:step_instructions) do
-          {
-            fake_project: 'OBS:Server:Unstable',
-            repositories:
-              [
-                {
-                  name: 'openSUSE_Tumbleweed',
-                  paths: [{ target_project: 'openSUSE:Factory', target_repository: 'snapshot' }],
-                  architectures: %w[
-                    x86_64
-                    ppc
-                  ]
-                }
-              ]
-          }
-        end
-
-        it { expect(subject).not_to be_valid }
-
-        it 'does not create any repository' do
-          expect { subject.call }.not_to change(Repository, :count)
-        end
-
-        it 'does not create any architecture' do
-          expect { subject.call }.not_to change(Architecture, :count)
-        end
-
-        it "a validation fails complaining about the missing 'project' key" do
-          subject.call
-          expect(subject.errors.full_messages.to_sentence).to eq("The 'project' key is missing")
         end
       end
 
@@ -152,8 +105,8 @@ RSpec.describe Workflow::Step::ConfigureRepositories do
         it 'is not valid' do
           expect(subject).not_to be_valid
           expect(subject.errors.full_messages).to eq(["configure_repositories step: Repository paths are now set under the 'paths' key. Refer to " \
-                                                      'https://openbuildservice.org/help/manuals/obs-user-guide/cha.obs.scm_ci_workflow_integration.html' \
-                                                      '#sec.obs.obs_scm_ci_workflow_integration.obs_workflows.steps.configure_repositories_architectures_for_a_project ' \
+                                                      'https://openbuildservice.org/help/manuals/obs-user-guide/cha-obs-scm-ci-workflow-integration' \
+                                                      '#sec-obs-obs-scm-ci-workflow-integration-obs-workflows-steps-configure-repositories-architectures-for-a-project ' \
                                                       'for an example',
                                                       "configure_repositories step: All repositories must have the 'architectures', 'name', and 'paths' keys",
                                                       "configure_repositories step: All repository paths must have the 'target_project' and 'target_repository' keys"])
@@ -323,43 +276,6 @@ RSpec.describe Workflow::Step::ConfigureRepositories do
 
       it 'raises an error' do
         expect { subject.call }.to raise_error(Project::Errors::UnknownObjectError, "Project not found: #{subject.target_project_name}")
-      end
-    end
-  end
-
-  describe '#validate_project_name' do
-    let(:step_instructions) do
-      {
-        project: 'Invalid/format',
-        repositories:
-          [
-            {
-              name: 'openSUSE_Tumbleweed',
-              paths: [{ target_project: 'openSUSE:Factory', target_repository: 'snapshot' }],
-              architectures: %w[
-                x86_64
-                ppc
-              ]
-            }
-          ]
-      }
-    end
-    let(:scm_webhook) { SCMWebhook.new(payload: payload) }
-
-    subject do
-      described_class.new(step_instructions: step_instructions,
-                          scm_webhook: scm_webhook,
-                          token: token)
-    end
-
-    context 'when the source project is invalid' do
-      let(:payload) { { scm: 'gitlab', event: 'Push Hook' } }
-
-      it 'adds a validation error' do
-        subject.valid?
-
-        expect { subject.call }.not_to change(Package, :count)
-        expect(subject.errors.full_messages.to_sentence).to eq("Invalid project 'Invalid/format'")
       end
     end
   end

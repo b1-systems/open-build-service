@@ -13,8 +13,6 @@
 //= require jquery3
 //= require jquery_ujs
 //= require popper
-// FIXME remove jquery-ui file when we upgrade jquery-ui gem
-//= require webui/jquery-ui.min.js
 //= require bootstrap
 //= require webui/color_themes.js
 //= require cocoon
@@ -22,8 +20,8 @@
 //= require jquery.flot.resize
 //= require jquery.flot.time
 //= require jquery.flot.stack.js
+//= require jquery-ui/widgets/autocomplete
 //= require tokenfield.js
-//= require webui/plotbusyworkers.js
 //= require webui/datatables.js
 //= require webui/flash.js
 //= require webui/tabs.js
@@ -51,7 +49,6 @@
 //= require webui/kiwi_editor.js
 //= require webui/monitor.js
 //= require webui/in_place_editing.js
-//= require webui/notification.js
 //= require webui/navigation.js
 //= require webui/user_profile.js
 //= require webui/long_text.js
@@ -68,6 +65,7 @@
 //= require webui/add_file.js
 //= require chartkick
 //= require Chart.bundle
-//= require webui/report.js
 //= require webui/canned_responses.js
-//= require webui/network.js
+//= require webui/multi_select.js
+//= require webui/dropdown.js
+//= require webui/after_loading_fixes.js

@@ -35,7 +35,7 @@ module Backend
         # @return [String]
         def self.revisions(project_name, package_name, options = {})
           http_get(['/source/:project/:package/_history', project_name, package_name], params: options,
-                                                                                       accepted: %i[meta rev deleted limit],
+                                                                                       accepted: %i[meta rev deleted limit startbefore],
                                                                                        defaults: { meta: 1, deleted: 1 })
         end
 
@@ -120,7 +120,7 @@ module Backend
         # @option options [String] :filelimit Sets the maximum lines of the diff which will be returned (0 = all lines)
         # @return [String]
         def self.source_diff(project_name, package_name, options = {})
-          accepted = %i[rev orev opackage oproject linkrev olinkrev expand filelimit tarlimit withissues view cacheonly nodiff]
+          accepted = %i[rev orev opackage oproject linkrev olinkrev expand filelimit tarlimit withissues view cacheonly nodiff file]
           diff = http_post(['/source/:project/:package', project_name, package_name], defaults: { cmd: :diff }, params: options, accepted: accepted)
           diff.valid_encoding? ? diff : diff.encode('UTF-8', 'binary', invalid: :replace, undef: :replace)
         end
@@ -131,13 +131,19 @@ module Backend
         # @return [String]
         def self.rebuild(project_name, package_name, options = {})
           http_post(['/build/:project', project_name], defaults: { cmd: :rebuild, package: package_name },
-                                                       params: options, accepted: %i[repository arch])
+                                                       params: options.compact, accepted: %i[repository arch])
         end
 
         # Returns the content of the source file
         # @return [String]
         def self.file(project_name, package_name, file_name)
           http_get(['/source/:project/:package/:filename', project_name, package_name, file_name])
+        end
+
+        # Returns the content of the source file
+        # @return [String]
+        def self.blame(project_name, package_name, file_name, options = {})
+          http_get(['/source/:project/:package/:filename', project_name, package_name, file_name], defaults: { view: :blame }, params: options, accepted: %i[meta deleted expand rev view])
         end
 
         # Writes the content of the source file
@@ -155,6 +161,12 @@ module Backend
         # Deletes the package and all the source files inside
         def self.delete(project_name, package_name)
           http_delete(['/source/:project/:package', project_name, package_name])
+        end
+
+        # Undeletes the package
+        def self.undelete(project_name, package_name, options = {})
+          http_post(['/source/:project/:package', project_name, package_name], defaults: { cmd: :undelete },
+                                                                               params: options, accepted: %i[user comment time])
         end
 
         # Deletes a package source file

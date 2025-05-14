@@ -46,7 +46,7 @@ class Channel < ApplicationRecord
     _update_from_xml_targets(xmlhash)
     _update_from_xml_binary_lists(xmlhash)
 
-    if package.project.is_maintenance_incident? || package.is_link?
+    if package.project.maintenance_incident? || package.link?
       # we skip binaries in incidents and when they are just a branch
       # we do not need the data since it is not the origin definition
       save
@@ -90,7 +90,7 @@ class Channel < ApplicationRecord
     target_package
   end
 
-  def is_active?
+  def active?
     return false if disabled
 
     # no targets defined, the project has some
@@ -131,7 +131,7 @@ class Channel < ApplicationRecord
       arch = nil
       arch = Architecture.find_by_name!(b['arch']) if b['arch']
       hash = { name: b['name'], binaryarch: b['binaryarch'], supportstatus: b['supportstatus'],
-               project: nil, architecture: arch, repository: nil }
+               superseded_by: b['superseded_by'], project: nil, architecture: arch, repository: nil }
       hash[:package] = b['package'].blank? ? nil : b['package'].gsub(/:.*$/, '')
       if b['project']
         hash[:project] = Project.get_by_name(b['project'])

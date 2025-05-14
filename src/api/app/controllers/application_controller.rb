@@ -23,8 +23,7 @@ class ApplicationController < ActionController::Base
   # Each request starts out with the nobody user set.
   before_action :set_nobody
 
-  before_action :validate_xml_request, :add_api_version
-  after_action :validate_xml_response if CONFIG['response_schema_validation'] == true
+  before_action :add_api_version
 
   # skip the filter for the user stuff
   before_action :extract_user
@@ -32,6 +31,9 @@ class ApplicationController < ActionController::Base
   before_action :shutup_rails
   before_action :validate_params
   before_action :require_login
+
+  before_action :validate_xml_request
+  after_action :validate_xml_response if CONFIG['response_schema_validation'] == true
 
   delegate :extract_user,
            :extract_user_public,
@@ -93,24 +95,16 @@ class ApplicationController < ActionController::Base
       next if key == 'xmlhash' # perfectly fine
       raise InvalidParameterError, "Parameter #{key} has non String class #{value.class}" unless value.is_a?(String)
     end
-    true
-  end
-
-  def require_valid_project_name
-    required_parameters :project
-    valid_project_name!(params[:project])
-    # important because otherwise the filter chain is stopped
-    true
   end
 
   def require_scmsync_host_check
     scm_cookie = request.env['HTTP_X_SCM_BRIDGE_COOKIE']
     raise MissingParameterError, 'X-SCM_BRIDGE_COOKIE is not set' if scm_cookie.blank?
-    raise MissingParameterError, 'Incorrect scm bridge cookie' if scm_cookie != (CONFIG['scm_bridge_cookie']).to_s
+    raise MissingParameterError, 'Incorrect scm bridge cookie' if scm_cookie != CONFIG['scm_bridge_cookie'].to_s
   end
 
   def add_api_version
-    response.headers['X-Opensuse-APIVersion'] = (CONFIG['version']).to_s
+    response.headers['X-Opensuse-APIVersion'] = CONFIG['version'].to_s
   end
 
   def require_parameter!(parameter)
@@ -169,7 +163,7 @@ class ApplicationController < ActionController::Base
       format.json { render json: { errorcode: @errorcode, summary: @summary }, status: @status }
       format.html do
         flash[:error] = "#{@summary} (#{@errorcode})" unless request.env['HTTP_REFERER']
-        redirect_back(fallback_location: root_path)
+        redirect_back_or_to root_path
       end
     end
   end
@@ -265,10 +259,18 @@ class ApplicationController < ActionController::Base
     User.session = User.find_nobody!
   end
 
+  def check_spider
+    return request.bot? if Rails.env.production?
+
+    false
+  end
+
   def set_influxdb_data
     InfluxDB::Rails.current.tags = {
       beta: User.possibly_nobody.in_beta?,
       anonymous: !User.session,
+      spider: check_spider,
+      interconnect: false,
       interface: :api
     }
   end

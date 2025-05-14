@@ -1,8 +1,21 @@
 RSpec.describe Workflow::Step::SetFlags do
+  subject do
+    described_class.new(step_instructions: step_instructions,
+                        token: token,
+                        workflow_run: workflow_run)
+  end
+
   let(:user) { create(:confirmed_user, :with_home, login: 'Iggy') }
+  let(:workflow_run) do
+    create(:workflow_run, scm_vendor: scm_vendor, hook_event: hook_event, request_payload: request_payload)
+  end
   let(:token) { create(:workflow_token, executor: user) }
 
   describe '#call' do
+    let(:hook_event) { 'pull_request' }
+    let(:scm_vendor) { 'github' }
+    let(:request_payload) { file_fixture('request_payload_github_pull_request_opened.json').read }
+
     let(:step_instructions) do
       {
         flags:
@@ -19,26 +32,9 @@ RSpec.describe Workflow::Step::SetFlags do
     end
     let!(:target_project) { create(:project, name: 'home:Iggy:openSUSE:repo123:PR-1') }
 
-    subject do
-      described_class.new(step_instructions: step_instructions,
-                          scm_webhook: scm_webhook,
-                          token: token)
-    end
-
     context 'when the token user does not have enough permissions' do
       let(:another_user) { create(:confirmed_user, :with_home, login: 'Pop') }
       let(:token) { create(:workflow_token, executor: another_user) }
-      let!(:project) { create(:project, name: 'home:Iggy') }
-      let(:scm_webhook) do
-        SCMWebhook.new(payload: {
-                         scm: 'github',
-                         event: 'pull_request',
-                         action: 'opened',
-                         pr_number: 1,
-                         target_repository_full_name: 'openSUSE/repo123',
-                         commit_sha: '123'
-                       })
-      end
 
       before do
         login(another_user)
@@ -54,20 +50,9 @@ RSpec.describe Workflow::Step::SetFlags do
     end
 
     context 'when user have the permissions and the project is valid' do
-      let(:scm_webhook) do
-        SCMWebhook.new(payload: {
-                         scm: 'github',
-                         event: 'pull_request',
-                         action: 'opened',
-                         pr_number: 1,
-                         target_repository_full_name: 'openSUSE/repo123',
-                         commit_sha: '123'
-                       })
-      end
-
       context 'when one flag is given' do
         before do
-          login target_project.commit_user
+          login user
         end
 
         it 'adds flag to the project' do
@@ -98,7 +83,7 @@ RSpec.describe Workflow::Step::SetFlags do
         end
 
         before do
-          login target_project.commit_user
+          login user
         end
 
         it 'add flags to the project' do
@@ -110,9 +95,16 @@ RSpec.describe Workflow::Step::SetFlags do
     end
 
     context 'when user have the permission and the package is valid' do
+      let(:hook_event) { 'Push Hook' }
+      let(:scm_vendor) { 'gitlab' }
       let!(:target_package) { create(:package, commit_user: user, project: user.home_project, name: 'ctris-0087aa5c0549a6cc0b4c1bb324d2fa8dc665e063') }
-      let(:payload) { { scm: 'gitlab', event: 'Push Hook', commit_sha: '0087aa5c0549a6cc0b4c1bb324d2fa8dc665e063' } }
-      let(:scm_webhook) { SCMWebhook.new(payload: payload) }
+      let(:request_payload) do
+        {
+          object_kind: 'push',
+          after: '0087aa5c0549a6cc0b4c1bb324d2fa8dc665e063'
+        }.to_json
+      end
+
       let(:step_instructions) do
         {
           flags:
@@ -138,16 +130,6 @@ RSpec.describe Workflow::Step::SetFlags do
     end
 
     context 'when there is a duplicate flag' do
-      let(:scm_webhook) do
-        SCMWebhook.new(payload: {
-                         scm: 'github',
-                         event: 'pull_request',
-                         action: 'opened',
-                         pr_number: 1,
-                         target_repository_full_name: 'openSUSE/repo123',
-                         commit_sha: '123'
-                       })
-      end
       let(:step_instructions) do
         {
           flags:
@@ -175,16 +157,6 @@ RSpec.describe Workflow::Step::SetFlags do
     end
 
     context 'when the flag exists but the status differs' do
-      let(:scm_webhook) do
-        SCMWebhook.new(payload: {
-                         scm: 'github',
-                         event: 'pull_request',
-                         action: 'opened',
-                         pr_number: 1,
-                         target_repository_full_name: 'openSUSE/repo123',
-                         commit_sha: '123'
-                       })
-      end
       let(:step_instructions) do
         {
           flags:
@@ -203,6 +175,7 @@ RSpec.describe Workflow::Step::SetFlags do
       before do
         target_project.add_flag('publish', 'disable', 'openSUSE_Tumbleweed', 'x86_64')
         target_project.save!
+        login(user)
       end
 
       it 'does not raise an error and updates the status' do
@@ -213,14 +186,15 @@ RSpec.describe Workflow::Step::SetFlags do
   end
 
   describe '#validate_flags' do
-    let(:payload) { { scm: 'gitlab', event: 'Push Hook' } }
-    let(:scm_webhook) { SCMWebhook.new(payload: payload) }
-
-    subject do
-      described_class.new(step_instructions: step_instructions,
-                          scm_webhook: scm_webhook,
-                          token: token)
+    let(:request_payload) do
+      {
+        object_kind: 'push',
+        after: '0087aa5c0549a6cc0b4c1bb324d2fa8dc665e063'
+      }.to_json
     end
+
+    let(:hook_event) { 'Push Hook' }
+    let(:scm_vendor) { 'gitlab' }
 
     context 'when a flag is missing a key' do
       let(:step_instructions) do

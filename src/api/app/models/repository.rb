@@ -12,7 +12,23 @@ class Repository < ApplicationRecord
   has_many :links, class_name: 'PathElement', inverse_of: :link
   has_many :targetlinks, class_name: 'ReleaseTarget', foreign_key: 'target_repository_id'
   has_one :hostsystem, class_name: 'Repository', foreign_key: 'hostsystem_id'
-  has_many :binary_releases, dependent: :destroy
+  has_many :binary_releases, dependent: :destroy do
+    def current
+      where(obsolete_time: nil)
+    end
+
+    def obsolete
+      where.not(obsolete_time: nil)
+    end
+
+    def unchanged
+      where(modify_time: nil)
+    end
+
+    def changed
+      where.not(modify_time: nil)
+    end
+  end
   has_many :product_update_repositories, dependent: :delete_all
   has_many :product_medium, dependent: :delete_all
   has_many :repository_architectures, -> { order('position') }, dependent: :destroy, inverse_of: :repository
@@ -181,7 +197,7 @@ class Repository < ApplicationRecord
     links.map(&:repository)
   end
 
-  def is_local_channel?
+  def local_channel?
     # is any our path elements the target of a channel package in this project?
     path_elements.includes(:link).find_each do |pe|
       return true if ChannelTarget.find_by_repo(pe.link, [project]).any?
@@ -191,7 +207,7 @@ class Repository < ApplicationRecord
     false
   end
 
-  def has_hostsystem?
+  def hostsystem?
     path_elements.where(kind: :hostsystem).any?
   end
 
@@ -206,7 +222,7 @@ class Repository < ApplicationRecord
     long_name = project.name.tr(':', '_')
     if project.repositories.count > 1 && !(name == 'standard')
       # keep short names if project has just one repo
-      long_name += '_' + name
+      long_name += "_#{name}"
     end
     long_name
   end
@@ -237,12 +253,12 @@ class Repository < ApplicationRecord
     end
   end
 
-  def is_kiwi_type?
+  def kiwi_type?
     # HACK: will be cleaned up after implementing FATE #308899
     name == 'images'
   end
 
-  def has_local_path?
+  def local_path?
     path_elements.each do |pe|
       return true if pe.link.project == project
     end
@@ -256,7 +272,7 @@ class Repository < ApplicationRecord
     end
 
     position = 1
-    if source_repository.has_local_path?
+    if source_repository.local_path?
       # don't link to the original external repo, but use the repo from this project
       # pointing to this external repo.
       source_repository.path_elements.where(kind: 'standard').find_each do |spe|
@@ -266,7 +282,7 @@ class Repository < ApplicationRecord
         path_elements.create(link: local_repository, position: position)
         position += 1
       end
-    elsif source_repository.is_kiwi_type?
+    elsif source_repository.kiwi_type?
       # kiwi builds need to copy path elements
       source_repository.path_elements.each do |pa|
         path_elements.create(link: pa.link, position: pa.position, kind: pa.kind)
@@ -282,16 +298,16 @@ class Repository < ApplicationRecord
 
     # we build against the other repository by default
     path_elements.create(link: source_repository, position: position)
-    path_elements.create(link: source_repository, position: position, kind: :hostsystem) if source_repository.has_hostsystem?
+    path_elements.create(link: source_repository, position: position, kind: :hostsystem) if source_repository.hostsystem?
   end
 
   def download_url(file)
     xml = Xmlhash.parse(Backend::Api::Published.download_url_for_repository(project.name, name))
     url = xml.elements('url').last.to_s
-    url + '/' + file if file.present?
+    "#{url}/#{file}" if file.present?
   end
 
-  def is_dod_repository?
+  def dod_repository?
     download_repositories.any?
   end
 

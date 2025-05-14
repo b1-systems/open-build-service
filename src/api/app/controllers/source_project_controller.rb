@@ -1,11 +1,34 @@
 class SourceProjectController < SourceController
   include CheckAndRemoveRepositories
 
+  validate_action index: { method: :get, response: :directory }
+  before_action :require_valid_project_name, except: :index
+
+  # GET /source
+  #########
+  def index
+    # init and validation
+    #--------------------
+    admin_user = User.admin_session?
+
+    # access checks
+    #--------------
+
+    if params.key?(:deleted)
+      raise NoPermissionForDeleted unless admin_user
+
+      pass_to_backend
+    else
+      @project_names = Project.order(:name).pluck(:name)
+      render formats: [:xml]
+    end
+  end
+
   # GET /source/:project
   def show
     project_name = params[:project]
     if params.key?(:deleted)
-      unless Project.find_by_name(project_name) || Project.is_remote_project?(project_name)
+      unless Project.find_by_name(project_name) || Project.remote_project?(project_name)
         # project is deleted or not accessible
         validate_visibility_of_deleted_project(project_name)
       end
@@ -13,7 +36,7 @@ class SourceProjectController < SourceController
       return
     end
 
-    if Project.is_remote_project?(project_name)
+    if Project.remote_project?(project_name)
       # not a local project, hand over to backend
       pass_to_backend
       return
@@ -27,11 +50,11 @@ class SourceProjectController < SourceController
       case params[:view]
       when 'verboseproductlist'
         @products = Product.all_products(@project, params[:expand])
-        render 'source/verboseproductlist'
+        render 'source/verboseproductlist', formats: [:xml]
         return
       when 'productlist'
         @products = Product.all_products(@project, params[:expand])
-        render 'source/productlist'
+        render 'source/productlist', formats: [:xml]
         return
       when 'issues'
         render_project_issues
@@ -48,7 +71,7 @@ class SourceProjectController < SourceController
 
   def render_project_issues
     set_issues_defaults
-    render partial: 'source/project_issues'
+    render partial: 'source/project_issues', formats: [:xml]
   end
 
   def render_project_packages
@@ -61,7 +84,7 @@ class SourceProjectController < SourceController
     project = Project.get_by_name(params[:project])
 
     # checks
-    unless project.is_a?(Project) && User.session!.can_modify?(project)
+    unless project.is_a?(Project) && User.session.can_modify?(project)
       logger.debug "No permission to delete project #{project}"
       render_error status: 403, errorcode: 'delete_project_no_permission',
                    message: "Permission denied (delete project #{project})"
@@ -86,35 +109,45 @@ class SourceProjectController < SourceController
     render_ok
   end
 
-  # POST /source/:project?cmd
-  #-----------------
-  def project_command
-    # init and validation
-    #--------------------
-    required_parameters(:cmd)
+  # GET /source/:project/_pubkey and /_sslcert
+  def show_pubkey
+    # assemble path for backend
+    path = pubkey_path
 
-    valid_commands = %w[undelete showlinked remove_flag set_flag createpatchinfo
-                        createkey extendkey copy createmaintenanceincident lock
-                        unlock release addchannels modifychannels move freezelink]
+    # GET /source/:project/_pubkey
+    pass_to_backend(path)
+  end
 
-    raise IllegalRequest, 'invalid_command' unless valid_commands.include?(params[:cmd])
+  # DELETE /source/:project/_pubkey
+  def delete_pubkey
+    params[:user] = User.session.login
+    path = pubkey_path
 
-    command = params[:cmd]
-    project_name = params[:project]
-    params[:user] = User.session!.login
+    # check for permissions
+    upper_project = @prj.name.gsub(/:[^:]*$/, '')
+    while upper_project != @prj.name && upper_project.present?
+      if Project.exists_by_name(upper_project) && User.session.can_modify?(Project.get_by_name(upper_project))
+        pass_to_backend(path)
+        return
+      end
+      break unless upper_project.include?(':')
 
-    return dispatch_command(:project_command, command) if command.in?(%w[undelete release copy move])
-
-    @project = Project.get_by_name(project_name)
-
-    # unlock
-    if command == 'unlock' && User.session!.can_modify?(@project, true)
-      dispatch_command(:project_command, command)
-    elsif command == 'showlinked' || User.session!.can_modify?(@project)
-      # command: showlinked, set_flag, remove_flag, ...?
-      dispatch_command(:project_command, command)
-    else
-      raise CmdExecutionNoPermission, "no permission to execute command '#{command}'"
+      upper_project = upper_project.gsub(/:[^:]*$/, '')
     end
+
+    if User.admin_session?
+      pass_to_backend(path)
+    else
+      raise DeleteProjectPubkeyNoPermission, "No permission to delete public key for project '#{params[:project]}'. " \
+                                             'Either maintainer permissions by upper project or admin permissions is needed.'
+    end
+  end
+
+  private
+
+  def pubkey_path
+    # check for project
+    @prj = Project.get_by_name(params[:project])
+    request.path_info + build_query_from_hash(params, %i[user comment meta rev])
   end
 end

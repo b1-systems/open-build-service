@@ -71,7 +71,7 @@ RSpec.describe Webui::SessionController do
       context "and 'Negotiate' header is not set" do
         it 'informs the client tool (browser) that kerberos authentication is required' do
           expect(response.headers['WWW-Authenticate']).to eq('Negotiate')
-          expect(response.status).to eq(401)
+          expect(response).to have_http_status(:unauthorized)
         end
 
         it 'informs users about failed kerberos authentication and possible cause' do
@@ -138,6 +138,7 @@ RSpec.describe Webui::SessionController do
     context 'when header is set' do
       before do
         request.headers['HTTP_X_USERNAME'] = user.login
+        request.headers['HTTP_X_EMAIL'] = user.email
       end
 
       it 'logs in a user' do
@@ -184,6 +185,7 @@ RSpec.describe Webui::SessionController do
 
       before do
         request.headers['HTTP_X_USERNAME'] = unconfirmed_user.login
+        request.headers['HTTP_X_EMAIL'] = unconfirmed_user.email
         stub_const('CONFIG', { proxy_auth_logout_page: '/' }.with_indifferent_access)
       end
 

@@ -1,7 +1,7 @@
 require 'selenium-webdriver'
 
 Capybara.default_max_wait_time = 6
-Capybara.save_path = Rails.root.join('tmp', 'capybara')
+Capybara.save_path = Rails.root.join('tmp/capybara')
 Capybara.server = :puma, { Silent: true }
 Capybara.disable_animation = true
 Capybara.javascript_driver = :desktop
@@ -14,7 +14,8 @@ Capybara.register_driver :desktop do |app|
   Capybara::Selenium::Driver.load_selenium
   browser_options = Selenium::WebDriver::Chrome::Options.new
   browser_options.args << '--disable-gpu'
-  browser_options.args << '--headless'
+  browser_options.args << '--disable-dev-shm-usage'
+  browser_options.args << '--headless=new'
   browser_options.args << '--no-sandbox' # to run in docker
   browser_options.args << '--window-size=1280,1024'
   Capybara::Selenium::Driver.new(app, browser: :chrome, options: browser_options)
@@ -24,7 +25,8 @@ Capybara.register_driver :mobile do |app|
   Capybara::Selenium::Driver.load_selenium
   browser_options = Selenium::WebDriver::Chrome::Options.new
   browser_options.args << '--disable-gpu'
-  browser_options.args << '--headless'
+  browser_options.args << '--disable-dev-shm-usage'
+  browser_options.args << '--headless=new'
   browser_options.args << '--no-sandbox' # to run in docker
   browser_options.add_emulation(device_metrics: { width: 320, height: 568, pixelRatio: 1, touch: true })
   Capybara::Selenium::Driver.new(app, browser: :chrome, options: browser_options)
@@ -48,8 +50,8 @@ RSpec.configure do |config|
       example_filename = RSpec.current_example.full_description
       example_filename = example_filename.gsub(/[^0-9A-Za-z_]/, '_')
       example_filename = File.expand_path(example_filename, Capybara.save_path)
-      save_page("#{example_filename}.html")
-      save_screenshot("#{example_filename}.png")
+      save_page("#{example_filename}.html")      # rubocop:disable Lint/Debugger
+      save_screenshot("#{example_filename}.png") # rubocop:disable Lint/Debugger
     end
   end
 end

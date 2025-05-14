@@ -77,6 +77,18 @@ post:
           - 1
       description: Set to ignore validation and resolving of devel package or devel project definition.
     - in: query
+      name: force
+      schema:
+        type: string
+      description: |
+        Set to 1 to allow overwriting of a pre-existing package.
+      example: 1
+    - in: query
+      name: rev
+      schema:
+        type: string
+      description: Set to branch against a specific revision.
+    - in: query
       name: maintenance
       schema:
         type: string

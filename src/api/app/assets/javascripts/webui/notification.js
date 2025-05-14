@@ -1,5 +1,5 @@
 function setSelectAllCheckbox() {
-  $('#select-all-notifications').change(function() {
+  $(document).on('change', '#select-all-notifications', function() {
     var checkboxes = $(this).closest('form').find('input[type=checkbox]');
     checkboxes.prop('checked', $(this).is(':checked'));
   });
@@ -14,10 +14,12 @@ function setCheckboxCounterAndSubmitButton() {
   });
 
   if(amountBoxesChecked <= 0) {
-    $('#done-button').prop('disabled', true);
+    $('#read-button').prop('disabled', true);
+    $('#unread-button').prop('disabled', true);
     $('#select-all-label').text('Select All');
   } else {
-    $('#done-button').prop('disabled', false);
+    $('#read-button').prop('disabled', false);
+    $('#unread-button').prop('disabled', false);
     $('#select-all-label').text(amountBoxesChecked + ' selected');
   }
 }
@@ -25,7 +27,7 @@ function setCheckboxCounterAndSubmitButton() {
 function handleNotificationCheckboxSelection() { // jshint ignore:line
   setCheckboxCounterAndSubmitButton();
   setSelectAllCheckbox();
-  $('input[type="checkbox"]').change(function() {
+  $(document).on('change', 'input[type="checkbox"]', function() {
     setCheckboxCounterAndSubmitButton();
   });
 }

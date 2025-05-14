@@ -6,11 +6,17 @@ class BuildResultsMonitorComponent < ApplicationComponent
 
     @raw_data = raw_data
     @filter_url = filter_url
-    @filters = filters
+    @filters = default_filters(filters)
     @filtered_data = filtered_data(raw_data)
   end
 
   private
+
+  def default_filters(filters)
+    return filters if filters.any? { it.starts_with?('status_') }
+
+    filters.concat(Buildresult.default_status_filter_values.map { it.prepend('status_') })
+  end
 
   def package_names
     raw_data.pluck(:package_name).uniq
@@ -41,7 +47,7 @@ class BuildResultsMonitorComponent < ApplicationComponent
   end
 
   def status_names
-    raw_data.pluck(:status).uniq
+    Buildresult.avail_status_values
   end
 
   def results_per_package(package_name)
@@ -72,17 +78,18 @@ class BuildResultsMonitorComponent < ApplicationComponent
   end
 
   def filtered_data(data)
-    data = filter_data_by_multiple_values(data, filters_by_type('package_'), 'package_', :package_name)
-    data = filter_data_by_multiple_values(data, filters_by_type('repo_'), 'repo_', :repository)
-    data = filter_data_by_multiple_values(data, filters_by_type('arch_'), 'arch_', :architecture)
-    filter_data_by_multiple_values(data, filters_by_type('status_'), 'status_', :status)
+    data = filter_data_by_multiple_values(data, 'package_', :package_name)
+    data = filter_data_by_multiple_values(data, 'repo_', :repository)
+    data = filter_data_by_multiple_values(data, 'arch_', :architecture)
+    filter_data_by_multiple_values(data, 'status_', :status)
   end
 
   def filters_by_type(prefix)
     filters.select { |filter| filter.starts_with?(prefix) }
   end
 
-  def filter_data_by_multiple_values(data, filters, prefix, key_name)
+  def filter_data_by_multiple_values(data, prefix, key_name)
+    filters = filters_by_type(prefix)
     return data if filters.blank?
 
     data.select { |result| filters.include?("#{prefix}#{result[key_name]}") }

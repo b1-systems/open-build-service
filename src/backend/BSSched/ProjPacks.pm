@@ -107,9 +107,14 @@ sub checkbuildrepoid {
 =cut
 
 sub get_projpacks_all_sync {
-  my ($gctx) = @_;
+  my ($gctx, $startupmode) = @_;
+  die("unsupported startup mode $startupmode\n") if $startupmode && $startupmode != 1 && $startupmode != 2;
   my $myarch = $gctx->{'arch'};
-  my @args = ('withsrcmd5', 'withdeps', 'withrepos', 'withconfig', 'withremotemap', "arch=$myarch");
+  my @args;
+  push @args, 'withsrcmd5', 'withdeps' unless $startupmode == 2;
+  push @args, 'withrepos', 'withconfig', 'withremotemap';
+  push @args, 'noremote=1' if $startupmode;
+  push @args, "arch=$myarch";
   push @args, "partition=$BSConfig::partition" if $BSConfig::partition;
   my $projpacksin;
   while (1) {
@@ -444,6 +449,10 @@ sub update_projpacks {
       delete $proj->{'package'};
     }
   }
+  # the src server does not send the project if the packages were deleted
+  if (defined($projid) && !@{$projpacksin->{'project'} || []} && $projpacks->{$projid}) {
+    update_prpcheckuseforbuild($gctx, $projid, $projpacks->{$projid});
+  }
   if (defined($projid) && $isgone) {
     update_prpcheckuseforbuild($gctx, $projid);
     BSSched::DoD::update_doddata($gctx, $projid) if $BSConfig::enable_download_on_demand;
@@ -514,7 +523,7 @@ sub update_project_meta {
 
 sub has_critical_config_change {
   my ($projid, $repoid, $arch, $oldconfig, $newconfig) = @_;
-  my @mprefix = ("%define _project $projid", "%define _repository $repoid");
+  my @mprefix = ("%define _project $projid", "%define _repository $repoid", "%define _is_this_project 1", "%define _is_in_project 1");
   my $cold = Build::read_config($arch, [ @mprefix, split("\n", $oldconfig || '') ]);
   my $cnew = Build::read_config($arch, [ @mprefix, split("\n", $newconfig || '') ]);
   return 1 if ($cold->{'expandflags:macroserial'} || '') ne ($cnew->{'expandflags:macroserial'} || '');
@@ -1596,24 +1605,19 @@ sub do_fetchprojpacks {
 
 =head2 getconfig - concatenate and fixup the build config
 
- this is basically getconfig from the source server
-
- we do not need any macros, just the config
+ this is basically getconfig from the source server, but
+ with all the macro code stripped as we do not need any
+ macros in the scheduler.
 
 =cut
 
 sub getconfig {
   my ($gctx, $projid, $repoid, $arch, $path) = @_;
-  my $extraconfig = '';
   my $config = "%define _project $projid\n";
   $config .= "%define _obs_feature_exclude_cpu_constraints 1\n";
-  if ($BSConfig::extraconfig) {
-    for (sort keys %{$BSConfig::extraconfig}) {
-      $extraconfig .= $BSConfig::extraconfig->{$_} if $projid =~ /$_/;
-    }
-  }
   my $projpacks = $gctx->{'projpacks'};
   my $remoteprojs = $gctx->{'remoteprojs'};
+  my ($old_is_this_project, $old_is_in_project) = (-1, -1);
   for my $prp (reverse @$path) {
     my ($p, $r) = split('/', $prp, 2);
     my $c;
@@ -1627,6 +1631,12 @@ sub getconfig {
     next unless defined $c;
     $config .= "\n### from $p\n";
     $config .= "%define _repository $r\n";
+    my $new_is_this_project = $p eq $projid ? 1 : 0; 
+    my $new_is_in_project = $new_is_this_project || substr($projid, 0, length($p) + 1) eq "$p:" ? 1 : 0;
+    $config .= "%define _is_this_project $new_is_this_project\n" if $new_is_this_project ne $old_is_this_project;
+    $config .= "%define _is_in_project $new_is_in_project\n" if $new_is_in_project ne $old_is_in_project;
+    ($old_is_this_project, $old_is_in_project) = ($new_is_this_project, $new_is_in_project);
+
     # get rid of the Macros sections
     my $s1 = '^\s*macros:\s*$.*?^\s*:macros\s*$';
     my $s2 = '^\s*macros:\s*$.*\Z';
@@ -1634,10 +1644,14 @@ sub getconfig {
     $c =~ s/$s2//gmsi;
     $config .= $c;
   }
-  # it's an error if we have no config at all
-  return undef unless $config ne '';
   # now we got the combined config, parse it
-  $config .= "\n$extraconfig" if $extraconfig;
+  if ($BSConfig::extraconfig) {
+    my $extraconfig = '';
+    for (sort keys %{$BSConfig::extraconfig}) {
+      $extraconfig .= $BSConfig::extraconfig->{$_} if $projid =~ /$_/;
+    }
+    $config .= "\n$extraconfig" if $extraconfig;
+  }
   my @c = split("\n", $config);
   my $c = Build::read_config($arch, \@c);
   $c->{'repotype'} = [ 'rpm-md' ] unless @{$c->{'repotype'}};
@@ -1845,6 +1859,53 @@ sub get_remoteproject {
   BSSched::Remote::remotemap2remoteprojs($gctx, $projpacksin->{'remotemap'});
   get_projpacks_postprocess_projects($gctx);
   $gctx->{'remotemissing'}->{$projid} = 1 if !$gctx->{'projpacks'}->{$projid} && !$gctx->{'remoteprojs'}->{$projid};
+}
+
+# schedule deep checks for all packages excluded on startup:
+#   startupmode 1: noremote option, all remote packages have an error
+#   startupmode 2: no package recipe parsed
+sub do_delayed_startup {
+  my ($gctx, $startupmode) = @_;
+
+  return unless $startupmode && ($startupmode == 1 || $startupmode == 2);
+  my $projpacks = $gctx->{'projpacks'};
+  my $delayedfetchprojpacks = $gctx->{'delayedfetchprojpacks'};
+  for my $projid (sort keys %$projpacks) {
+    my $packs = $projpacks->{$projid}->{'package'} || {};
+    next unless %$packs;
+    if ($startupmode == 1) {
+      my @delayed;
+      my $ok;
+      for my $packid (sort keys %$packs) {
+	my $pdata = $packs->{$packid};
+	if ($pdata->{'error'}) {
+	  if ($pdata->{'error'} =~ /noremote option/) {
+	    $pdata->{'error'} = 'delayed startup';
+	    push @delayed, $packid;
+	  } else {
+	    $ok++;
+	  }
+	} else {
+	  if (grep {$_->{'error'} && $_->{'error'} =~ /noremote option/} @{$pdata->{'info'} || []}) {
+	    $pdata->{'error'} = 'delayed startup';
+	    push @delayed, $packid;
+	  } else {
+	    $ok++;
+	  }
+	}
+      }
+      if (!$ok) {
+	$delayedfetchprojpacks->{$projid} = [ '/all' ]; # hack
+      } else {
+	$delayedfetchprojpacks->{$projid} = [ @delayed ];
+      }
+    } else {
+      $delayedfetchprojpacks->{$projid} = [ '/all' ];   # hack
+      for my $packid (sort keys %$packs) {
+	$packs->{$packid}->{'error'} = 'delayed startup';
+      }
+    }
+  }
 }
 
 1;

@@ -52,7 +52,7 @@ sub extract_stored {
 sub extract_inflate {
   my ($handle, $size, $csize, $writer) = @_;
   return unless $size > 0;
-  require Compress::Raw::Zlib unless defined &Compress::Raw::Zlib::Inflate;
+  require Compress::Raw::Zlib unless defined &Compress::Raw::Zlib::Inflate::new;
   my ($decomp, $status) = Compress::Raw::Zlib::Inflate->new('-WindowBits' => -Compress::Raw::Zlib::MAX_WBITS(), '-Bufsize' => 65536);
   die("Compress::Raw::Zlib::Inflate::new failed\n") unless $decomp && $status == Compress::Raw::Zlib::Z_OK();
   while ($size > 0 || $csize > 0) {
@@ -81,6 +81,7 @@ sub extract {
   my $lfh = readbytes($handle, 30, $ent->{'lhdroffset'});
   my ($lfh_magic, $lfh_vneed, $lfh_bits, $lfh_comp, $lfh_time, $lfh_date, $lfh_crc, $lfh_csize, $lfh_size, $lfh_fnsize, $lfh_extrasize) = unpack('VvvvvvVVVvv', $lfh);
   die("missing local file header\n") unless $lfh_magic == 0x04034b50;
+  die("$ent->{'name'}: cannot extract encrypted files\n") if $lfh_bits & 1;
   readbytes($handle, $lfh_fnsize + $lfh_extrasize);	# verify file name?
   # can't use lfh size values because they may be in the trailing data descriptor
   if ($lfh_comp == 8) {
@@ -88,7 +89,7 @@ sub extract {
   } elsif ($lfh_comp == 0) {
     extract_stored($handle, $ent->{'size'}, $ent->{'csize'}, $writer);
   } else {
-    die("unsupported compression type $lfh_comp\n");
+    die("$ent->{'name'}: unsupported compression type $lfh_comp\n");
   }
   return $data;
 }

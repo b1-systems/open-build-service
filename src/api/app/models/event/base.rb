@@ -7,30 +7,8 @@ module Event
 
     after_create :create_project_log_entry_job, if: -> { (PROJECT_CLASSES | PACKAGE_CLASSES).include?(self.class.name) }
 
-    EXPLANATION_FOR_NOTIFICATIONS =  {
-      'Event::BuildFail' => 'Receive notifications of build failures for packages for which you are...',
-      'Event::ServiceFail' => 'Receive notifications of source service failures for packages for which you are...',
-      'Event::ReviewWanted' => 'Receive notifications of reviews created that have you as a wanted...',
-      'Event::RequestCreate' => 'Receive notifications of requests created for projects/packages for which you are...',
-      'Event::RequestStatechange' => 'Receive notifications of requests state changes for projects for which you are...',
-      'Event::CommentForProject' => 'Receive notifications of comments created on projects for which you are...',
-      'Event::CommentForPackage' => 'Receive notifications of comments created on a package for which you are...',
-      'Event::CommentForRequest' => 'Receive notifications of comments created on a request for which you are...',
-      'Event::RelationshipCreate' => "Receive notifications when someone adds you or your group to a project or package with any of these roles: #{Role.local_roles.to_sentence}.",
-      'Event::RelationshipDelete' => "Receive notifications when someone removes you or your group from a project or package with any of these roles: #{Role.local_roles.to_sentence}.",
-      'Event::ReportForComment' => 'Receive notifications for reported comments.',
-      'Event::ReportForPackage' => 'Receive notifications for reported packages.',
-      'Event::ReportForProject' => 'Receive notifications for reported projects.',
-      'Event::ReportForUser' => 'Receive notifications for reported users.',
-      'Event::ReportForRequest' => 'Receive notifications for reported requests',
-      'Event::ClearedDecision' => 'Receive notifications for cleared report decisions.',
-      'Event::FavoredDecision' => 'Receive notifications for favored report decisions.',
-      'Event::WorkflowRunFail' => 'Receive notifications for failed workflow runs on SCM/CI integration.',
-      'Event::AppealCreated' => 'Receive notifications when a user appeals against a decision of a moderator.'
-    }.freeze
-
     class << self
-      attr_accessor :description, :message_bus_routing_key
+      attr_accessor :description, :message_bus_routing_key, :notification_explanation
 
       @payload_keys = nil
       @create_jobs = nil
@@ -39,12 +17,14 @@ module Event
       @shortenable_key = nil
 
       def notification_events
-        ['Event::BuildFail', 'Event::ServiceFail', 'Event::ReviewWanted', 'Event::RequestCreate',
-         'Event::RequestStatechange', 'Event::CommentForProject', 'Event::CommentForPackage',
-         'Event::CommentForRequest',
-         'Event::RelationshipCreate', 'Event::RelationshipDelete',
-         'Event::ReportForComment', 'Event::ReportForPackage', 'Event::ReportForProject', 'Event::ReportForUser', 'Event::ReportForRequest',
-         'Event::WorkflowRunFail', 'Event::AppealCreated', 'Event::ClearedDecision', 'Event::FavoredDecision'].map(&:constantize)
+        [Event::BuildFail, Event::ServiceFail, Event::ReviewWanted, Event::RequestCreate,
+         Event::RequestStatechange, Event::CommentForProject, Event::CommentForPackage,
+         Event::CommentForRequest,
+         Event::RelationshipCreate, Event::RelationshipDelete,
+         Event::Report, Event::Decision, Event::AppealCreated,
+         Event::WorkflowRunFail,
+         Event::AddedUserToGroup, Event::RemovedUserFromGroup,
+         Event::Assignment]
       end
 
       def classnames
@@ -102,21 +82,13 @@ module Event
     end
 
     # just for convenience
-    def payload_keys
-      self.class.payload_keys
-    end
+    delegate :payload_keys, to: :class
 
-    def shortenable_key
-      self.class.shortenable_key
-    end
+    delegate :shortenable_key, to: :class
 
-    def create_jobs
-      self.class.create_jobs
-    end
+    delegate :create_jobs, to: :class
 
-    def receiver_roles
-      self.class.receiver_roles
-    end
+    delegate :receiver_roles, to: :class
 
     def initialize(attribs)
       attributes = attribs.dup.with_indifferent_access
@@ -136,8 +108,7 @@ module Event
 
       return if attribs.empty?
 
-      na = []
-      attribs.keys.each { |k| na << k.to_s }
+      na = attribs.keys.map(&:to_s)
       logger.debug "LEFT #{self.class.name} payload_keys :#{na.sort.join(', :')}"
       raise "Unexpected payload_keys :#{na.sort.join(', :')} (#{attribs.inspect}) provided during '#{self.class.name}' event creation. "
     end
@@ -206,6 +177,9 @@ module Event
     end
 
     def subscriptions(channel = :instant_email)
+      # Don't claim to have subscriptions unless this is a notification_event
+      return [] if self.class.notification_events.none? { |e| is_a?(e) }
+
       EventSubscription::FindForEvent.new(self).subscriptions(channel)
     end
 
@@ -253,7 +227,7 @@ module Event
       ret
     end
 
-    def watchers
+    def project_watchers
       project = ::Project.find_by_name(payload['project'])
       return [] if project.blank?
 
@@ -284,12 +258,12 @@ module Event
     end
 
     def reporters
-      decision = Decision.find(payload['id'])
-      decision.reports.map(&:user)
+      decision = ::Decision.find(payload['id'])
+      decision.reports.map(&:reporter)
     end
 
     def offenders
-      decision = Decision.find(payload['id'])
+      decision = ::Decision.find(payload['id'])
       reportables = decision.reports.map(&:reportable)
       reportables.map do |reportable|
         case reportable
@@ -303,6 +277,10 @@ module Event
           reportable.user
         end
       end
+    end
+
+    def assignees
+      [User.find_by(login: payload['assignee'])]
     end
 
     def _roles(role, project, package = nil)
@@ -329,6 +307,14 @@ module Event
         notifiable_id: payload['id'],
         created_at: payload['when']&.to_datetime,
         title: subject_to_title }
+    end
+
+    def involves_hidden_project?
+      false
+    end
+
+    def event_object
+      nil
     end
 
     private

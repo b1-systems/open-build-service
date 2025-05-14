@@ -1,6 +1,6 @@
 RSpec.describe WorkflowFiltersValidator do
   let(:fake_model) do
-    Struct.new(:workflow_instructions, :scm_webhook) do
+    Struct.new(:workflow_instructions, :workflow_run) do
       include ActiveModel::Validations
 
       # To prevent the error "ArgumentError: Class name cannot be blank. You need to supply a name argument when anonymous class given"
@@ -13,9 +13,9 @@ RSpec.describe WorkflowFiltersValidator do
   end
 
   describe '#validate' do
-    let(:scm_webhook) { SCMWebhook.new(payload: {}) }
+    subject { fake_model.new(workflow_instructions, workflow_run) }
 
-    subject { fake_model.new(workflow_instructions, scm_webhook) }
+    let(:workflow_run) { create(:workflow_run) }
 
     context 'without the filters key' do
       let(:workflow_instructions) { {} }

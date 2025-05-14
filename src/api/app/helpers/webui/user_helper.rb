@@ -50,7 +50,7 @@ module Webui::UserHelper
     user = User.find_by_login(user) unless user.is_a?(User)
     return '' unless user
 
-    Rails.cache.fetch([user, 'realname_and_icon', opts, ::Configuration.first]) do
+    Rails.cache.fetch([user, 'realname_and_icon', opts]) do
       printed_name = if opts[:short]
                        user.login
                      else
@@ -74,10 +74,6 @@ module Webui::UserHelper
     elsif requester_group
       "the group #{requester_group}"
     end
-  end
-
-  def user_is_configurable(configuration, user)
-    configuration.ldap_enabled? && !user.ignore_auth_services?
   end
 
   def activity_date_commits(projects)

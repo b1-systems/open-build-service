@@ -3,7 +3,7 @@ require 'builder'
 class Webui::PatchinfoController < Webui::WebuiController
   include Webui::PackageHelper
   before_action :set_project
-  before_action :get_binaries, except: %i[show destroy new_tracker]
+  before_action :set_binaries, except: %i[show destroy new_tracker]
   before_action :require_package, except: %i[create new_tracker]
   before_action :require_exists, except: %i[create new_tracker]
   before_action :require_login, except: [:show]
@@ -48,7 +48,7 @@ class Webui::PatchinfoController < Webui::WebuiController
       xml = @patchinfo.to_xml(@project, @package)
       begin
         Package.verify_file!(@package, '_patchinfo', xml)
-        Backend::Api::Sources::Package.write_patchinfo(@package.project.name, @package.name, User.session!.login, xml)
+        Backend::Api::Sources::Package.write_patchinfo(@package.project.name, @package.name, User.session.login, xml)
         @package.sources_changed(wait_for_update: true) # wait for indexing for special files
       rescue APIError, Timeout::Error => e
         flash[:error] = "patchinfo is invalid: #{e.message}"
@@ -131,7 +131,7 @@ class Webui::PatchinfoController < Webui::WebuiController
       'boo#123456, CVE-1234-5678 and the string has to be a comma-separated list)'
   end
 
-  def get_binaries
+  def set_binaries
     @binarylist = []
     binary_list = Xmlhash.parse(Backend::Api::Build::Project.binarylist(params[:project]))
     binary_list.elements('result') do |result|

@@ -77,7 +77,7 @@ module Webui::ProjectBuildResultParsing
     return unless result.key?('state')
 
     @repostatushash[repo][arch] = if result.key?('dirty')
-                                    'outdated_' + result['state']
+                                    "outdated_#{result['state']}"
                                   else
                                     result['state']
                                   end
@@ -135,7 +135,7 @@ module Webui::ProjectBuildResultParsing
       result = if no_invert[1] == '!'
                  input.include?(no_invert[2]) ? result : true
                else
-                 input.include?(no_invert[2]) ? true : result
+                 input.include?(no_invert[2]) || result
                end
     end
     result

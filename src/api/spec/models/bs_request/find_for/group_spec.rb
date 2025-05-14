@@ -21,7 +21,7 @@ RSpec.describe BsRequest::FindFor::Group do
     context 'with a not existing group' do
       subject { klass.new(group: 'not-existent') }
 
-      it { expect { subject.all }.to raise_error(ActiveRecord::RecordNotFound, "Couldn't find Group 'not-existent'") }
+      it { expect { subject.all }.to raise_error(ActiveRecord::RecordNotFound) }
     end
 
     context 'with a group maintainer relationship' do
@@ -107,6 +107,8 @@ RSpec.describe BsRequest::FindFor::Group do
     end
 
     context 'as maintainer or reviewer' do
+      subject { klass.new(group: group.title).all }
+
       let(:review_request) { create(:set_bugowner_request, creator: user) }
       let!(:review) { create(:review, by_group: group.title, bs_request: review_request) }
 
@@ -117,8 +119,6 @@ RSpec.describe BsRequest::FindFor::Group do
                target_package: target_package,
                source_package: source_package)
       end
-
-      subject { klass.new(group: group.title).all }
 
       it { expect(subject).to include(review_request) }
       it { expect(subject).to include(maintainer_request) }

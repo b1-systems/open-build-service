@@ -3,7 +3,7 @@ class PublicController < ApplicationController
   include ValidationHelper
 
   # we need to fall back to _nobody_ (_public_)
-  before_action :extract_user_public, :set_response_format_to_xml
+  before_action :extract_user_public, :set_response_format_to_xml, :set_influxdb_data_interconnect
   skip_before_action :extract_user
   skip_before_action :require_login
 
@@ -12,7 +12,7 @@ class PublicController < ApplicationController
     required_parameters :project
 
     if params[:project] == '_result'
-      pass_to_backend('/build/_result' + build_query_from_hash(params, %i[scmrepository scmbranch locallink multibuild lastbuild code]))
+      pass_to_backend("/build/_result#{build_query_from_hash(params, %i[scmrepository scmbranch locallink multibuild lastbuild code])}")
       return
     end
     # project visible/known ?
@@ -28,7 +28,7 @@ class PublicController < ApplicationController
   # GET /public/configuration.xml
   # GET /public/configuration.json
   def configuration_show
-    @configuration = ::Configuration.first
+    @configuration = ::Configuration.fetch
 
     respond_to do |format|
       format.xml  { render xml: @configuration.render_xml }
@@ -61,15 +61,15 @@ class PublicController < ApplicationController
         return
       end
       # path has multiple package= parameters
-      path += '?' + request.query_string
+      path += "?#{request.query_string}"
       path += '&nofilename=1' unless params[:nofilename]
     when 'verboseproductlist'
       @products = Product.all_products(@project, params[:expand])
-      render 'source/verboseproductlist'
+      render 'source/verboseproductlist', formats: [:xml]
       return
     when 'productlist'
       @products = Product.all_products(@project, params[:expand])
-      render 'source/productlist'
+      render 'source/productlist', formats: [:xml]
       return
     else
       path += '?expand=1&noorigins=1' # to stay compatible to OBS <2.4
@@ -78,6 +78,7 @@ class PublicController < ApplicationController
   end
 
   # GET /public/source/:project/_config
+  # GET /public/source/:project/_keyinfo
   # GET /public/source/:project/_pubkey
   def project_file
     # project visible/known ?
@@ -99,7 +100,7 @@ class PublicController < ApplicationController
 
   # GET /public/source/:project/:package/_meta
   def package_meta
-    check_package_access(params[:project], params[:package], false)
+    check_package_access(params[:project], params[:package], use_source: false)
 
     path = unshift_public(request.path_info)
     # we should do this via user agent instead, but BSRPC is not only used for interconnect.
@@ -112,8 +113,9 @@ class PublicController < ApplicationController
   def source_file
     if params[:rev].present? && params[:rev].length >= 32 &&
        !Package.exists_by_project_and_name(params[:project], params[:package])
+      prj = Project.find_by_name(params[:project])
       # automatic fallback
-      params[:deleted] = '1'
+      params[:deleted] = '1' unless prj && prj.scmsync.present?
     end
 
     if params[:deleted].present?
@@ -143,7 +145,7 @@ class PublicController < ApplicationController
 
   # GET /public/binary_packages/:project/:package
   def binary_packages
-    check_package_access(params[:project], params[:package], false)
+    check_package_access(params[:project], params[:package], use_source: false)
     @pkg = Package.find_by_project_and_name(params[:project], params[:package])
 
     begin
@@ -164,7 +166,7 @@ class PublicController < ApplicationController
     end
 
     @binary_links = {}
-    @pkg.project.repositories.includes(path_elements: { link: :project }).each do |repo|
+    @pkg.project.repositories.includes(path_elements: { link: :project }).find_each do |repo|
       repo.path_elements.each do |pe|
         # NOTE: we do not follow indirect path elements here, since most installation handlers
         #       do not support it (exception zypp via ymp files)
@@ -175,7 +177,7 @@ class PublicController < ApplicationController
         dist_id = dist.id
         @binary_links[dist_id] ||= {}
         binary = binary_map[repo.name].find { |bin| bin.value(:name) == @pkg.name }
-        @binary_links[dist_id][:ymp] = { url: ymp_url(File.join(@pkg.project.name, repo.name, @pkg.name + '.ymp')) } if binary && dist.vendor == 'openSUSE'
+        @binary_links[dist_id][:ymp] = { url: ymp_url(File.join(@pkg.project.name, repo.name, "#{@pkg.name}.ymp")) } if binary && dist.vendor == 'openSUSE'
 
         @binary_links[dist_id][:binary] ||= []
         binary_map[repo.name].each do |b|
@@ -197,14 +199,25 @@ class PublicController < ApplicationController
     end
   end
 
+  def image_templates
+    @projects = Project.image_templates
+    render 'webui/image_templates/index'
+  end
+
   private
+
+  def set_influxdb_data_interconnect
+    InfluxDB::Rails.current.tags = {
+      interconnect: true
+    }
+  end
 
   # removes /private prefix from path
   def unshift_public(path)
     path =~ %r{/public(.*)} ? Regexp.last_match(1) : path
   end
 
-  def check_package_access(project_name, package_name, use_source = true)
+  def check_package_access(project_name, package_name, use_source: true)
     # don't use the cache for use_source
     if use_source
       begin
@@ -217,7 +230,7 @@ class PublicController < ApplicationController
     end
 
     # generic access checks
-    key = 'public_package:' + project_name + ':' + package_name
+    key = "public_package:#{project_name}:#{package_name}"
     allowed = Rails.cache.fetch(key, expires_in: 30.minutes) do
       Package.get_by_project_and_name(project_name, package_name, use_source: false)
       true

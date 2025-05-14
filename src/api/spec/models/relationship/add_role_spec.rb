@@ -1,8 +1,8 @@
 RSpec.describe Relationship::AddRole do
+  subject { Relationship::AddRole.new(package_or_project, role, options).add_role }
+
   let(:user) { create(:confirmed_user) }
   let(:role) { create(:role) }
-
-  subject { Relationship::AddRole.new(package_or_project, role, options).add_role }
 
   shared_examples 'user' do
     context 'add user' do
@@ -33,15 +33,15 @@ RSpec.describe Relationship::AddRole do
     context 'with package' do
       let(:package_or_project) { create(:package) }
 
-      include_examples 'user'
-      include_examples 'group'
+      it_behaves_like 'user'
+      it_behaves_like 'group'
     end
 
     context 'with project' do
       let(:package_or_project) { create(:project) }
 
-      include_examples 'user'
-      include_examples 'group'
+      it_behaves_like 'user'
+      it_behaves_like 'group'
     end
   end
 end

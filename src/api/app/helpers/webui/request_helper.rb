@@ -113,6 +113,7 @@ module Webui::RequestHelper
     "#{diff['project']} / #{diff['package']} (rev #{diff['rev']})"
   end
 
+  # [DEPRECATED] TODO: drop this helper function after request_workflow_redesign is rolled out
   # rubocop:disable Style/FormatString
   def request_action_header(action, creator)
     source_project_hash = { project: action[:sprj], package: action[:spkg], trim_to: nil }
@@ -160,35 +161,6 @@ module Webui::RequestHelper
                     }
                   end
 
-    # TODO: merge these extra conditions when request_show_redesign is rolled out.
-    if Flipper.enabled?(:request_show_redesign, User.session)
-      description = case action[:type]
-                    when :submit
-                      'Submit %{source_container} to %{target_container}' % {
-                        source_container: project_or_package_link(source_project_hash),
-                        target_container: project_or_package_link(project: action[:tprj], package: action[:tpkg])
-                      }
-                    when :change_devel
-                      'Set %{source_container} to be devel project/package of %{target_container}' % {
-                        source_container: project_or_package_link(source_project_hash),
-                        target_container: project_or_package_link(project: action[:tprj], package: action[:tpkg])
-                      }
-                    when :maintenance_incident
-                      source_project_hash.update(homeproject: creator)
-                      'Submit update from %{source_container} to %{target_container}' % {
-                        source_container: project_or_package_link(source_project_hash),
-                        target_container: project_or_package_link(project: action[:tprj], package: action[:tpkg], trim_to: nil)
-                      }
-                    when :maintenance_release
-                      'Maintenance release %{source_container} to %{target_container}' % {
-                        source_container: project_or_package_link(source_project_hash),
-                        target_container: project_or_package_link(project: action[:tprj], package: action[:tpkg], trim_to: nil)
-                      }
-                    else
-                      description
-                    end
-    end
-
     description.html_safe
   end
   # rubocop:enable Style/FormatString
@@ -207,7 +179,7 @@ module Webui::RequestHelper
   end
 
   def next_prev_path(**opts)
-    parameters = { number: opts[:number], request_action_id: opts[:request_action_id], full_diff: opts[:full_diff], diff_to_superseded: opts[:diff_to_superseded] }
+    parameters = { number: opts[:number], request_action_id: opts[:request_action_id], diff_to_superseded: opts[:diff_to_superseded] }
 
     case opts[:page_name]
     when 'request_build_results'
@@ -221,5 +193,40 @@ module Webui::RequestHelper
     else
       request_show_path(parameters)
     end
+  end
+
+  private
+
+  def action_type_icon(type)
+    case type
+    when 'maintenance_incident'
+      'fas fa-person-digging fa-fw'
+    when 'add_role'
+      'fas fa-people-arrows fa-fw'
+    when 'set_bugowner'
+      'fas fa-bug-slash fa-fw'
+    when 'delete'
+      'fas fa-trash-can fa-fw'
+    when 'change_devel'
+      'fas fa-house-flag fa-fw'
+    when 'release', 'maintenance_release'
+      'fas fa-road-circle-check fa-fw'
+    else
+      'fas fa-code-pull-request fa-fw'
+    end
+  end
+
+  # Note: We don't allow labeling requests with more than 1 target project
+  def project_for_labels(bs_request)
+    target_project_ids = bs_request.bs_request_actions.pluck(:target_project_id).uniq
+    return if target_project_ids.count > 1
+
+    Project.find_by(id: target_project_ids.last)
+  end
+
+  def can_apply_labels?(bs_request:, user:)
+    return false if project_for_labels(bs_request).nil?
+
+    user.admin? || bs_request.target_maintainer?(user)
   end
 end

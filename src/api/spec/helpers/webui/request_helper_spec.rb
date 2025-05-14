@@ -129,68 +129,68 @@ RSpec.describe Webui::RequestHelper do
     end
 
     context 'when action is :delete' do
+      subject { request_action_header(action.merge(type: :delete), creator.login) }
+
       let(:expected_regex) do
         Regexp.new("Delete package .*#{project_show_path(target_package.project)}.* / .*" +
                    package_show_path(target_package.project, target_package).to_s)
       end
 
-      subject { request_action_header(action.merge(type: :delete), creator.login) }
-
       it { is_expected.to match(expected_regex) }
 
       context 'with a target repository' do
+        subject { request_action_header(action.merge(type: :delete, trepo: target_repository.name), creator.login) }
+
         let(:target_repository) { create(:repository, project: target_package.project) }
         let(:expected_regex) do
           Regexp.new("Delete repository .*#{Regexp.escape(repositories_path(project: target_repository.project, repository: target_repository.name))}.* for package .*" \
                      "#{project_show_path(target_package.project)}.* / .*#{package_show_path(target_package.project, target_package)}")
         end
 
-        subject { request_action_header(action.merge(type: :delete, trepo: target_repository.name), creator.login) }
-
         it { is_expected.to match(expected_regex) }
       end
     end
 
     context 'when action is :add_role' do
+      subject { request_action_header(action.merge(type: :add_role, user: requester.login, role: 'maintainer'), creator.login) }
+
       let(:expected_regex) do
         Regexp.new("#{creator.realname} \\(request_creator\\).* wants the user .*#{requester.realname} \\(requester\\).* " \
                    "to get the role maintainer for package .*#{target_package.project}.* / .*#{target_package}")
       end
 
-      subject { request_action_header(action.merge(type: :add_role, user: requester.login, role: 'maintainer'), creator.login) }
-
       it { is_expected.to match(expected_regex) }
     end
 
     context 'when action is :change_devel' do
+      subject { request_action_header(action.merge(type: :change_devel), creator.login) }
+
       let(:expected_regex) do
         Regexp.new("Set the devel project to package .*#{source_package.project}.* / .*#{source_package}.* " \
                    "for package .*#{target_package.project}.* / .*#{target_package}")
       end
 
-      subject { request_action_header(action.merge(type: :change_devel), creator.login) }
-
       it { is_expected.to match(expected_regex) }
     end
 
     context 'when action is :maintenance_incident' do
+      subject { request_action_header(action.merge(type: :maintenance_incident), creator.login) }
+
       let(:expected_regex) do
         Regexp.new("Submit update from package .*#{source_package.project}.* / .*#{source_package}.* to package " \
                    ".*#{target_package.project}.* / .*#{target_package}")
       end
 
-      subject { request_action_header(action.merge(type: :maintenance_incident), creator.login) }
-
       it { is_expected.to match(expected_regex) }
     end
 
     context 'when action is :maintenance_release' do
+      subject { request_action_header(action.merge(type: :maintenance_release), creator.login) }
+
       let(:expected_regex) do
         Regexp.new("Maintenance release package .*#{source_package.project}.* / .*#{source_package}.* to package " \
                    ".*#{target_package.project}.* / .*#{target_package}.* ")
       end
-
-      subject { request_action_header(action.merge(type: :maintenance_release), creator.login) }
 
       it { is_expected.to match(expected_regex) }
     end
@@ -202,11 +202,11 @@ RSpec.describe Webui::RequestHelper do
     end
 
     context 'when user is on build results page' do
-      it { expect(next_prev_path(number: 10, request_action_id: 30, page_name: 'request_build_results')).to eq('/request/show/10/request_action/30/build_results') }
+      it { expect(next_prev_path(number: 10, request_action_id: 30, page_name: 'request_build_results')).to eq('/requests/10/actions/30/build_results') }
     end
 
     context 'when user is on rpm lint page' do
-      it { expect(next_prev_path(number: 10, request_action_id: 30, page_name: 'request_rpm_lint')).to eq('/request/show/10/request_action/30/rpm_lint') }
+      it { expect(next_prev_path(number: 10, request_action_id: 30, page_name: 'request_rpm_lint')).to eq('/requests/10/actions/30/rpm_lint') }
     end
   end
 end

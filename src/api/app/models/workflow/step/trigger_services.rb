@@ -4,10 +4,8 @@ class Workflow::Step::TriggerServices < Workflow::Step
 
   REQUIRED_KEYS = %i[project package].freeze
 
-  validate :validate_project_and_package_name
-
   def call
-    return if scm_webhook.closed_merged_pull_request? || scm_webhook.reopened_pull_request?
+    return if workflow_run.closed_merged_pull_request? || workflow_run.reopened_pull_request? || workflow_run.unlabeled_pull_request?
 
     @project_name = step_instructions[:project]
     @package_name = step_instructions[:package]
@@ -17,7 +15,7 @@ class Workflow::Step::TriggerServices < Workflow::Step
     set_object_to_authorize
     set_multibuild_flavor
 
-    Pundit.authorize(@token.executor, @token, :trigger_service?)
+    Pundit.authorize(@token.executor, @token.object_to_authorize, :update?)
 
     begin
       Backend::Api::Sources::Package.trigger_services(@project_name, @package_name, @token.executor.login, trigger_service_comment)
@@ -25,7 +23,7 @@ class Workflow::Step::TriggerServices < Workflow::Step
       raise NoSourceServiceDefined, "Package #{@project_name}/#{@package_name} does not have a source service defined: #{e.summary}"
     end
 
-    Workflows::ScmEventSubscriptionCreator.new(token, workflow_run, scm_webhook, @package).call
+    Workflows::ScmEventSubscriptionCreator.new(token, workflow_run, @package).call
   end
 
   private
@@ -40,26 +38,26 @@ class Workflow::Step::TriggerServices < Workflow::Step
   def trigger_service_comment
     'Service triggered by ' \
       "#{@token.description.blank? ? 'a workflow token ' : "the '#{@token.description}' token "}" \
-      "via #{@scm_webhook.payload[:scm].titleize} " \
+      "via #{workflow_run.scm_vendor.titleize} " \
       "#{details}."
   end
 
   def details
-    case @scm_webhook.payload[:event]
+    case workflow_run.hook_event
     when 'pull_request', 'Merge Request Hook'
-      "PR/MR ##{@scm_webhook.payload[:pr_number]} (#{@scm_webhook.payload[:event]})"
+      "PR/MR ##{workflow_run.pr_number} (#{workflow_run.hook_event})"
     when 'push', 'Push Hook'
       push_details
     when 'Tag Push Hook'
-      "push #{@scm_webhook.payload[:commit_sha]&.slice(0, SHORT_COMMIT_SHA_LENGTH)} on #{@scm_webhook.payload[:tag_name]}"
+      "push #{workflow_run.commit_sha&.slice(0, SHORT_COMMIT_SHA_LENGTH)} on #{workflow_run.tag_name}"
     end
   end
 
   def push_details
-    if @scm_webhook.payload[:scm] == 'github' && @scm_webhook.payload[:ref].start_with?('refs/tags')
-      "push #{@scm_webhook.payload[:commit_sha]&.slice(0, SHORT_COMMIT_SHA_LENGTH)} on #{@scm_webhook.payload[:tag_name]}"
+    if workflow_run.scm_vendor == 'github' && workflow_run.payload[:ref].start_with?('refs/tags')
+      "push #{workflow_run.commit_sha&.slice(0, SHORT_COMMIT_SHA_LENGTH)} on #{workflow_run.tag_name}"
     else
-      "push #{@scm_webhook.payload[:commit_sha]&.slice(0, SHORT_COMMIT_SHA_LENGTH)} on #{@scm_webhook.payload[:target_branch]}"
+      "push #{workflow_run.commit_sha&.slice(0, SHORT_COMMIT_SHA_LENGTH)} on #{workflow_run.target_branch}"
     end
   end
 end

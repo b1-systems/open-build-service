@@ -1,10 +1,7 @@
 class EventSubscription
   class Form
-    EVENTS_FOR_CONTENT_MODERATORS = ['Event::ReportForProject', 'Event::ReportForPackage',
-                                     'Event::ReportForComment', 'Event::ReportForUser',
-                                     'Event::ReportForRequest',
-                                     'Event::AppealCreated'].freeze
-    EVENTS_IN_CONTENT_MODERATION_BETA = ['Event::FavoredDecision', 'Event::ClearedDecision'].freeze
+    EVENTS_FOR_CONTENT_MODERATORS = ['Event::Report', 'Event::AppealCreated'].freeze
+    EVENTS_IN_CONTENT_MODERATION_BETA = ['Event::Decision'].freeze
 
     attr_reader :subscriber
 
@@ -37,7 +34,7 @@ class EventSubscription
     def find_or_initialize_subscription(eventtype, receiver_role, channel)
       opts = { eventtype: eventtype, receiver_role: receiver_role, channel: channel }
 
-      if subscriber.is_a?(User) && subscriber.is_active?
+      if subscriber.is_a?(User) && subscriber.active?
         opts[:user] = subscriber
       elsif subscriber.is_a?(Group)
         opts[:group] = subscriber

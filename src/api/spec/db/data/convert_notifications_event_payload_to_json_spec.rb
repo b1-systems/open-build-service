@@ -3,14 +3,14 @@ require Rails.root.join('db/data/20170831143534_convert_notifications_event_payl
 RSpec.describe ConvertNotificationsEventPayloadToJson, type: :migration do
   describe '.up' do
     let!(:yaml) { "---\nhello: world\nhow:\n- are\n- you\n- today?\nim: fine thanks\n" }
-    let!(:notification) { create(:notification) }
+    let!(:notification) { create(:notification_for_request) }
 
     before do
       sql = "UPDATE `notifications` SET `event_payload` = '#{yaml}' WHERE id = #{notification.id}"
       ActiveRecord::Base.connection.execute(sql)
-    end
 
-    subject! { ConvertNotificationsEventPayloadToJson.up }
+      subject.up
+    end
 
     it 'converts the notifications event_payload from yaml to json' do
       json_hash = { 'hello' => 'world', 'how' => ['are', 'you', 'today?'], 'im' => 'fine thanks' }

@@ -18,9 +18,10 @@ OBSApi::Application.configure do
   # Settings specified here will take precedence over those in config/application.rb.
   config.cache_classes = true
 
-  # We set eager loading to true in CI
-  # to run with the same configuration as in production
-  config.eager_load = ENV.fetch('EAGER_LOAD', '0') == '1'
+  # Eager loading loads your whole application. When running a single test locally,
+  # this probably isn't necessary. It's a good idea to do in a continuous integration
+  # system, or in some way before deploying your code.
+  config.eager_load = ENV["CI"].present?
 
   # Show full error reports and disable caching.
   config.consider_all_requests_local = true
@@ -33,10 +34,10 @@ OBSApi::Application.configure do
   }
 
   # Raise exceptions instead of rendering exception templates.
-  # config.action_dispatch.show_exceptions = false
+  # config.action_dispatch.show_exceptions = :none
 
   # Store uploaded files on the local file system in a temporary directory.
-  # config.active_storage.service = :test
+  config.active_storage.service = :test
 
   # Tell Action Mailer not to deliver emails to the real world.
   # The :test delivery method accumulates sent emails in the
@@ -97,7 +98,6 @@ CONFIG['global_write_through'] = false
 CONFIG['frontend_host'] = 'localhost'
 CONFIG['frontend_port'] = 3203
 CONFIG['frontend_protocol'] = 'http'
-CONFIG['frontend_ldap_mode'] = :off
 
 if ENV['RUNNING_MINITEST']
   CONFIG['source_host'] = 'localhost'
@@ -109,9 +109,6 @@ if ENV['RUNNING_MINITEST_WITH_DOCKER']
   CONFIG['source_host'] = 'backend'
   CONFIG['source_port'] = '5352'
 end
-
-# some defaults enforced
-CONFIG['apidocs_location'] = File.expand_path('../../docs/api/html/')
 
 # Display fake sponsors above the footer on every page
 CONFIG['sponsors'] = [

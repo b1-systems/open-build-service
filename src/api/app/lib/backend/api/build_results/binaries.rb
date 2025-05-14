@@ -52,8 +52,9 @@ module Backend
 
         # special view on a binary file for details display
         # @return [Hash]
-        def self.fileinfo_ext(project_name, package_name, repository, arch, filename)
-          fileinfo = http_get(['/build/:project/:repository/:arch/:package/:filename?view=fileinfo_ext', project_name, repository, arch, package_name, filename])
+        def self.fileinfo_ext(project_name, package_name, repository, arch, filename, options = {})
+          fileinfo = http_get(['/build/:project/:repository/:arch/:package/:filename', project_name, repository, arch, package_name, filename],
+                              params: options, defaults: { view: 'fileinfo_ext' }, accepted: %i[withfilelist])
           Xmlhash.parse(fileinfo) if fileinfo
         end
 
@@ -91,7 +92,7 @@ module Backend
         # Transforms the output of the available_in_repositories, available_in_urls and available_in_project methods to a hash containing
         # the name of the binary as keys and the architectures as the value
         def self.transform_binary_packages_response(response)
-          list = Hash.new([])
+          list = {}
           parsed_response = Xmlhash.parse(response)
           return list if parsed_response.blank?
 
@@ -99,7 +100,7 @@ module Backend
           packages.each do |build|
             architectures_names = [build['arch']].flatten
             package_names = [build['name']].flatten
-            package_names.each { |package| list[package] = architectures_names.dup.concat(list[package]).uniq }
+            package_names.each { |package| list[package] = architectures_names.dup.concat(list[package] || []).uniq }
           end
           list
         end

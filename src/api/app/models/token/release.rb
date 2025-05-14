@@ -64,17 +64,19 @@ end
 #
 #  id                          :integer          not null, primary key
 #  description                 :string(64)       default("")
+#  enabled                     :boolean          default(TRUE), not null, indexed
 #  scm_token                   :string(255)      indexed
 #  string                      :string(255)      indexed
 #  triggered_at                :datetime
 #  type                        :string(255)
 #  workflow_configuration_path :string(255)      default(".obs/workflows.yml")
-#  workflow_configuration_url  :string(255)
+#  workflow_configuration_url  :string(8192)
 #  executor_id                 :integer          not null, indexed
 #  package_id                  :integer          indexed
 #
 # Indexes
 #
+#  index_tokens_on_enabled    (enabled)
 #  index_tokens_on_scm_token  (scm_token)
 #  index_tokens_on_string     (string) UNIQUE
 #  package_id                 (package_id)

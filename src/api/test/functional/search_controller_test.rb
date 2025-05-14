@@ -62,7 +62,7 @@ class SearchControllerTest < ActionDispatch::IntegrationTest
   def test_xpath_6
     login_Iggy
     get '/search/package', params: { match: '[attribute/@name="Maintained"]' }
-    assert_response 400
+    assert_response :bad_request
     assert_xml_tag content: 'attributes must be $NAMESPACE:$NAME'
   end
 
@@ -81,7 +81,7 @@ class SearchControllerTest < ActionDispatch::IntegrationTest
   def test_xpath_8
     login_Iggy
     get '/search/package', params: { match: 'attribute/@name="[OBS:Maintained"' }
-    assert_response 400
+    assert_response :bad_request
     assert_xml_tag tag: 'status', attributes: { code: 'illegal_xpath_error' }
     # fun part
     assert_xml_tag content: "#&lt;NoMethodError: undefined method `[]' for nil:NilClass&gt;"
@@ -113,7 +113,7 @@ class SearchControllerTest < ActionDispatch::IntegrationTest
 
     # small typo, no equal ...
     get '/search/request?match(mistake)'
-    assert_response 400
+    assert_response :bad_request
     assert_xml_tag tag: 'status', attributes: { code: 'empty_match' }
   end
 
@@ -211,7 +211,7 @@ class SearchControllerTest < ActionDispatch::IntegrationTest
   end
   # <<< Testing package inside HiddenProject - flag "access" set to "disabled" in Project
 
-  def get_repos
+  def repositories
     ret = []
     col = Xmlhash.parse @response.body
     col.elements('repository') do |r|
@@ -273,7 +273,7 @@ class SearchControllerTest < ActionDispatch::IntegrationTest
     get '/search/repository/id'
     assert_response :success
     assert_xml_tag tag: 'collection'
-    repos = get_repos
+    repos = repositories
     assert repos.include?('home:Iggy/10.2')
     assert repos.exclude?('HiddenProject/nada'), 'HiddenProject repos public'
 
@@ -281,7 +281,7 @@ class SearchControllerTest < ActionDispatch::IntegrationTest
     get '/search/repository/id'
     assert_response :success
     assert_xml_tag tag: 'collection'
-    repos = get_repos
+    repos = repositories
     assert repos.include?('home:Iggy/10.2')
     assert repos.include?('HiddenProject/nada'), 'HiddenProject repos public'
 
@@ -315,31 +315,35 @@ class SearchControllerTest < ActionDispatch::IntegrationTest
   end
 
   def test_search_request
-    # rubocop:disable Layout/LineLength
     login_Iggy
-    get '/search/request', params: { match: "(action/target/@package='pack2' and action/target/@project='BaseDistro2.0' and action/source/@project='BaseDistro2.0' and action/source/@package='pack2.linked' and action/@type='submit')" }
+    get '/search/request',
+        params: { match: "(action/target/@package='pack2' and action/target/@project='BaseDistro2.0' and action/source/@project='BaseDistro2.0' and action/source/@package='pack2.linked' and action/@type='submit')" }
     assert_response :success
 
     # what osc may do
-    get '/search/request', params: { match: "(state/@name='new' or state/@name='review') and (action/target/@project='BaseDistro2.0' or submit/target/@project='BaseDistro2.0' or action/source/@project='BaseDistro2.0' or submit/source/@project='BaseDistro2.0') and (action/target/@package='pack2.linked' or submit/target/@package='pack2_linked' or action/source/@package='pack2_linked' or submit/source/@package='pack2_linked')" }
+    get '/search/request', params: { match:
+      "(state/@name='new' or state/@name='review') and " \
+      "(action/target/@project='BaseDistro2.0' or submit/target/@project='BaseDistro2.0' or action/source/@project='BaseDistro2.0' or submit/source/@project='BaseDistro2.0') and " \
+      "(action/target/@package='pack2.linked' or submit/target/@package='pack2_linked' or action/source/@package='pack2_linked' or submit/source/@package='pack2_linked')" }
     assert_response :success
 
     # what osc really is doing
-    get '/search/request', params: { match: "(state/@name='new' or state/@name='review') and (target/@project='BaseDistro2.0' or source/@project='BaseDistro2.0') and (target/@package='pack2.linked' or source/@package='pack2_linked')" }
+    get '/search/request',
+        params: { match: "(state/@name='new' or state/@name='review') and (target/@project='BaseDistro2.0' or source/@project='BaseDistro2.0') and (target/@package='pack2.linked' or source/@package='pack2_linked')" }
     assert_response :success
 
     # maintenance team is doing this query
     get '/search/request', params: { match: "state/@name='review' and review[@by_group='maintenance-team' and @state='new']" }
     assert_response :success
 
-    get '/search/request', params: { match: "(action/target/@project='Apache' and action/@type='submit' and state/@name='review' ) or (action/target/@project='Apache' and action/@type='maintenance_release' and state/@name='review' )" }
+    get '/search/request',
+        params: { match: "(action/target/@project='Apache' and action/@type='submit' and state/@name='review' ) or (action/target/@project='Apache' and action/@type='maintenance_release' and state/@name='review' )" }
     assert_response :success
     assert_xml_tag tag: 'collection', attributes: { 'matches' => '1' }
     assert_xml_tag tag: 'request', children: { count: 3, only: { tag: 'review' } }
 
     get '/search/request', params: { match: '[@id=1]' }
     assert_response :success
-    # rubocop:enable Layout/LineLength
 
     get '/search/request', params: { match: "(review[@state='new' and @by_user='adrian'])" }
     assert_response :success
@@ -379,7 +383,7 @@ class SearchControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
   end
 
-  def get_package_count
+  def package_count
     Xmlhash.parse(@response.body).elements('package').length
   end
 
@@ -388,17 +392,17 @@ class SearchControllerTest < ActionDispatch::IntegrationTest
     get '/search/package?match=*'
     assert_response :success
     assert_xml_tag tag: 'collection'
-    all_packages_count = get_package_count
+    all_packages_count = package_count
 
     get '/search/package?match=*', params: { limit: 3 }
     assert_response :success
     assert_xml_tag tag: 'collection'
-    assert get_package_count == 3
+    assert package_count == 3
 
     get '/search/package?match=*', params: { offset: 3, limit: all_packages_count }
     assert_response :success
     assert_xml_tag tag: 'collection'
-    assert get_package_count == (all_packages_count - 3)
+    assert package_count == (all_packages_count - 3)
   end
 
   def test_find_all_persons
@@ -413,18 +417,18 @@ class SearchControllerTest < ActionDispatch::IntegrationTest
     login_king
 
     get '/search/owner'
-    assert_response 400
+    assert_response :bad_request
     assert_xml_tag tag: 'status', attributes: { code: 'no_binary' }
 
     # must be after first search controller call or backend might not be started on single test case runs
     run_publisher
 
     get "/search/owner?binary='package'"
-    assert_response 400
+    assert_response :bad_request
     assert_xml_tag tag: 'status', attributes: { code: '400', origin: 'backend' }
 
     get "/search/owner?binary='package'&attribute='OBS:does_not_exist'"
-    assert_response 404
+    assert_response :not_found
     assert_xml_tag tag: 'status', attributes: { code: 'unknown_attribute_type' }
 
     post '/source/home:Iggy/_attribute', params: "<attributes><attribute namespace='OBS' name='OwnerRootProject' /></attributes>"
@@ -506,13 +510,13 @@ class SearchControllerTest < ActionDispatch::IntegrationTest
 
     # some illegal searches
     get '/search/owner?user=INVALID&filter=bugowner'
-    assert_response 404
+    assert_response :not_found
     assert_xml_tag tag: 'status', attributes: { code: 'not_found' }
     get '/search/owner?user=fred&filter=INVALID'
-    assert_response 404
+    assert_response :not_found
     assert_xml_tag tag: 'status', attributes: { code: 'not_found' }
     get '/search/owner?project=DOESNOTEXIST'
-    assert_response 404
+    assert_response :not_found
 
     # search by package container name, base projects are set via attribute
     get '/search/owner?package=TestPack'

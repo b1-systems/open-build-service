@@ -32,12 +32,12 @@ namespace :db do
     sql = 'SELECT * FROM %s'
     skip_tables = %w[schema_info sessions schema_migrations]
     ActiveRecord::Base.establish_connection
-    User.session = User.get_default_admin
+    User.session = User.default_admin
     tables = ENV['FIXTURES'] ? ENV['FIXTURES'].split(',') : ActiveRecord::Base.connection.tables - skip_tables
     tables.each do |table_name|
       i = '000'
       begin
-        oldhash = YAML.load_file("#{Rails.root}/test/fixtures/#{table_name}.yml")
+        oldhash = YAML.load_file(Rails.root.join("test/fixtures/#{table_name}.yml").to_s)
         oldhash ||= {}
       rescue Errno::ENOENT, TypeError
         oldhash = {}
@@ -69,7 +69,7 @@ namespace :db do
 
       # next unless table_name == 'taggings'
 
-      File.open("#{Rails.root}/test/fixtures/#{table_name}.yml", 'w') do |file|
+      File.open(Rails.root.join("test/fixtures/#{table_name}.yml").to_s, 'w') do |file|
         data = ActiveRecord::Base.connection.select_all(sql % table_name)
         hash = {}
 
@@ -116,15 +116,15 @@ namespace :db do
             record['static_permission'] = perm.title
           end
           project_prefixes.each do |prefix|
-            next unless record.key?(prefix + '_id')
+            next unless record.key?("#{prefix}_id")
 
-            p = Project.find(record.delete(prefix + '_id'))
+            p = Project.find(record.delete("#{prefix}_id"))
             prefix = 'project' if prefix == 'db_project'
             record[prefix] = p.name.tr(':', '_')
           end
           package_prefixes.each do |prefix|
-            if record.key?(prefix + '_id')
-              p = Package.find(record.delete(prefix + '_id'))
+            if record.key?("#{prefix}_id")
+              p = Package.find(record.delete("#{prefix}_id"))
               record[prefix] = p.fixtures_name
             end
           end

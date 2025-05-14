@@ -13,21 +13,6 @@ RSpec.describe Webui::RepositoriesController, :vcr do
     it { expect(assigns(:architectures)).to be_empty }
   end
 
-  describe 'GET #state' do
-    context 'with a valid repository param' do
-      before do
-        get :state, params: { project: user.home_project, repository: repo_for_user_home.name }
-      end
-
-      it { expect(assigns(:repository)).to eq(repo_for_user_home) }
-    end
-
-    context 'with a non valid repository param' do
-      it { expect { get :state, params: { project: user.home_project, repository: 'not_valid' } }.to raise_error ActiveRecord::RecordNotFound }
-      it { expect(assigns(:repository)).to be_falsey }
-    end
-  end
-
   describe 'POST #update' do
     before do
       login user
@@ -91,7 +76,8 @@ RSpec.describe Webui::RepositoriesController, :vcr do
 
     context 'with a non valid target repository' do
       before do
-        post :create, params: { project: user.home_project, repository: 'valid_name', target_project: another_project, target_repo: 'non_valid_repo' }
+        post :create, params: { project: user.home_project, repository: 'valid_name',
+                                add_repo_from_project_target_project: another_project, target_repo: 'non_valid_repo' }
       end
 
       it { expect(flash[:error]).to eq('Can not add repository: Path elements is invalid and Path Element: Link must exist') }
@@ -113,7 +99,7 @@ RSpec.describe Webui::RepositoriesController, :vcr do
         target_repo = create(:repository, project: another_project)
         post :create, params: {
           project: user.home_project, repository: 'valid_name',
-          target_project: another_project, target_repo: target_repo.name, architectures: ['i586']
+          add_repo_from_project_target_project: another_project, target_repo: target_repo.name, architectures: ['i586']
         }
       end
 

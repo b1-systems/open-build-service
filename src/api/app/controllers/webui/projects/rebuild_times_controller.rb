@@ -64,11 +64,11 @@ module Webui
         File.write(File.join(indir, '_jobhistory.xml'), jobs)
         outdir = Dir.mktmpdir
 
-        logger.debug "cd #{Rails.root.join('vendor', 'diststats')} && perl ./mkdiststats --srcdir=#{indir} --destdir=#{outdir}
+        logger.debug "cd #{Rails.root.join('vendor/diststats')} && perl ./mkdiststats --srcdir=#{indir} --destdir=#{outdir}
                  --outfmt=xml #{@project.name}/#{@repository}/#{@arch} --width=910
                  --buildhosts=#{@hosts} --scheduler=#{@scheduler}"
         oldpwd = Dir.pwd
-        Dir.chdir(Rails.root.join('vendor', 'diststats'))
+        Dir.chdir(Rails.root.join('vendor/diststats'))
         unless system('perl', './mkdiststats', "--srcdir=#{indir}", "--destdir=#{outdir}",
                       '--outfmt=xml', "#{@project.name}/#{@repository}/#{@arch}", '--width=910',
                       "--buildhosts=#{@hosts}", "--scheduler=#{@scheduler}")
@@ -77,14 +77,14 @@ module Webui
         end
         Dir.chdir(oldpwd)
         begin
-          f = File.open(outdir + '/rebuild.png')
+          f = File.open("#{outdir}/rebuild.png")
           png = f.read
           f.close
         rescue StandardError
           return
         end
         Rails.cache.write("rebuild-#{@pngkey}.png", png)
-        f = File.open(outdir + '/longest.xml')
+        f = File.open("#{outdir}/longest.xml")
         longest = Xmlhash.parse(f.read)
         longest['timings'].elements('package') do |p|
           @timings[p['name']] = [p['buildtime'], p['finished']]
